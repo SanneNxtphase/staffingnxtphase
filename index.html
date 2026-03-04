@@ -24,6 +24,12 @@
 .pin-key:hover{background:var(--blue-p);border-color:var(--blue-l);color:var(--blue);}
 .pin-key:active{transform:scale(.95);}
 .pin-key.del{font-size:14px;color:var(--t3);}
+.bulk-staff-form{display:flex;flex-direction:column;gap:14px;}
+.bulk-preview{background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--t2);line-height:1.7;max-height:180px;overflow-y:auto;}
+.bulk-preview strong{color:var(--navy);}
+.bulk-week-badge{display:inline-block;background:var(--blue-p);color:var(--blue);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;margin:1px;}
+.bulk-progress{height:4px;background:var(--bdr);border-radius:2px;overflow:hidden;margin-top:4px;}
+.bulk-progress-bar{height:100%;background:var(--blue);border-radius:2px;transition:width .2s;}
 .auth-roles{display:flex;gap:8px;justify-content:center;margin-bottom:20px;}
 .auth-role-btn{padding:7px 18px;border-radius:20px;border:2px solid var(--bdr2);background:var(--bg);color:var(--t3);cursor:pointer;font-size:12px;font-weight:600;transition:all .13s;}
 .auth-role-btn.active{border-color:var(--blue);background:var(--blue-p);color:var(--blue);}
@@ -705,6 +711,10 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <span class="filter-lbl">Filter:</span>
     <select class="filter-sel" id="sf-emp" onchange="renderStaffing()"><option value="">All Employees</option></select>
     <select class="filter-sel" id="sf-proj" onchange="renderStaffing()"><option value="">All Projects</option></select>
+    <button class="btn btn-primary btn-sm" style="margin-left:8px;display:flex;align-items:center;gap:5px" onclick="openBulkStaffModal()">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M8 4v8M4 8h8"/></svg>
+      Assign Full Project
+    </button>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px"><span class="filter-lbl">View:</span>
       <div class="view-toggle"><div class="vbtn active" id="vb-full" onclick="setView('full')">Full</div><div class="vbtn" id="vb-people" onclick="setView('people')">People</div><div class="vbtn" id="vb-project" onclick="setView('project')">Project</div></div>
       <button class="btn btn-sm btn-ghost" style="font-size:9.5px;color:var(--amber);border-color:var(--amber)" onclick="cleanOrphanedStaffing(true)" title="Remove staffing rows that belong to deleted projects">🧹 Clean Orphans</button>
@@ -957,76 +967,92 @@ const DB={
     if(this._store)return this._store;
     const raw=localStorage.getItem('sp-v5')||localStorage.getItem('sp-v4')||localStorage.getItem('sp-v3');
     if(raw){
-      this._store=JSON.parse(raw);
-      if(!this._store.vacations)this._store.vacations=[];
-      if(!this._store.future_costs)this._store.future_costs=[];
-      if(!this._store.partner_invoices)this._store.partner_invoices=[];
-      if(!this._store.cashflow_months)this._store.cashflow_months=[];
-      if(!this._store._ids.vacations)this._store._ids.vacations=1;
-      if(!this._store._ids.future_costs)this._store._ids.future_costs=1;
-      if(!this._store._ids.partner_invoices)this._store._ids.partner_invoices=1;
-      this._store.employees=this._store.employees||[];
-      this._store.employees.forEach(e=>{if(!e.vacation_days_per_year)e.vacation_days_per_year=25;});
-      this._store.projects=this._store.projects||[];
-      this._store.projects.forEach(p=>{
-        if(!p.hasOwnProperty('is_partner'))p.is_partner=0;
-        if(!p.hasOwnProperty('recurring_amount'))p.recurring_amount=0;
-        if(!p.hasOwnProperty('recurring_freq'))p.recurring_freq='monthly';
-      });
-      // v7: inject real projects if this store only has old demo data
-      // Detect demo data by looking for known fake clients
-      const demoClients=['Acme Corp','Nova Tech','Blue Sky','Vertex Labs','Metro Group'];
-      const hasDemoOnly=this._store.projects.length>0&&this._store.projects.every(p=>demoClients.includes(p.client_name));
-      if(hasDemoOnly){
-        // Wipe demo projects and replace with real ones
-        this._store.projects=[];
-        this._store._ids.projects=1;
-        this._store.staffing=[];
-        this._store._ids.staffing=1;
-        this._store.invoices=[];
-        this._store._ids.invoices=1;
-        this._store.bank_transactions=[];
-        this._store._ids.bank_transactions=1;
-        this._injectRealProjects();
-      }
-      localStorage.setItem('sp-v5',JSON.stringify(this._store));
-      return this._store;
+      try{this._store=JSON.parse(raw);}catch(e){this._store=null;}
     }
-    this._store={projects:[],employees:[],staffing:[],vacations:[],
-      fixed_costs:[],bank_transactions:[],invoices:[],future_costs:[],partner_invoices:[],cashflow_months:[],
-      settings:[{key:'starting_balance',value:'0'}],
-      _ids:{projects:1,employees:1,staffing:1,vacations:1,fixed_costs:1,bank_transactions:1,invoices:1,future_costs:1,partner_invoices:1,cashflow_months:1}};
-    this._seed();return this._store;
+    if(!this._store){
+      this._store={projects:[],employees:[],staffing:[],vacations:[],
+        fixed_costs:[],bank_transactions:[],invoices:[],future_costs:[],partner_invoices:[],cashflow_months:[],
+        settings:[{key:'starting_balance',value:'0'}],
+        _ids:{projects:1,employees:1,staffing:1,vacations:1,fixed_costs:1,bank_transactions:1,invoices:1,future_costs:1,partner_invoices:1,cashflow_months:1}};
+    }
+    // Ensure all tables exist
+    ['projects','employees','staffing','vacations','fixed_costs','bank_transactions',
+     'invoices','future_costs','partner_invoices','cashflow_months'].forEach(t=>{
+      if(!this._store[t])this._store[t]=[];
+    });
+    if(!this._store.settings)this._store.settings=[{key:'starting_balance',value:'0'}];
+    if(!this._store._ids)this._store._ids={};
+    ['projects','employees','staffing','vacations','fixed_costs','bank_transactions',
+     'invoices','future_costs','partner_invoices','cashflow_months'].forEach(t=>{
+      if(!this._store._ids[t])this._store._ids[t]=(this._store[t].reduce((m,r)=>Math.max(m,r.id||0),0))+1;
+    });
+    // Schema fixes
+    this._store.employees.forEach(e=>{if(!e.vacation_days_per_year)e.vacation_days_per_year=25;});
+    this._store.projects.forEach(p=>{
+      if(!p.hasOwnProperty('is_partner'))p.is_partner=0;
+      if(!p.hasOwnProperty('recurring_amount'))p.recurring_amount=0;
+      if(!p.hasOwnProperty('recurring_freq'))p.recurring_freq='monthly';
+    });
+    // Always ensure real projects exist — merge by client+name so no duplicates
+    this._ensureRealProjects();
+    // Always ensure real employees exist
+    this._ensureRealEmployees();
+    this._sv();
+    return this._store;
+  },
+  _ensureRealProjects(){
+    const s=this._store;
+    const exists=(cn,n)=>s.projects.some(p=>p.client_name===cn&&p.name===n);
+    const P=(cn,n,st,sd,ed,rev)=>{
+      if(exists(cn,n))return;
+      s.projects.push({id:this._ni('projects'),client_name:cn,name:n,status:st,
+        start_date:sd,end_date:ed,revenue:rev,notes:'',billing_type:'monthly',
+        is_partner:0,recurring_amount:0,recurring_freq:'monthly',created_at:new Date().toISOString()});
+    };
+    P('NOLAI','Spraakbot jaar 1','confirmed','2025-09-01','2026-06-05',56666.67);
+    P('Begra','Cross sell engine','confirmed','2026-01-12','2026-02-06',25000);
+    P('BOIP','Gaat niet door','stopped','','',0);
+    P('Oaklins','Use case discovery','confirmed','2026-02-02','2026-02-20',12000);
+    P('AUDAX energy','Use case discovery oud','stopped','','',0);
+    P('ANP','Innovation hub','confirmed','2026-01-26','2026-04-24',45000);
+    P('NHA','Programma management','confirmed','2026-01-05','2026-06-05',90000);
+    P('Artis','Use case discovery finance','confirmed','2026-03-09','2026-03-13',12000);
+    P('Keesing','Sprint 3','confirmed','2026-01-05','2026-02-27',40000);
+    P('NHA','Huiswerk automatisering','confirmed','2026-01-05','2026-02-27',93000);
+    P('Triferto','Production Planning 2.0','confirmed','2026-01-05','2026-02-20',60000);
+    P('MCB','Sales inbox order processing - phase 2B','confirmed','2026-01-05','2026-01-16',20000);
+    P('MCB','Batch artikelnummer verwerking','confirmed','2026-01-05','2026-01-16',9000);
+    P('MCB','Dynamic pricing','confirmed','2026-03-23','2026-06-12',120000);
+    P('MCB','Sales inbox order processing - phase 3','confirmed','2026-02-02','2026-03-27',80000);
+    P('MCB','Programma management','stopped','','',0);
+    P('Oaklins','Prototypes bouwen','confirmed','2026-03-16','2026-04-24',40000);
+    P('Artis','Masterclass','draft','','',0);
+    P('AUDAX energy','Use case discovery','confirmed','2026-01-19','2026-02-20',18000);
+    P('Sales','Sales','draft','2026-01-05','2027-01-01',0);
+    P('Vakantie','Vakantie','draft','2026-01-05','2027-01-01',0);
+    P('AOMB','Transalation issues custom dictionary','confirmed','2026-01-12','2026-01-23',0);
+    P('Klafs','Klafs','confirmed','2026-01-12','2026-01-16',0);
+    P('Triferto','Kenteken scan','confirmed','2026-03-02','2026-03-20',20000);
+  },
+  _ensureRealEmployees(){
+    const s=this._store;
+    const names=['Koen','Siebeline','Marco','Kamiel','Paul','Mees','Stein','Ralph'];
+    const defs=[
+      ['Koen','Project Owner',462,5,25],['Siebeline','Project Manager',365,5,25],
+      ['Marco','Techlead',462,5,25],['Kamiel','Developer',185,5,25],
+      ['Paul','Developer',535,4,20],['Mees','Developer',222,5,25],
+      ['Stein','AI Delivery Manager',369,5,25],['Ralph','Project Manager',427,4,25]
+    ];
+    if(s.employees.length===0){
+      defs.forEach(([n,r,dc,av,vd])=>s.employees.push({
+        id:this._ni('employees'),name:n,role:r,daily_cost:dc,
+        available_days_per_week:av,vacation_days_per_year:vd,created_at:new Date().toISOString()
+      }));
+    }
   },
   _sv(){localStorage.setItem('sp-v5',JSON.stringify(this._store));},
   _ni(t){const s=this._gs();const id=s._ids[t]||1;s._ids[t]=id+1;return id;},
-  _injectRealProjects(){
-    const s=this._store;
-    const P=(cn,n,st,sd,ed,rev,isP,rAmt,rFreq)=>({id:this._ni('projects'),client_name:cn,name:n,status:st,start_date:sd||'',end_date:ed||'',revenue:rev,notes:'',billing_type:'monthly',is_partner:isP||0,recurring_amount:rAmt||0,recurring_freq:rFreq||'monthly',created_at:new Date().toISOString()});
-    // ── CONFIRMED ──────────────────────────────────────────────────────────
-    s.projects.push(P('NOLAI',        'Spraakbot jaar 1',                        'confirmed','2025-09-01','2026-06-05', 56666.67));
-    s.projects.push(P('Begra',        'Cross sell engine',                       'confirmed','2026-01-12','2026-02-06', 25000));
-    s.projects.push(P('Oaklins',      'Use case discovery',                      'confirmed','2026-02-02','2026-02-20', 12000));
-    s.projects.push(P('ANP',          'Innovation hub',                          'confirmed','2026-01-26','2026-04-24', 45000));
-    s.projects.push(P('NHA',          'Programma management',                    'confirmed','2026-01-05','2026-06-05', 90000,1,18000,'monthly'));
-    s.projects.push(P('Artis',        'Use case discovery finance',              'confirmed','2026-03-09','2026-03-13', 12000));
-    s.projects.push(P('Keesing',      'Sprint 3',                                'confirmed','2026-01-05','2026-02-27', 40000));
-    s.projects.push(P('NHA',          'Huiswerk automatisering',                 'confirmed','2026-01-05','2026-02-27', 93000));
-    s.projects.push(P('Triferto',     'Production Planning 2.0',                 'confirmed','2026-01-05','2026-02-20', 60000));
-    s.projects.push(P('MCB',          'Sales inbox order processing - phase 2B', 'confirmed','2026-01-05','2026-01-16', 20000));
-    s.projects.push(P('MCB',          'Batch artikelnummer verwerking',          'confirmed','2026-01-05','2026-01-16',  9000));
-    s.projects.push(P('MCB',          'Dynamic pricing',                         'confirmed','2026-03-23','2026-06-12',120000));
-    s.projects.push(P('MCB',          'Sales inbox order processing - phase 3',  'confirmed','2026-02-02','2026-03-27', 80000));
-    s.projects.push(P('Oaklins',      'Prototypes bouwen',                       'confirmed','2026-03-09','2026-04-17', 40000));
-    s.projects.push(P('AUDAX energy', 'Use case discovery',                      'confirmed','2026-01-19','2026-02-20', 18000));
-    s.projects.push(P('Triferto',     'Kenteken scan',                           'confirmed','2026-03-09','2026-07-03', 60000));
-    // ── DRAFT ──────────────────────────────────────────────────────────────
-    s.projects.push(P('Artis',        'Masterclass',                             'draft',    '',         '',              0));
-    // ── STOPPED ────────────────────────────────────────────────────────────
-    s.projects.push(P('BOIP',         'Gaat niet door',                          'stopped',  '',         '',              0));
-    s.projects.push(P('MCB',          'Programma management',                    'stopped',  '',         '',              0));
-    this._sv();
-  },
+  _injectRealProjects(){this._ensureRealProjects();},
   _seed(){
     const s=this._store;
     const E=(n,r,dc,av,vd)=>({id:this._ni('employees'),name:n,role:r,daily_cost:dc,available_days_per_week:av,vacation_days_per_year:vd||25,created_at:new Date().toISOString()});
@@ -1142,7 +1168,12 @@ async function supaLoadAll() {
 
     var store = DB._gs();
     for (var i = 0; i < tables.length; i++) {
-      if (Array.isArray(results[i])) store[tables[i]] = results[i];
+      // Only overwrite local data if Supabase returned actual rows
+      // Empty array from Supabase means table is empty OR doesn't exist yet
+      // Keep local data in that case so projects/employees are never lost
+      if (Array.isArray(results[i]) && results[i].length > 0) {
+        store[tables[i]] = results[i];
+      }
     }
 
     // Schema migration
@@ -1165,7 +1196,49 @@ async function supaLoadAll() {
         if (row && row.id) store.employees.push(row);
       }
     }
+    // Auto-seed projects if Supabase projects table is empty
+    if (store.projects.length === 0) {
+      var _seedProjects = [
+        {client_name:'NOLAI',name:'Spraakbot jaar 1',status:'confirmed',start_date:'2025-09-01',end_date:'2026-06-05',revenue:56666.67},
+        {client_name:'Begra',name:'Cross sell engine',status:'confirmed',start_date:'2026-01-12',end_date:'2026-02-06',revenue:25000},
+        {client_name:'BOIP',name:'Gaat niet door',status:'stopped',start_date:'',end_date:'',revenue:0},
+        {client_name:'Oaklins',name:'Use case discovery',status:'confirmed',start_date:'2026-02-02',end_date:'2026-02-20',revenue:12000},
+        {client_name:'AUDAX energy',name:'Use case discovery oud',status:'stopped',start_date:'',end_date:'',revenue:0},
+        {client_name:'ANP',name:'Innovation hub',status:'confirmed',start_date:'2026-01-26',end_date:'2026-04-24',revenue:45000},
+        {client_name:'NHA',name:'Programma management',status:'confirmed',start_date:'2026-01-05',end_date:'2026-06-05',revenue:90000},
+        {client_name:'Artis',name:'Use case discovery finance',status:'confirmed',start_date:'2026-03-09',end_date:'2026-03-13',revenue:12000},
+        {client_name:'Keesing',name:'Sprint 3',status:'confirmed',start_date:'2026-01-05',end_date:'2026-02-27',revenue:40000},
+        {client_name:'NHA',name:'Huiswerk automatisering',status:'confirmed',start_date:'2026-01-05',end_date:'2026-02-27',revenue:93000},
+        {client_name:'Triferto',name:'Production Planning 2.0',status:'confirmed',start_date:'2026-01-05',end_date:'2026-02-20',revenue:60000},
+        {client_name:'MCB',name:'Sales inbox order processing - phase 2B',status:'confirmed',start_date:'2026-01-05',end_date:'2026-01-16',revenue:20000},
+        {client_name:'MCB',name:'Batch artikelnummer verwerking',status:'confirmed',start_date:'2026-01-05',end_date:'2026-01-16',revenue:9000},
+        {client_name:'MCB',name:'Dynamic pricing',status:'confirmed',start_date:'2026-03-23',end_date:'2026-06-12',revenue:120000},
+        {client_name:'MCB',name:'Sales inbox order processing - phase 3',status:'confirmed',start_date:'2026-02-02',end_date:'2026-03-27',revenue:80000},
+        {client_name:'MCB',name:'Programma management',status:'stopped',start_date:'',end_date:'',revenue:0},
+        {client_name:'Oaklins',name:'Prototypes bouwen',status:'confirmed',start_date:'2026-03-16',end_date:'2026-04-24',revenue:40000},
+        {client_name:'Artis',name:'Masterclass',status:'draft',start_date:'',end_date:'',revenue:0},
+        {client_name:'AUDAX energy',name:'Use case discovery',status:'confirmed',start_date:'2026-01-19',end_date:'2026-02-20',revenue:18000},
+        {client_name:'Sales',name:'Sales',status:'draft',start_date:'2026-01-05',end_date:'2027-01-01',revenue:0},
+        {client_name:'Vakantie',name:'Vakantie',status:'draft',start_date:'2026-01-05',end_date:'2027-01-01',revenue:0},
+        {client_name:'AOMB',name:'Transalation issues custom dictionary',status:'confirmed',start_date:'2026-01-12',end_date:'2026-01-23',revenue:0},
+        {client_name:'Klafs',name:'Klafs',status:'confirmed',start_date:'2026-01-12',end_date:'2026-01-16',revenue:0},
+        {client_name:'Triferto',name:'Kenteken scan',status:'confirmed',start_date:'2026-03-02',end_date:'2026-03-20',revenue:20000}
+      ];
+      var now2 = new Date().toISOString();
+      for (var psi = 0; psi < _seedProjects.length; psi++) {
+        var pRow = Object.assign({}, _seedProjects[psi], {
+          notes: '', billing_type: 'monthly', is_partner: 0,
+          recurring_amount: 0, recurring_freq: 'monthly', created_at: now2
+        });
+        var pRes = await _supaReq('POST', 'projects', pRow);
+        var pInserted = Array.isArray(pRes) ? pRes[0] : pRes;
+        if (pInserted && pInserted.id) store.projects.push(pInserted);
+      }
+    }
 
+    // Guarantee real projects/employees always present
+    DB._ensureRealProjects();
+    DB._ensureRealEmployees();
     localStorage.setItem('sp-v5', JSON.stringify(store));
     console.log('[Supabase] Loaded from cloud');
     return true;
@@ -1222,6 +1295,19 @@ async function pushAllToSupabase() {
       }
     }
 
+    // Also push current PIN hashes so all devices stay in sync
+    var adminPin = localStorage.getItem('sp-pin-admin');
+    var viewerPin = localStorage.getItem('sp-pin-viewer');
+    if(adminPin){
+      var exA=await _supaReq('GET','settings',null,'?key=eq.pin_admin&select=id');
+      if(exA&&exA.length>0)await _supaReq('PATCH','settings',{value:adminPin},'?key=eq.pin_admin');
+      else await _supaReq('POST','settings',{key:'pin_admin',value:adminPin});
+    }
+    if(viewerPin){
+      var exV=await _supaReq('GET','settings',null,'?key=eq.pin_viewer&select=id');
+      if(exV&&exV.length>0)await _supaReq('PATCH','settings',{value:viewerPin},'?key=eq.pin_viewer');
+      else await _supaReq('POST','settings',{key:'pin_viewer',value:viewerPin});
+    }
     _SUPA_ONLINE = true;
     var msg = 'Pushed ' + pushed + ' records to Supabase!';
     if (errors > 0) msg += ' (' + errors + ' errors)';
@@ -2501,6 +2587,177 @@ function renderStaffing(){
   tbody+='</tbody>';
   document.getElementById('staffing-grid').innerHTML=`<table>${thead}${tbody}</table>`;
 }
+
+// ══ BULK STAFFING — Assign person to entire project ══════════════════
+function openBulkStaffModal(){
+  if(!requireAdmin('Bulk staffing'))return;
+  const mo=document.getElementById('modal-overlay');
+  const mc=document.getElementById('modal-content');
+  mo.classList.add('open');
+
+  // Build employee options
+  const empOpts=S.employees.map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.role||'')})</option>`).join('');
+  // Build project options — only confirmed/draft with dates
+  const projOpts=S.projects
+    .filter(p=>p.status!=='stopped'&&p.start_date&&p.end_date)
+    .map(p=>`<option value="${p.id}">${esc(p.client_name+' / '+p.name)} (${p.start_date} → ${p.end_date})</option>`)
+    .join('');
+
+  mc.innerHTML=`
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="vertical-align:-3px;margin-right:6px"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M8 4v8M4 8h8"/></svg>
+        Assign Full Project
+      </div>
+      <div class="modal-x" onclick="closeModal()">&#x2715;</div>
+    </div>
+    <div class="modal-body">
+      <div class="bulk-staff-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-lbl">Employee</label>
+            <select class="form-input" id="bs-emp" onchange="bulkStaffPreview()">${empOpts}</select>
+          </div>
+          <div class="form-group">
+            <label class="form-lbl">Project</label>
+            <select class="form-input" id="bs-proj" onchange="bulkStaffPreview()">${projOpts}</select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="max-width:140px">
+            <label class="form-lbl">Days per week</label>
+            <input class="form-input" type="number" id="bs-days" min="0.5" max="5" step="0.5" value="5" oninput="bulkStaffPreview()">
+          </div>
+          <div class="form-group" style="max-width:180px">
+            <label class="form-lbl">Start from week</label>
+            <input class="form-input" type="week" id="bs-start-wk" oninput="bulkStaffPreview()">
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:2px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--t2)">
+              <input type="checkbox" id="bs-overwrite" onchange="bulkStaffPreview()" style="width:14px;height:14px">
+              Overwrite existing
+            </label>
+          </div>
+        </div>
+        <div id="bs-preview" class="bulk-preview">Select employee and project to see preview.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="bs-confirm-btn" onclick="bulkStaffConfirm()" disabled>
+        Assign All Weeks
+      </button>
+    </div>`;
+
+  // Set default start week to current week
+  const now=new Date();
+  const curWk=toWeekKey(now);
+  const[wy,ww]=curWk.split('-W');
+  document.getElementById('bs-start-wk').value=wy+'-W'+ww.padStart(2,'0');
+
+  bulkStaffPreview();
+}
+
+function bulkStaffPreview(){
+  const empId=parseInt(document.getElementById('bs-emp')?.value);
+  const projId=parseInt(document.getElementById('bs-proj')?.value);
+  const days=parseFloat(document.getElementById('bs-days')?.value)||0;
+  const startWkInput=document.getElementById('bs-start-wk')?.value;
+  const overwrite=document.getElementById('bs-overwrite')?.checked;
+  const preview=document.getElementById('bs-preview');
+  const btn=document.getElementById('bs-confirm-btn');
+  if(!btn)return;
+
+  if(!empId||!projId||!days||!startWkInput){
+    preview.innerHTML='<span style="color:var(--t3)">Fill all fields to see preview.</span>';
+    btn.disabled=true;return;
+  }
+
+  const emp=S.employees.find(e=>e.id===empId);
+  const proj=S.projects.find(p=>p.id===projId);
+  if(!emp||!proj){preview.innerHTML='Not found.';btn.disabled=true;return;}
+
+  // Convert input week (YYYY-Www) to our week key format (YYYY-Www)
+  const startWk=startWkInput;
+  const allProjWks=projectWkKeys(proj);
+  const weeksToFill=allProjWks.filter(wk=>wk>=startWk);
+
+  if(!weeksToFill.length){
+    preview.innerHTML='<span style="color:var(--red)">No remaining weeks in project from selected start week.</span>';
+    btn.disabled=true;return;
+  }
+
+  // Check existing staffing
+  const existing=weeksToFill.filter(wk=>
+    S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
+  );
+  const toWrite=overwrite?weeksToFill:weeksToFill.filter(wk=>
+    !S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
+  );
+
+  const weekBadges=toWrite.slice(0,12).map(wk=>`<span class="bulk-week-badge">W${wk.split('-W')[1]}</span>`).join('');
+  const more=toWrite.length>12?`<span style="color:var(--t3);font-size:10px"> +${toWrite.length-12} more</span>`:'';
+
+  preview.innerHTML=`
+    <div><strong>${esc(emp.name)}</strong> → <strong>${esc(proj.client_name+' / '+proj.name)}</strong></div>
+    <div style="margin-top:4px"><strong>${days}</strong> days/week &bull; <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
+      ${existing.length&&!overwrite?`<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>`:''}
+      ${existing.length&&overwrite?`<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>`:''}
+    </div>
+    <div style="margin-top:6px">${weekBadges}${more}</div>
+    <div style="margin-top:6px;color:var(--t3);font-size:10px">
+      Project end: ${proj.end_date} &bull; Cost: ${fmt(emp.daily_cost*days*toWrite.length)}
+    </div>`;
+
+  btn.disabled=toWrite.length===0;
+  btn.textContent=toWrite.length===0?'Nothing to assign':`Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
+}
+
+async function bulkStaffConfirm(){
+  const empId=parseInt(document.getElementById('bs-emp')?.value);
+  const projId=parseInt(document.getElementById('bs-proj')?.value);
+  const days=parseFloat(document.getElementById('bs-days')?.value)||0;
+  const startWkInput=document.getElementById('bs-start-wk')?.value;
+  const overwrite=document.getElementById('bs-overwrite')?.checked;
+  if(!empId||!projId||!days||!startWkInput)return;
+
+  const proj=S.projects.find(p=>p.id===projId);
+  if(!proj)return;
+
+  const startWk=startWkInput;
+  const allProjWks=projectWkKeys(proj);
+  const weeksToFill=allProjWks.filter(wk=>wk>=startWk);
+  const toWrite=overwrite?weeksToFill:weeksToFill.filter(wk=>
+    !S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
+  );
+
+  if(!toWrite.length){showToast('Nothing to assign','warning');return;}
+
+  // Disable button, show progress
+  const btn=document.getElementById('bs-confirm-btn');
+  if(btn){btn.disabled=true;btn.textContent='Assigning…';}
+
+  // Add progress bar
+  const preview=document.getElementById('bs-preview');
+  if(preview){
+    preview.innerHTML+=`<div class="bulk-progress" id="bs-prog-wrap"><div class="bulk-progress-bar" id="bs-prog-bar" style="width:0%"></div></div>`;
+  }
+
+  let done=0;
+  for(const wk of toWrite){
+    await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days});
+    done++;
+    const pct=Math.round(done/toWrite.length*100);
+    const bar=document.getElementById('bs-prog-bar');
+    if(bar)bar.style.width=pct+'%';
+  }
+
+  closeModal();
+  await loadData();
+  renderStaffing();
+  showToast(`Assigned ${toWrite.length} week${toWrite.length!==1?'s':''} to ${S.employees.find(e=>e.id===empId)?.name||'employee'}`,'success');
+}
+// ══ END BULK STAFFING ═════════════════════════════════════════════
 
 async function editCell(empId,projId,wk,cell){
   const entry=S.staffing.find(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk);
@@ -6220,7 +6477,30 @@ const AUTH={
   verify(role,pin){return this.hash(pin)===this.getPin(role);},
 
   setPin(role,pin){
-    localStorage.setItem(role==='admin'?this.ADMIN_KEY:this.VIEWER_KEY,this.hash(pin));
+    const h=this.hash(pin);
+    const key=role==='admin'?this.ADMIN_KEY:this.VIEWER_KEY;
+    localStorage.setItem(key,h);
+    // Sync PIN to Supabase so all devices share the same PIN
+    const supaKey='pin_'+role;
+    if(typeof _supaReq==='function'){
+      _supaReq('GET','settings',null,'?key=eq.'+supaKey+'&select=id').then(ex=>{
+        if(ex&&ex[0])_supaReq('PATCH','settings',{value:h},'?key=eq.'+supaKey);
+        else _supaReq('POST','settings',{key:supaKey,value:h});
+      }).catch(()=>{});
+    }
+  },
+
+  // Load PIN hashes from Supabase (called on init so all devices stay in sync)
+  async syncPinsFromSupabase(){
+    if(typeof _supaReq!=='function')return;
+    try{
+      const res=await _supaReq('GET','settings',null,'?key=in.(pin_admin,pin_viewer)&select=key,value');
+      if(!res)return;
+      res.forEach(row=>{
+        if(row.key==='pin_admin')localStorage.setItem(this.ADMIN_KEY,row.value);
+        if(row.key==='pin_viewer')localStorage.setItem(this.VIEWER_KEY,row.value);
+      });
+    }catch(e){}
   },
 
   isAdmin(){return this.role==='admin';},
@@ -6364,6 +6644,8 @@ document.addEventListener('keydown',function(e){
 async function init(){
   // Guard: only run if authenticated
   if(!AUTH.isAuthenticated())return;
+  // Sync PINs from Supabase first (so all devices share the same PIN)
+  try { await AUTH.syncPinsFromSupabase(); } catch(e) {}
   // Try Supabase first; silently falls back to localStorage
   try { await supaLoadAll(); } catch(e) { console.warn('supaLoadAll failed:', e); }
   await loadData();
