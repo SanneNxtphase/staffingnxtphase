@@ -425,9 +425,11 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   <div class="sidebar-footer">
     <div id="sidebar-role-badge" style="padding:7px 10px;margin-bottom:4px"></div>
     <div class="nav-item" onclick="lockApp()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="8" rx="1"/><path d="M5 7V5a3 3 0 016 0v2"/></svg>Lock</div>
+    <div id="nav-data-source" style="padding:6px 10px;font-size:9px;color:rgba(255,255,255,.3);line-height:1.4">&#9679; Loading…</div>
     <div class="nav-item" id="nav-changepin" style="display:none" onclick="openChangePinModal()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M11 10l1 1 2-2"/></svg>Change PINs</div>
     <div class="nav-item" onclick="openShareableView()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="4" r="2"/><circle cx="4" cy="8" r="2"/><circle cx="12" cy="12" r="2"/><path d="M6 7l4-2M6 9l4 2"/></svg>Share / Snapshot</div>
     <div class="nav-item" id="nav-supa-push" onclick="pushAllToSupabase()" style="color:rgba(80,200,120,.85)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 11V3M5 6l3-3 3 3M2 12v1a1 1 0 001 1h10a1 1 0 001-1v-1"/></svg>Push to Supabase</div>
+    <div class="nav-item" id="nav-supa-pull" onclick="pullFromSupabase()" style="color:rgba(100,160,255,.85)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 5v8M5 10l3 3 3-3M2 3v1a1 1 0 001 1h10a1 1 0 001-1V3"/></svg>Pull from Supabase</div>
     <div class="nav-item" onclick="exportAllExcel()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 7l2 2 2-2M9 7l2 2 2-2M8 5v4M8 12h.01"/></svg>Export to Excel</div>
     <div class="nav-item" onclick="exportBackup()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1v9M5 7l3 3 3-3M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2"/></svg>Export JSON Backup</div>
   </div>
@@ -461,7 +463,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   </div>
   <div class="grid-2 mb-14">
     <div class="card">
-      <div class="card-header"><div class="card-title">Revenue Trend (6 months)</div><div class="chart-legend"><div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div>Revenue</div><div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Draft</div><div class="legend-item"><div class="legend-dot" style="background:var(--pink)"></div>Cost</div></div></div>
+      <div class="card-header"><div class="card-title">Revenue Trend (Full Year)</div><div class="chart-legend"><div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div>Revenue</div><div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Draft</div><div class="legend-item"><div class="legend-dot" style="background:var(--pink)"></div>Cost</div></div></div>
       <div class="card-body" style="padding-bottom:26px"><div id="dash-chart" style="width:100%;height:110px;overflow:visible"></div></div>
     </div>
     <div class="card">
@@ -629,6 +631,16 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
         <tbody id="fc-future-tbody"></tbody>
       </table></div></div>
     </div>
+  </div>
+  <!-- Monthly Staffing Cost Breakdown -->
+  <div class="card mt-14">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div class="card-title">Monthly Staffing Costs</div>
+        <div style="font-size:11px;color:var(--t3)">Click <strong>Detail →</strong> for full per-project &amp; per-employee breakdown</div>
+      </div>
+    </div>
+    <div id="staffing-breakdown-wrap" style="overflow-x:auto"></div>
   </div>
 </div>
 
@@ -807,6 +819,18 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
         <tbody id="inv-proj-tbody"></tbody>
       </table></div>
     </div>
+    <div id="inv-paid-projects-wrap" style="border-top:2px solid var(--green);background:var(--green-p);display:none">
+      <div style="padding:8px 16px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="const b=document.getElementById('inv-paid-projects-body');b.style.display=b.style.display==='none'?'':'none';this.querySelector('.arr').textContent=b.style.display===''?'▾':'▸'">
+        <span style="font-size:11px;font-weight:700;color:var(--green)">✓ FULLY PAID PROJECTS</span>
+        <span id="inv-paid-projects-count" style="font-size:10px;color:var(--t3)"></span>
+        <span class="arr" style="font-size:10px;color:var(--t3);margin-left:auto">▾</span>
+      </div>
+      <div id="inv-paid-projects-body">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <tbody id="inv-proj-paid-tbody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
   <!-- Open Invoices -->
   <div class="card mb-14">
@@ -837,71 +861,32 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
      ═══════════════════════════════════════════════════════════════════════ -->
 <div id="page-fixedcosts" class="page">
   <div class="page-header">
-    <div><div class="page-title">Fixed Costs</div><div class="page-sub">Monthly recurring cost structure — leading for all P&amp;L calculations</div></div>
+    <div><div class="page-title">Fixed Costs</div><div class="page-sub">Monthly recurring cost structure — per category with totals</div></div>
     <div class="btn-group">
       <button class="btn btn-primary" onclick="fcAddEntryModal()">+ Add Cost Entry</button>
       <button class="btn" onclick="fcAddCategoryModal()">+ Add Category</button>
     </div>
   </div>
-  <!-- Filter & Sort bar -->
-  <div class="card mb-14" style="padding:14px 18px">
-    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:8px">
-        <label style="font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap">FILTER</label>
-        <select id="fc-filter-cat" class="form-input" style="min-width:160px;height:32px;padding:4px 10px;font-size:12px" onchange="renderFixedCosts()">
-          <option value="">All Categories</option>
-        </select>
-        <select id="fc-filter-vat" class="form-input" style="min-width:140px;height:32px;padding:4px 10px;font-size:12px" onchange="renderFixedCosts()">
-          <option value="">All VAT Types</option>
-          <option value="incl">Including VAT</option>
-          <option value="excl">Excluding VAT</option>
-          <option value="none">No VAT</option>
-        </select>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <label style="font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap">SORT</label>
-        <select id="fc-sort" class="form-input" style="min-width:160px;height:32px;padding:4px 10px;font-size:12px" onchange="renderFixedCosts()">
-          <option value="cat">Category</option>
-          <option value="name">Name A–Z</option>
-          <option value="amount-asc">Amount ↑</option>
-          <option value="amount-desc">Amount ↓</option>
-        </select>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
-        <span style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px">VIEW</span>
-        <div class="view-toggle">
-          <div class="vbtn active" id="fcv-table" onclick="setFCView('table')">Table</div>
-          <div class="vbtn" id="fcv-accordion" onclick="setFCView('accordion')">By Category</div>
-        </div>
-      </div>
+  <div class="kpi-row mb-14" id="fc-grand-kpis"></div>
+  <div class="filter-bar mb-14" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 18px;background:var(--bg2);border:1px solid var(--bdr);border-radius:var(--r)">
+    <span style="font-size:11px;color:var(--t3);font-weight:600">Category:</span>
+    <select class="filter-sel" id="fc-filter-cat" onchange="renderFixedCosts()"><option value="">All</option></select>
+    <span style="font-size:11px;color:var(--t3);font-weight:600;margin-left:8px">VAT:</span>
+    <select class="filter-sel" id="fc-filter-vat" onchange="renderFixedCosts()">
+      <option value="">All</option><option value="incl">Incl.</option>
+      <option value="excl">Excl.</option><option value="none">No VAT</option>
+    </select>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <span style="font-size:11px;color:var(--t3);font-weight:600">Sort:</span>
+      <select class="filter-sel" id="fc-sort" onchange="renderFixedCosts()">
+        <option value="cat">By Category</option><option value="name">By Name</option>
+        <option value="amount-desc">Amount ↓</option><option value="amount-asc">Amount ↑</option>
+      </select>
     </div>
   </div>
-  <!-- Grand total KPI strip -->
-  <div class="kpi-row" id="fc-grand-kpis"></div>
-  <!-- Flat table view -->
-  <div id="fc-table-view" class="card mb-14">
-    <div class="table-wrap"><table id="fc-flat-table">
-      <thead><tr>
-        <th style="cursor:pointer" onclick="fcSortBy('name')">Cost Name <span id="fcs-name"></span></th>
-        <th style="cursor:pointer" onclick="fcSortBy('cat')">Category <span id="fcs-cat"></span></th>
-        <th class="right" style="cursor:pointer" onclick="fcSortBy('gross')">Gross/mo <span id="fcs-gross"></span></th>
-        <th class="center">VAT</th>
-        <th class="right" style="color:var(--amber)">VAT Amt</th>
-        <th class="right" style="color:var(--red);cursor:pointer" onclick="fcSortBy('net')">Net/mo <span id="fcs-net"></span></th>
-        <th class="right" style="color:var(--t3)">Annual Net</th>
-        <th style="width:80px"></th>
-      </tr></thead>
-      <tbody id="fc-flat-tbody"></tbody>
-      <tfoot id="fc-flat-tfoot"></tfoot>
-    </table></div>
-  </div>
-  <!-- Category accordion view -->
-  <div id="fc-categories-wrap" style="display:none"></div>
+  <div id="fc-category-cards"></div>
+  <div id="fc-grand-total-card" style="margin-top:4px"></div>
 </div>
-
-<!-- ═══════════════════════════════════════════════════════════════════════
-     CASHFLOW — SIMPLIFIED LIQUIDITY MONITOR
-     ═══════════════════════════════════════════════════════════════════════ -->
 <div id="page-cashflow" class="page">
   <div class="page-header">
     <div><div class="page-title">Cashflow</div><div class="page-sub">Single source of truth for Bank In/Out &mdash; Company Dashboard reads from here</div></div>
@@ -997,6 +982,12 @@ const DB={
     this._ensureRealProjects();
     // Always ensure real employees exist
     this._ensureRealEmployees();
+    // Data integrity: remove partner_invoices for projects that have invoices entries
+    if(this._store.invoices&&this._store.partner_invoices){
+      const _piMap={};
+      this._store.invoices.forEach(i=>{if(i.project_id)_piMap[i.project_id]=true;});
+      this._store.partner_invoices=this._store.partner_invoices.filter(pi=>!_piMap[pi.project_id]);
+    }
     this._sv();
     return this._store;
   },
@@ -1036,7 +1027,6 @@ const DB={
   },
   _ensureRealEmployees(){
     const s=this._store;
-    const names=['Koen','Siebeline','Marco','Kamiel','Paul','Mees','Stein','Ralph'];
     const defs=[
       ['Koen','Project Owner',462,5,25],['Siebeline','Project Manager',365,5,25],
       ['Marco','Techlead',462,5,25],['Kamiel','Developer',185,5,25],
@@ -1048,6 +1038,10 @@ const DB={
         id:this._ni('employees'),name:n,role:r,daily_cost:dc,
         available_days_per_week:av,vacation_days_per_year:vd,created_at:new Date().toISOString()
       }));
+    } else {
+      // Always enforce correct daily_cost even if employees already exist
+      const costMap={Koen:462,Siebeline:365,Marco:462,Kamiel:185,Paul:535,Mees:222,Stein:369,Ralph:427};
+      s.employees.forEach(e=>{if(costMap.hasOwnProperty(e.name))e.daily_cost=costMap[e.name];});
     }
   },
   _sv(){localStorage.setItem('sp-v5',JSON.stringify(this._store));},
@@ -1072,8 +1066,8 @@ const DB={
     }
     if(action==='select')return(s[table]||[]).slice();
     if(action==='insert'){const row={id:this._ni(table),...data,created_at:new Date().toISOString()};s[table].push(row);this._sv();return{lastInsertRowid:row.id};}
-    if(action==='update'){const idx=s[table].findIndex(x=>x.id===id);if(idx>=0)Object.assign(s[table][idx],data);this._sv();return{};}
-    if(action==='delete'){s[table]=s[table].filter(x=>x.id!==id);this._sv();return{};}
+    if(action==='update'){const idx=s[table].findIndex(x=>x.id==id);if(idx>=0)Object.assign(s[table][idx],data);this._sv();return{};}
+    if(action==='delete'){s[table]=s[table].filter(x=>x.id!=id);this._sv();return{};}
     if(sql&&sql.includes('FROM settings'))return s.settings.find(x=>x.key===params[0]);
     if(sql&&sql.includes('REPLACE INTO settings')){const idx=s.settings.findIndex(x=>x.key===params[1]);if(idx>=0)s.settings[idx].value=params[0];else s.settings.push({key:params[1],value:params[0]});this._sv();return{};}
     return[];
@@ -1167,6 +1161,18 @@ async function supaLoadAll() {
     if (results.every(function(r) { return r === null; })) return false;
 
     var store = DB._gs();
+
+    // Capture local ID maps BEFORE overwriting with Supabase data
+    // Key = "client_name|project_name", value = local numeric id
+    var _localProjMap = {};
+    (store.projects||[]).forEach(function(p){
+      _localProjMap[(p.client_name||'')+'|'+(p.name||'')] = p.id;
+    });
+    var _localEmpMap = {};
+    (store.employees||[]).forEach(function(e){
+      _localEmpMap[(e.name||'')] = e.id;
+    });
+
     for (var i = 0; i < tables.length; i++) {
       // Only overwrite local data if Supabase returned actual rows
       // Empty array from Supabase means table is empty OR doesn't exist yet
@@ -1176,9 +1182,62 @@ async function supaLoadAll() {
       }
     }
 
-    // Schema migration
+    // Build Supabase ID maps AFTER overwrite
+    // Key = "client_name|project_name", value = Supabase numeric id
+    var _supaProjMap = {};
+    (store.projects||[]).forEach(function(p){
+      _supaProjMap[(p.client_name||'')+'|'+(p.name||'')] = p.id;
+    });
+    var _supaEmpMap = {};
+    (store.employees||[]).forEach(function(e){
+      _supaEmpMap[(e.name||'')] = e.id;
+    });
+
+    // Build reverse maps: local_id → supa_id
+    var _projIdRemap = {};
+    Object.keys(_localProjMap).forEach(function(key){
+      var localId = _localProjMap[key];
+      var supaId  = _supaProjMap[key];
+      if(supaId && localId !== supaId) _projIdRemap[localId] = supaId;
+    });
+    var _empIdRemap = {};
+    Object.keys(_localEmpMap).forEach(function(key){
+      var localId = _localEmpMap[key];
+      var supaId  = _supaEmpMap[key];
+      if(supaId && localId !== supaId) _empIdRemap[localId] = supaId;
+    });
+
+    // Remap project_id in all related tables
+    var _tablesWithProjId = ['invoices','partner_invoices','staffing','vacations','future_costs'];
+    _tablesWithProjId.forEach(function(tbl){
+      (store[tbl]||[]).forEach(function(row){
+        if(row.project_id && _projIdRemap.hasOwnProperty(row.project_id)){
+          row.project_id = _projIdRemap[row.project_id];
+        }
+      });
+    });
+    // Remap employee_id in staffing
+    (store.staffing||[]).forEach(function(row){
+      if(row.employee_id && _empIdRemap.hasOwnProperty(row.employee_id)){
+        row.employee_id = _empIdRemap[row.employee_id];
+      }
+    });
+    if(Object.keys(_projIdRemap).length > 0){
+      console.log('[ID remap] Remapped project IDs:', _projIdRemap);
+    }
+
+    // Schema migration + enforce canonical daily_cost values
+    var _canonicalCosts = {
+      'Koen':462,'Siebeline':365,'Marco':462,'Kamiel':185,
+      'Paul':535,'Mees':222,'Stein':369,'Ralph':427
+    };
     for (var ei = 0; ei < store.employees.length; ei++) {
-      if (!store.employees[ei].vacation_days_per_year) store.employees[ei].vacation_days_per_year = 25;
+      var emp = store.employees[ei];
+      if (!emp.vacation_days_per_year) emp.vacation_days_per_year = 25;
+      // Always enforce correct daily_cost for known team members
+      if (_canonicalCosts.hasOwnProperty(emp.name)) {
+        emp.daily_cost = _canonicalCosts[emp.name];
+      }
     }
     for (var pi = 0; pi < store.projects.length; pi++) {
       var p = store.projects[pi];
@@ -1239,6 +1298,19 @@ async function supaLoadAll() {
     // Guarantee real projects/employees always present
     DB._ensureRealProjects();
     DB._ensureRealEmployees();
+    // Data integrity: for any project that has invoices entries,
+    // remove partner_invoices entries to prevent double-counting.
+    if(Array.isArray(store.invoices)&&Array.isArray(store.partner_invoices)){
+      var projsWithInvoices={};
+      store.invoices.forEach(function(i){if(i.project_id)projsWithInvoices[i.project_id]=true;});
+      var origPILen=store.partner_invoices.length;
+      store.partner_invoices=store.partner_invoices.filter(function(pi){
+        return!projsWithInvoices[pi.project_id];
+      });
+      if(store.partner_invoices.length<origPILen){
+        console.log('[Data integrity] Removed '+(origPILen-store.partner_invoices.length)+' orphaned partner_invoices');
+      }
+    }
     localStorage.setItem('sp-v5', JSON.stringify(store));
     console.log('[Supabase] Loaded from cloud');
     return true;
@@ -1256,6 +1328,12 @@ async function pushAllToSupabase() {
     if (!online) { showToast('Cannot reach Supabase \u2014 check connection', 'error'); return; }
 
     var store = DB._gs();
+    // Enforce correct daily_cost before pushing to Supabase
+    var _pushCostMap = {Koen:462,Siebeline:365,Marco:462,Kamiel:185,Paul:535,Mees:222,Stein:369,Ralph:427};
+    var store0 = DB._gs();
+    store0.employees.forEach(function(e){if(_pushCostMap.hasOwnProperty(e.name))e.daily_cost=_pushCostMap[e.name];});
+    localStorage.setItem('sp-v5', JSON.stringify(store0));
+
     var tables = ['projects','employees','fixed_costs','invoices','future_costs',
       'partner_invoices','bank_transactions','vacations','staffing','cashflow_months'];
     var pushed = 0;
@@ -1315,6 +1393,33 @@ async function pushAllToSupabase() {
   } catch(e) {
     console.error('[Supabase] Push failed:', e);
     showToast('Push failed: ' + (e.message || 'unknown error'), 'error');
+  }
+}
+
+// PULL FROM SUPABASE — force reload all data from cloud
+async function pullFromSupabase(){
+  try{
+    showToast('Pulling from Supabase…','info');
+    var online=await _supaCheckOnline();
+    if(!online){showToast('Cannot reach Supabase','error');return;}
+    // Force fresh load: clear cached store so _gs() re-reads
+    DB._store=null;
+    var ok=await supaLoadAll();
+    if(ok){
+      await loadData();
+      renderDashboard&&renderDashboard();
+      renderInvoices&&renderInvoices();
+      renderPartner&&renderPartner();
+      renderProjects&&renderProjects();
+      showToast('Pulled latest data from Supabase','success');
+      var dsEl=document.getElementById('nav-data-source');
+      if(dsEl)dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">&#x25CF; Supabase live</span>';
+    } else {
+      showToast('Pull failed — Supabase may be empty','warning');
+    }
+  }catch(e){
+    console.error('Pull failed:',e);
+    showToast('Pull failed: '+(e.message||'unknown'),'error');
   }
 }
 
@@ -1871,15 +1976,17 @@ function renderDashboard(){
 
   // Week widgets — rendered separately so horizon toggle works standalone
   renderWeekWidgets();
+  setTimeout(renderStaffingBreakdown,50);
 
-  // 6-month Revenue Trend — SVG line chart (always renders if data exists)
-  const months6=[];for(let i=5;i>=0;i--){let mm=m-i,yy=y;if(mm<1){mm+=12;yy--;}months6.push({y:yy,m:mm});}
-  const chartData6=months6.map(({y,m})=>({
-    y,m,
-    lbl:new Date(y,m-1,1).toLocaleDateString('en',{month:'short'}),
-    r:revForMonth(y,m,'confirmed'),
-    dr:revForMonth(y,m,'draft'),
-    c:staffCostMonth(y,m)+fixedMonthly()
+  // Full-year Revenue Trend (Jan → Dec of selected year)
+  const chartYear=y;
+  const months6=[];for(let mi=1;mi<=12;mi++)months6.push({y:chartYear,m:mi});
+  const chartData6=months6.map(({y:cy,m:cm})=>({
+    y:cy,m:cm,
+    lbl:new Date(cy,cm-1,1).toLocaleDateString('en',{month:'short'}),
+    r:revForMonth(cy,cm,'confirmed'),
+    dr:revForMonth(cy,cm,'draft'),
+    c:staffCostMonth(cy,cm)+fixedMonthly()
   }));
   setTimeout(()=>{
     const hasAnyChartData=chartData6.some(d=>d.r>0||d.dr>0||d.c>0);
@@ -1893,7 +2000,7 @@ function renderDashboard(){
       const cW=W-PAD.l-PAD.r,cH=H-PAD.t-PAD.b;
       const allVals=[...chartData6.map(d=>d.r+d.dr),...chartData6.map(d=>d.c),0];
       const maxV=Math.max(...allVals,1);
-      const xp=i=>PAD.l+i*(cW/5);
+      const xp=i=>PAD.l+i*(cW/11);
       const yp=v=>PAD.t+cH*(1-v/maxV);
       let svg=`<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible;font-family:var(--font)">`;
       for(let g=0;g<=3;g++){
@@ -1902,7 +2009,7 @@ function renderDashboard(){
         svg+=`<text x="${(PAD.l-5).toFixed(1)}" y="${(yl+3.5).toFixed(1)}" text-anchor="end" font-size="8.5" fill="var(--t3)">€${Math.round(yv/1000)}k</text>`;
       }
       const costArea='M'+chartData6.map((d,i)=>`${xp(i).toFixed(1)},${yp(d.c).toFixed(1)}`).join(' L')+
-        ` L${xp(5).toFixed(1)},${yp(0).toFixed(1)} L${xp(0).toFixed(1)},${yp(0).toFixed(1)}Z`;
+        ` L${xp(11).toFixed(1)},${yp(0).toFixed(1)} L${xp(0).toFixed(1)},${yp(0).toFixed(1)}Z`;
       svg+=`<path d="${costArea}" fill="var(--pink)" opacity=".18"/>`;
       if(chartData6.some(d=>d.dr>0)){
         const draftArea='M'+chartData6.map((d,i)=>`${xp(i).toFixed(1)},${yp(d.r+d.dr).toFixed(1)}`).join(' L')+
@@ -1910,7 +2017,7 @@ function renderDashboard(){
         svg+=`<path d="${draftArea}" fill="var(--amber)" opacity=".15"/>`;
       }
       const revArea='M'+chartData6.map((d,i)=>`${xp(i).toFixed(1)},${yp(d.r).toFixed(1)}`).join(' L')+
-        ` L${xp(5).toFixed(1)},${yp(0).toFixed(1)} L${xp(0).toFixed(1)},${yp(0).toFixed(1)}Z`;
+        ` L${xp(11).toFixed(1)},${yp(0).toFixed(1)} L${xp(0).toFixed(1)},${yp(0).toFixed(1)}Z`;
       svg+=`<path d="${revArea}" fill="var(--blue)" opacity=".1"/>`;
       const costPts=chartData6.map((d,i)=>`${xp(i).toFixed(1)},${yp(d.c).toFixed(1)}`).join(' ');
       svg+=`<polyline points="${costPts}" fill="none" stroke="var(--pink)" stroke-width="1.5" stroke-dasharray="4,3" opacity=".8"/>`;
@@ -2122,7 +2229,7 @@ function showWeekDetail(wk,ctxYear,ctxMonth){
       const activeDays=Math.min(pE,wE)-Math.max(pS,wS)+1;
       const wkCount=Math.max(1,projectWkCount(p));
       const dailyRate=p.revenue/wkCount/7;
-      const staff=S.staffing.filter(s=>s.project_id===p.id&&s.week_key===wk);
+      const staff=S.staffing.filter(s=>(s.project_id===p.id||s.project_id==p.id)&&s.week_key===wk);
       const totalDays=staff.reduce((s,x)=>s+x.days,0);
       // Staffing cost this week for this project
       const staffCost=staff.reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
@@ -2588,6 +2695,175 @@ function renderStaffing(){
   document.getElementById('staffing-grid').innerHTML=`<table>${thead}${tbody}</table>`;
 }
 
+// ══ MONTHLY STAFFING COST BREAKDOWN ════════════════════════════════════
+function renderStaffingBreakdown(){
+  const wrap=document.getElementById('staffing-breakdown-wrap');
+  if(!wrap)return;
+  const y=S.dashMonth.y;
+  const months=[];
+  for(var mi=1;mi<=12;mi++)months.push({y:y,m:mi});
+  // Pre-compute max cost for bar scaling
+  var maxCost=0;
+  months.forEach(function(mo){var c=staffCostMonth(mo.y,mo.m);if(c>maxCost)maxCost=c;});
+  if(!maxCost)maxCost=1;
+
+  var rows=months.map(function(mo){
+    var ry=mo.y,rm=mo.m;
+    var weeks=getWeeksInMonth(ry,rm);
+    var lbl=new Date(ry,rm-1,1).toLocaleDateString('en',{month:'short'});
+    var isNow=(ry===S.dashMonth.y&&rm===S.dashMonth.m);
+    var allStaff=S.staffing.filter(function(s){return weeks.includes(s.week_key);});
+    var totalCost=allStaff.reduce(function(sum,s){
+      var e=S.employees.find(function(e){return e.id===s.employee_id;});
+      return sum+(e?e.daily_cost*s.days:0);
+    },0);
+    // Top projects by cost
+    var projMap={};
+    allStaff.forEach(function(s){
+      var e=S.employees.find(function(e){return e.id===s.employee_id;});
+      var p=S.projects.find(function(p){return p.id===s.project_id;});
+      if(!e||!p)return;
+      if(!projMap[p.id])projMap[p.id]={name:p.client_name,cost:0};
+      projMap[p.id].cost+=e.daily_cost*s.days;
+    });
+    var top3=Object.values(projMap).sort(function(a,b){return b.cost-a.cost;}).slice(0,3);
+    var rest=Object.values(projMap).length>3?Object.values(projMap).sort(function(a,b){return b.cost-a.cost;}).slice(3).reduce(function(s,p){return s+p.cost;},0):0;
+    var barW=(totalCost/maxCost*100).toFixed(1);
+    return`<tr style="${isNow?'background:var(--blue-p)':''}">
+      <td style="padding:7px 14px;font-weight:${isNow?700:600};color:${isNow?'var(--blue)':'var(--navy)'};white-space:nowrap;font-size:12px">${lbl}</td>
+      <td style="padding:7px 14px;min-width:90px">
+        <div style="height:6px;background:var(--bdr);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${barW}%;background:${isNow?'var(--blue)':'var(--navy)'};border-radius:3px;transition:width .3s"></div>
+        </div>
+      </td>
+      <td style="padding:7px 14px;text-align:right;font-family:var(--mono);font-weight:700;color:${totalCost>0?'var(--red)':'var(--t3)'};font-size:13px;white-space:nowrap">${totalCost>0?fmt(totalCost):'—'}</td>
+      <td style="padding:7px 14px;font-size:11px;max-width:320px">
+        ${top3.map(function(p){return`<span style="display:inline-block;background:var(--bg2);border:1px solid var(--bdr);border-radius:3px;padding:1px 7px;margin:1px;font-size:10px;white-space:nowrap">${esc(p.name)} <strong>${fmt(p.cost)}</strong></span>`;}).join('')}
+        ${rest>0?`<span style="font-size:10px;color:var(--t3)">+${fmt(rest)} more</span>`:''}
+      </td>
+      <td style="padding:7px 14px;text-align:right">
+        <button class="btn btn-sm btn-ghost" style="font-size:9px;white-space:nowrap" onclick="openStaffingBreakdownModal(${ry},${rm})">Detail →</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
+      <th style="padding:6px 14px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Month</th>
+      <th style="padding:6px 14px;min-width:90px;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Scale</th>
+      <th style="padding:6px 14px;text-align:right;font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Total Cost</th>
+      <th style="padding:6px 14px;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Top Projects</th>
+      <th style="padding:6px 14px;width:70px"></th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function openStaffingBreakdownModal(y,m){
+  var weeks=getWeeksInMonth(y,m);
+  var lbl=new Date(y,m-1,1).toLocaleDateString('en',{month:'long',year:'numeric'});
+  var allStaff=S.staffing.filter(function(s){return weeks.includes(s.week_key);});
+
+  // Build per-project map with per-employee sub-breakdown
+  var projMap={};
+  allStaff.forEach(function(s){
+    var e=S.employees.find(function(e){return e.id===s.employee_id;});
+    var p=S.projects.find(function(p){return p.id===s.project_id;});
+    if(!e||!p)return;
+    if(!projMap[p.id])projMap[p.id]={name:p.client_name+' / '+p.name,cost:0,days:0,emps:{}};
+    projMap[p.id].cost+=e.daily_cost*s.days;
+    projMap[p.id].days+=s.days;
+    if(!projMap[p.id].emps[e.id])projMap[p.id].emps[e.id]={name:e.name,cost:0,days:0,rate:e.daily_cost};
+    projMap[p.id].emps[e.id].cost+=e.daily_cost*s.days;
+    projMap[p.id].emps[e.id].days+=s.days;
+  });
+
+  // Build per-employee map
+  var empMap={};
+  allStaff.forEach(function(s){
+    var e=S.employees.find(function(e){return e.id===s.employee_id;});
+    if(!e)return;
+    if(!empMap[e.id])empMap[e.id]={name:e.name,role:e.role||'',rate:e.daily_cost,cost:0,days:0};
+    empMap[e.id].cost+=e.daily_cost*s.days;
+    empMap[e.id].days+=s.days;
+  });
+
+  var totalCost=Object.values(projMap).reduce(function(s,p){return s+p.cost;},0);
+  var projList=Object.values(projMap).sort(function(a,b){return b.cost-a.cost;});
+  var empList=Object.values(empMap).sort(function(a,b){return b.cost-a.cost;});
+  var totalDays=empList.reduce(function(s,e){return s+e.days;},0);
+
+  var projHTML=projList.length?projList.map(function(p){
+    var pct=totalCost>0?(p.cost/totalCost*100).toFixed(1):0;
+    var empRows=Object.values(p.emps).sort(function(a,b){return b.cost-a.cost;}).map(function(e){
+      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 12px 4px 24px;border-top:1px solid var(--bdr);font-size:11px">
+        <span style="color:var(--t2)">${esc(e.name)} <span style="color:var(--t3);font-size:10px">${e.days}d × €${e.rate}/d</span></span>
+        <span style="font-family:var(--mono);font-weight:600;color:var(--t1)">${fmt(e.cost)}</span>
+      </div>`;
+    }).join('');
+    return`<div style="border:1px solid var(--bdr);border-radius:6px;margin-bottom:8px;overflow:hidden">
+      <div style="display:flex;align-items:center;padding:9px 12px;background:var(--bg2);gap:10px">
+        <div style="flex:1;font-weight:700;font-size:12px;color:var(--navy)">${esc(p.name)}</div>
+        <div style="font-size:10px;color:var(--t3)">${p.days}d &nbsp;·&nbsp; ${pct}%</div>
+        <div style="font-family:var(--mono);font-weight:800;color:var(--red);font-size:13px">${fmt(p.cost)}</div>
+      </div>${empRows}
+    </div>`;
+  }).join(''):'<div class="empty" style="padding:16px">No staffing entries this month</div>';
+
+  var empTableRows=empList.map(function(e){
+    var pct=totalCost>0?(e.cost/totalCost*100).toFixed(1):0;
+    return`<tr style="border-bottom:1px solid var(--bdr)">
+      <td style="padding:7px 10px;font-weight:600">${esc(e.name)}</td>
+      <td style="padding:7px 10px;color:var(--t3);font-size:11px">${esc(e.role)}</td>
+      <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-size:11px">€${e.rate}/d</td>
+      <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${e.days}d</td>
+      <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(e.cost)}</td>
+      <td style="padding:7px 10px;text-align:right;font-size:10px;color:var(--t3)">${pct}%</td>
+    </tr>`;
+  }).join('');
+
+  var mo=document.getElementById('modal-overlay');
+  var mc=document.getElementById('modal-content');
+  mo.classList.add('open');
+  mc.innerHTML=`
+    <div class="modal-header">
+      <div class="modal-title">Staffing Cost Breakdown — ${lbl}</div>
+      <div class="modal-x" onclick="closeModal()">&#x2715;</div>
+    </div>
+    <div class="modal-body" style="max-height:72vh;overflow-y:auto">
+      <div class="kpi-row mb-14">
+        <div class="kpi ar"><div class="kpi-lbl">Total Staffing Cost</div><div class="kpi-val red">${fmt(totalCost)}</div></div>
+        <div class="kpi an"><div class="kpi-lbl">Projects</div><div class="kpi-val">${projList.length}</div></div>
+        <div class="kpi an"><div class="kpi-lbl">Employees</div><div class="kpi-val">${empList.length}</div></div>
+        <div class="kpi an"><div class="kpi-lbl">Total Days</div><div class="kpi-val">${totalDays}d</div></div>
+      </div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Breakdown by Project</div>
+      ${projHTML}
+      ${empList.length?`
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin:16px 0 8px">Summary by Employee</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
+          <th style="padding:6px 10px;text-align:left">Name</th>
+          <th style="padding:6px 10px;text-align:left">Role</th>
+          <th style="padding:6px 10px;text-align:right">Rate</th>
+          <th style="padding:6px 10px;text-align:right">Days</th>
+          <th style="padding:6px 10px;text-align:right;color:var(--red)">Cost</th>
+          <th style="padding:6px 10px;text-align:right">Share</th>
+        </tr></thead>
+        <tbody>${empTableRows}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--bdr2);background:var(--bg2);font-weight:700">
+          <td colspan="3" style="padding:7px 10px">Total</td>
+          <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${totalDays}d</td>
+          <td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--red);font-size:13px">${fmt(totalCost)}</td>
+          <td style="padding:7px 10px;text-align:right">100%</td>
+        </tr></tfoot>
+      </table>`:''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal()">Close</button>
+    </div>`;
+}
+
 // ══ BULK STAFFING — Assign person to entire project ══════════════════
 function openBulkStaffModal(){
   if(!requireAdmin('Bulk staffing'))return;
@@ -3008,9 +3284,15 @@ function renderInvoices(){
     <div class="kpi an"><div class="kpi-lbl">Not Sent Yet</div><div class="kpi-val">${pending}</div></div>`;
 
   // ── Auto-populate confirmed project tracker ────────────────────────────────
-  const confProjects=S.projects.filter(p=>p.status==='confirmed');
+  const confProjects=S.projects.filter(p=>{
+    if(p.status!=='confirmed')return false;
+    const _xInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
+    const _xAllPaid=_xInvs.length>0&&_xInvs.every(i=>i.paid);
+    const _xInvoiced=_xInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+    return!(_xAllPaid&&_xInvoiced>=p.revenue&&p.revenue>0);
+  });
   document.getElementById('inv-proj-tbody').innerHTML=confProjects.map(p=>{
-    const pInvs=S.invoices.filter(i=>i.project_id===p.id);
+    const pInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
     const invoiced=pInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
     const outstanding2=Math.max(0,p.revenue-invoiced);
     const allDraft=pInvs.every(i=>i.draft_created)||pInvs.length===0;
@@ -3047,10 +3329,37 @@ function renderInvoices(){
       </td>
       <td>
         <button class="btn btn-sm btn-blue" style="font-size:9px" onclick="openInvoiceForProject(${p.id})">+ Create Invoice</button>
-        ${pInvs.length>0?`<button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red);margin-left:3px" onclick="invResetProject(${p.id})" title="Reset all invoice status">↺</button>`:''}
+        ${pInvs.length>0?`
+        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--amber);margin-left:3px" onclick="invResetProject(${p.id})" title="Reset status flags">↺</button>
+        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red);margin-left:3px" onclick="invDeleteAllForProject(${p.id})" title="Delete all invoice rows">🗑</button>`:''}
       </td>
     </tr>`;
   }).join('')||'<tr><td colspan="9" class="empty">No confirmed projects yet</td></tr>';
+
+  // ── Paid projects sub-section in tracker ────────────────────────────────────
+  const paidProjsAll=S.projects.filter(p=>{
+    if(p.status!=='confirmed')return false;
+    const _pInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
+    const _allPaid=_pInvs.length>0&&_pInvs.every(i=>i.paid);
+    const _inv=_pInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+    return _allPaid&&_inv>=p.revenue&&p.revenue>0;
+  });
+  const _ppWrap=document.getElementById('inv-paid-projects-wrap');
+  const _ppTbody=document.getElementById('inv-proj-paid-tbody');
+  const _ppCount=document.getElementById('inv-paid-projects-count');
+  if(_ppWrap)_ppWrap.style.display=paidProjsAll.length?'':'none';
+  if(_ppCount)_ppCount.textContent=paidProjsAll.length+' project'+(paidProjsAll.length!==1?'s':'')+' · fully paid';
+  if(_ppTbody)_ppTbody.innerHTML=paidProjsAll.map(p=>{
+    const _pInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
+    const _inv=_pInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+    return`<tr style="opacity:.55;background:var(--green-p)">
+      <td style="padding:7px 14px"><div style="font-weight:600;font-size:12px;color:var(--t2)">${esc(p.client_name)}</div><div style="font-size:10px;color:var(--t3)">${esc(p.name)}</div></td>
+      <td class="right mono" style="padding:7px 10px;color:var(--t2)">${fmt(p.revenue)}</td>
+      <td class="right mono" style="padding:7px 10px;color:var(--green);font-weight:700">${fmt(_inv)}</td>
+      <td class="right mono" style="padding:7px 10px"><span style="color:var(--green);font-weight:700">✓ Fully Paid</span></td>
+      <td style="padding:7px 10px;font-size:10px;color:var(--t3)" colspan="5">—</td>
+    </tr>`;
+  }).join('');
 
   // ── All invoices list — separated into Open and Paid ──────────────────────
   const sorted=[...S.invoices].sort((a,b)=>(b.month||'')>(a.month||'')?1:-1);
@@ -3064,7 +3373,8 @@ function renderInvoices(){
     else if(inv.invoice_sent){statusBadge='<span class="badge" style="background:var(--blue-p);color:var(--blue);border:1px solid var(--blue-l)">Awaiting payment</span>';}
     else if(inv.draft_created){statusBadge='<span class="badge" style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber)">Awaiting to be sent</span>';}
     else{statusBadge='<span class="badge" style="background:var(--bg3);color:var(--t3)">Not started</span>';}
-    return`<tr${inv.paid?' style="opacity:.75"':''}>
+    const paidStyle=inv.paid?' style="opacity:.5;background:var(--green-p);border-left:3px solid var(--green);"':'';
+    return`<tr${paidStyle}>
       <td class="bold">${esc(proj?proj.name:'?')}</td>
       <td>${esc(proj?proj.client_name:'?')}</td>
       <td class="right bold">${fmt(parseFloat(inv.amount||0))}</td>
@@ -3122,6 +3432,20 @@ async function invResetProject(projectId){
     await DB.update('invoices',inv.id,{draft_created:0,invoice_sent:0,paid:0});
   }
   await loadData();renderInvoices();
+}
+async function invDeleteAllForProject(projectId){
+  const invs=S.invoices.filter(i=>i.project_id===projectId);
+  const piInvs=S.partnerInvoices.filter(pi=>pi.project_id===projectId);
+  const total=invs.length+piInvs.length;
+  if(!total){showToast('No invoice rows to delete');return;}
+  const proj=S.projects.find(p=>p.id===projectId);
+  if(!confirm('Delete all '+total+' invoice row'+(total!==1?'s':'')+' for '+(proj?.client_name||'this project')+'? This cannot be undone.'))return;
+  for(const inv of invs)await DB.delete('invoices',inv.id);
+  for(const pi of piInvs)await DB.delete('partner_invoices',pi.id);
+  await loadData();
+  renderInvoices();
+  if(typeof renderPartner==='function')renderPartner();
+  showToast('Deleted '+total+' invoice row'+(total!==1?'s':'')+' — totals recalculated','success');
 }
 function showClientInvoiceHistory(clientName){
   const projList=S.projects.filter(p=>p.client_name===clientName);
@@ -3610,269 +3934,159 @@ function fixedMonthlySplit(){
 
 function renderFixedCosts(){
   const allEntries=S.fixedCosts.filter(c=>c.active);
-  const cats=getFCCategories();
-
-  // Populate filter dropdown
-  const filterCatEl=document.getElementById('fc-filter-cat');
-  const filterVatEl=document.getElementById('fc-filter-vat');
+  const fCatEl=document.getElementById('fc-filter-cat');
+  const fVatEl=document.getElementById('fc-filter-vat');
   const sortEl=document.getElementById('fc-sort');
-  if(filterCatEl){
-    const curCat=filterCatEl.value;
-    filterCatEl.innerHTML='<option value="">All Categories</option>'+
-      [...new Set(allEntries.map(c=>c.category||'Uncategorised'))].sort().map(c=>
-        `<option value="${esc(c)}"${curCat===c?' selected':''}>${esc(c)}</option>`).join('');
-    filterCatEl.value=curCat;
+  if(fCatEl){
+    const cur=fCatEl.value;
+    fCatEl.innerHTML='<option value="">All</option>'+
+      [...new Set(allEntries.map(c=>c.category||'Uncategorised'))].sort()
+       .map(c=>`<option value="${esc(c)}"${cur===c?' selected':''}>${esc(c)}</option>`).join('');
+    fCatEl.value=cur;
   }
-  const filterCat=filterCatEl?filterCatEl.value:'';
-  const filterVat=filterVatEl?filterVatEl.value:'';
-  const sortMode=sortEl?sortEl.value:'cat';
+  const fCat=fCatEl?.value||'';
+  const fVat=fVatEl?.value||'';
+  const sMode=sortEl?.value||'cat';
 
-  // Apply filters
   let entries=allEntries.filter(c=>{
-    if(filterCat&&(c.category||'Uncategorised')!==filterCat)return false;
-    if(filterVat&&(c.vat_type||'incl')!==filterVat)return false;
+    if(fCat&&(c.category||'Uncategorised')!==fCat)return false;
+    if(fVat&&(c.vat_type||'incl')!==fVat)return false;
     return true;
   });
+  const sorted=[...entries].sort((a,b)=>{
+    if(sMode==='name')return(a.name||'').localeCompare(b.name||'');
+    if(sMode==='amount-desc')return fcEntryExcl(b)-fcEntryExcl(a);
+    if(sMode==='amount-asc')return fcEntryExcl(a)-fcEntryExcl(b);
+    const ca=a.category||'Uncategorised',cb=b.category||'Uncategorised';
+    if(ca!==cb){if(ca==='Uncategorised')return 1;if(cb==='Uncategorised')return-1;return ca.localeCompare(cb);}
+    return(a.name||'').localeCompare(b.name||'');
+  });
 
-  // Apply sort
-  if(sortMode==='name') entries=[...entries].sort((a,b)=>(a.name||'').localeCompare(b.name||''));
-  else if(sortMode==='amount-asc') entries=[...entries].sort((a,b)=>fcEntryExcl(a)-fcEntryExcl(b));
-  else if(sortMode==='amount-desc') entries=[...entries].sort((a,b)=>fcEntryExcl(b)-fcEntryExcl(a));
+  const tGross=entries.reduce((s,c)=>s+fcEntryIncl(c),0);
+  const tVat  =entries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
+  const tNet  =entries.reduce((s,c)=>s+fcEntryExcl(c),0);
 
-  // Grand totals (filtered)
-  const totalGross=entries.reduce((s,c)=>s+fcEntryIncl(c),0);
-  const totalVat=entries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
-  const totalNet=entries.reduce((s,c)=>s+fcEntryExcl(c),0);
-  const isFiltered=filterCat||filterVat;
-
-  const grandKpis=document.getElementById('fc-grand-kpis');
-  if(grandKpis) grandKpis.innerHTML=`
+  // KPI row
+  const kpiEl=document.getElementById('fc-grand-kpis');
+  if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
-      <div class="kpi-lbl">Monthly Gross${isFiltered?' (filtered)':''}</div>
-      <div class="kpi-val">${fmt(totalGross)}</div>
-      <div class="kpi-sub">Total entered amounts</div>
-    </div>
+      <div class="kpi-lbl">Monthly Gross</div><div class="kpi-val">${fmt(tGross)}</div>
+      <div class="kpi-sub">${entries.length} active entries</div></div>
     <div class="kpi aa">
-      <div class="kpi-lbl">VAT (BTW)${isFiltered?' (filtered)':''}</div>
-      <div class="kpi-val amber">${fmt(totalVat)}</div>
-      <div class="kpi-sub">To reclaim</div>
-    </div>
+      <div class="kpi-lbl">VAT (BTW)</div><div class="kpi-val amber">${fmt(tVat)}</div>
+      <div class="kpi-sub">Reclaimable</div></div>
     <div class="kpi ar" style="border-left:3px solid var(--red)">
-      <div class="kpi-lbl">Monthly Net${isFiltered?' (filtered)':''}</div>
-      <div class="kpi-val red">${fmt(totalNet)}</div>
-      <div class="kpi-sub">Excl. VAT · <strong>leads P&amp;L</strong></div>
-    </div>
+      <div class="kpi-lbl">Monthly Net</div><div class="kpi-val red">${fmt(tNet)}</div>
+      <div class="kpi-sub">Excl. VAT · leads P&L</div></div>
     <div class="kpi ar">
-      <div class="kpi-lbl">Annual Net${isFiltered?' (filtered)':''}</div>
-      <div class="kpi-val red">${fmt(totalNet*12)}</div>
-      <div class="kpi-sub">×12 months</div>
-    </div>`;
+      <div class="kpi-lbl">Annual Net</div><div class="kpi-val red">${fmt(tNet*12)}</div>
+      <div class="kpi-sub">× 12 months</div></div>`;
 
-  // VAT type badge helper
-  const vatBadge=(c)=>{
-    const type=c.vat_type||'incl';
-    const pct=getFCVat(c);
-    if(type==='none')return`<span style="background:#f0f9f4;color:#27ae60;border-radius:3px;padding:2px 6px;font-size:10px;font-weight:700">No VAT</span>`;
-    if(type==='excl')return`<span style="background:#fff8e6;color:#b8860b;border-radius:3px;padding:2px 6px;font-size:10px;font-weight:700">+${pct}%</span>`;
-    return`<span style="background:var(--amber-p);color:var(--amber);border-radius:3px;padding:2px 6px;font-size:10px;font-weight:700">${pct}% in</span>`;
+  // Group by category
+  const grouped={};
+  sorted.forEach(c=>{const cat=c.category||'Uncategorised';if(!grouped[cat])grouped[cat]=[];grouped[cat].push(c);});
+  const cats=Object.keys(grouped);
+  if(!fCat&&!fVat)getFCCategories().forEach(cat=>{if(!cats.includes(cat)){cats.push(cat);grouped[cat]=[];}});
+  cats.sort((a,b)=>{if(a==='Uncategorised')return 1;if(b==='Uncategorised')return-1;return a.localeCompare(b);});
+
+  const vatBadge=c=>{
+    const t=c.vat_type||'incl',p=getFCVat(c);
+    if(t==='none')return`<span style="background:#f0f9f4;color:#27ae60;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700">No VAT</span>`;
+    if(t==='excl')return`<span style="background:#fff8e6;color:#b8860b;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700">+${p}%</span>`;
+    return`<span style="background:var(--amber-p);color:var(--amber);border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700">${p}% in</span>`;
   };
 
-  // Group entries by category
-  const grouped={};
-  entries.forEach(c=>{
-    const cat=c.category||'Uncategorised';
-    if(!grouped[cat])grouped[cat]=[];
-    grouped[cat].push(c);
-  });
-  // Show empty registered categories (only when no filter active)
-  if(!isFiltered) cats.forEach(cat=>{if(!grouped[cat])grouped[cat]=[];});
-  // Sort category keys
-  let catKeys=Object.keys(grouped);
-  if(sortMode==='cat'){
-    catKeys.sort((a,b)=>{
-      if(a==='Uncategorised')return 1;if(b==='Uncategorised')return -1;
-      return a.localeCompare(b);
-    });
-  } else {
-    catKeys.sort((a,b)=>a.localeCompare(b));
-  }
+  const cardsEl=document.getElementById('fc-category-cards');
+  if(!cardsEl)return;
 
-  // ── View toggle: flat table vs category accordion ────────────────────────
-  const fcView=S.fcView||'table';
-  const tableView=document.getElementById('fc-table-view');
-  const accordView=document.getElementById('fc-categories-wrap');
-  if(tableView)tableView.style.display=fcView==='table'?'':'none';
-  if(accordView)accordView.style.display=fcView==='accordion'?'':'none';
-  document.getElementById('fcv-table')?.classList.toggle('active',fcView==='table');
-  document.getElementById('fcv-accordion')?.classList.toggle('active',fcView==='accordion');
-
-  // ── FLAT TABLE VIEW ────────────────────────────────────────────────────────
-  if(fcView==='table'){
-    // Build category totals for subtotal rows
-    const catTotals={};
-    entries.forEach(c=>{
-      const cat=c.category||'Uncategorised';
-      if(!catTotals[cat])catTotals[cat]={gross:0,vat:0,net:0,count:0};
-      catTotals[cat].gross+=fcEntryIncl(c);
-      catTotals[cat].vat+=fcEntryVatAmt(c);
-      catTotals[cat].net+=fcEntryExcl(c);
-      catTotals[cat].count++;
-    });
-    // Sort entries by category then name (or by selected sort)
-    const sortedEntries=sortMode==='cat'
-      ?[...entries].sort((a,b)=>{
-          const ca=(a.category||'Uncategorised'),cb=(b.category||'Uncategorised');
-          if(ca!==cb){if(ca==='Uncategorised')return 1;if(cb==='Uncategorised')return -1;return ca.localeCompare(cb);}
-          return (a.name||'').localeCompare(b.name||'');
-        })
-      :entries;
-
-    // Group sorted entries for subtotal row insertion
-    let currentCat=null,rows='';
-    sortedEntries.forEach((c,idx)=>{
-      const cat=c.category||'Uncategorised';
-      // Insert category subtotal when category changes (only in cat sort mode)
-      if(sortMode==='cat'&&currentCat!==null&&cat!==currentCat){
-        const t=catTotals[currentCat];
-        rows+=`<tr style="background:var(--bg2);font-weight:700;border-top:1px solid var(--bdr2)">
-          <td style="padding:5px 10px;font-size:11px;color:var(--navy)">Subtotal: ${esc(currentCat)}</td>
-          <td></td>
-          <td class="right mono" style="font-size:11px">${fmt(t.gross)}</td>
-          <td></td>
-          <td class="right mono" style="color:var(--amber);font-size:11px">${fmt(t.vat)}</td>
-          <td class="right mono" style="color:var(--red);font-size:12px">${fmt(t.net)}</td>
-          <td class="right mono" style="color:var(--t3);font-size:11px">${fmt(t.net*12)}</td>
-          <td></td>
-        </tr>`;
-      }
-      currentCat=cat;
-      rows+=`<tr style="border-bottom:1px solid var(--bdr)">
-        <td style="padding:7px 10px;font-weight:600">${esc(c.name)}</td>
-        <td style="padding:7px 10px"><span style="background:var(--bg2);border:1px solid var(--bdr);border-radius:3px;padding:2px 7px;font-size:10px;color:var(--ink2)">${esc(cat)}</span></td>
-        <td class="right mono" style="padding:7px 10px">${fmt(fcEntryIncl(c))}</td>
-        <td class="center" style="padding:7px 10px">${vatBadge(c)}</td>
-        <td class="right mono" style="padding:7px 10px;color:var(--amber)">${fmt(fcEntryVatAmt(c))}</td>
-        <td class="right mono" style="padding:7px 10px;font-weight:700;color:var(--red)">${fmt(fcEntryExcl(c))}</td>
-        <td class="right mono" style="padding:7px 10px;color:var(--t3)">${fmt(fcEntryExcl(c)*12)}</td>
-        <td style="padding:7px 10px;text-align:right">
-          <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
-          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteFCEntry(${c.id})">✕</button>
-        </td>
-      </tr>`;
-    });
-    // Final subtotal for last category (cat sort mode)
-    if(sortMode==='cat'&&currentCat!==null){
-      const t=catTotals[currentCat];
-      rows+=`<tr style="background:var(--bg2);font-weight:700;border-top:1px solid var(--bdr2)">
-        <td style="padding:5px 10px;font-size:11px;color:var(--navy)">Subtotal: ${esc(currentCat)}</td>
-        <td></td>
-        <td class="right mono" style="font-size:11px">${fmt(t.gross)}</td>
-        <td></td>
-        <td class="right mono" style="color:var(--amber);font-size:11px">${fmt(t.vat)}</td>
-        <td class="right mono" style="color:var(--red);font-size:12px">${fmt(t.net)}</td>
-        <td class="right mono" style="color:var(--t3);font-size:11px">${fmt(t.net*12)}</td>
-        <td></td>
-      </tr>`;
-    }
-    const flatTbody=document.getElementById('fc-flat-tbody');
-    if(flatTbody)flatTbody.innerHTML=rows||'<tr><td colspan="8" class="empty">No entries match the current filter.</td></tr>';
-    const flatTfoot=document.getElementById('fc-flat-tfoot');
-    if(flatTfoot)flatTfoot.innerHTML=`<tr style="background:var(--navy);color:#fff;font-weight:700">
-      <td style="padding:8px 10px;font-size:12px">GRAND TOTAL (${entries.length} entries)</td>
-      <td></td>
-      <td class="right mono" style="padding:8px 10px;font-size:12px">${fmt(totalGross)}</td>
-      <td></td>
-      <td class="right mono" style="padding:8px 10px;color:#f0c060;font-size:12px">${fmt(totalVat)}</td>
-      <td class="right mono" style="padding:8px 10px;color:#ff9090;font-size:13px;font-weight:800">${fmt(totalNet)}/mo</td>
-      <td class="right mono" style="padding:8px 10px;color:#aac8f8;font-size:12px">${fmt(totalNet*12)}/yr</td>
-      <td></td>
-    </tr>`;
-    return; // Don't render accordion in table view
-  }
-
-  // ── ACCORDION VIEW ────────────────────────────────────────────────────────
-  const wrap=document.getElementById('fc-categories-wrap');
-  if(!wrap)return;
-  if(!catKeys.length){
-    wrap.innerHTML=`<div class="card"><div class="card-body"><div class="empty">No entries match the current filter.</div></div></div>`;
+  if(!cats.length){
+    cardsEl.innerHTML=`<div class="card"><div class="card-body"><div class="empty">No cost entries yet. Click + Add Cost Entry to begin.</div></div></div>`;
+    document.getElementById('fc-grand-total-card').innerHTML='';
     return;
   }
-  wrap.innerHTML=catKeys.map(cat=>{
-    const catEntries=grouped[cat]||[];
-    const catGross=catEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
-    const catVat=catEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
-    const catNet=catEntries.reduce((s,c)=>s+fcEntryExcl(c),0);
-    const catId='fc-cat-'+cat.replace(/[^a-z0-9]/gi,'_');
-    return`<div class="card mb-14" id="${catId}">
-      <div class="card-header" style="background:var(--bg2);border-bottom:2px solid var(--bdr)">
-        <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap">
-          <div style="font-size:14px;font-weight:800;color:var(--navy);letter-spacing:-.2px">${esc(cat)}</div>
-          ${catEntries.length?`
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <span style="background:var(--bg);border:1px solid var(--bdr2);border-radius:4px;padding:2px 9px;font-size:11px;font-family:var(--mono)">
-              <span style="color:var(--t3)">Net:</span> <strong style="color:var(--red)">${fmt(catNet)}/mo</strong>
-            </span>
-            <span style="background:var(--amber-p);border:1px solid var(--amber);border-radius:4px;padding:2px 9px;font-size:11px;font-family:var(--mono)">
-              <span style="color:var(--t3)">VAT:</span> <strong style="color:var(--amber)">${fmt(catVat)}</strong>
-            </span>
-            <span style="background:var(--bg);border:1px solid var(--bdr);border-radius:4px;padding:2px 9px;font-size:11px;font-family:var(--mono)">
-              <span style="color:var(--t3)">Gross:</span> <strong>${fmt(catGross)}</strong>
-            </span>
-          </div>`:'<span style="font-size:11px;color:var(--t3)">No entries yet</span>'}
+
+  cardsEl.innerHTML=cats.map(cat=>{
+    const ces=grouped[cat]||[];
+    const cg=ces.reduce((s,c)=>s+fcEntryIncl(c),0);
+    const cv=ces.reduce((s,c)=>s+fcEntryVatAmt(c),0);
+    const cn=ces.reduce((s,c)=>s+fcEntryExcl(c),0);
+    const pct=tNet>0?(cn/tNet*100).toFixed(0):0;
+    const catSafe=esc(cat).replace(/'/g,"\\'");
+    return`<div class="card mb-14">
+      <div class="card-header" style="display:flex;align-items:center;gap:12px;padding:12px 16px">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:800;color:var(--navy)">${esc(cat)}</div>
+          <div style="font-size:10px;color:var(--t3);margin-top:2px">${ces.length} entr${ces.length===1?'y':'ies'}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="text-align:right">
+            <div style="font-size:12px;font-weight:700;color:var(--red)">${fmt(cn)}<span style="font-size:9px;color:var(--t3);font-weight:400">/mo</span></div>
+            <div style="font-size:9px;color:var(--t3)">${pct}% of total</div>
+          </div>
+          <div style="width:44px;height:5px;background:var(--bdr);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:var(--navy);border-radius:3px"></div>
+          </div>
         </div>
         <div style="display:flex;gap:5px">
-          <button class="btn btn-sm btn-primary" style="font-size:9px" onclick="fcAddEntryModal('${esc(cat).replace(/'/g,"\\'")}')">+ Add Entry</button>
+          <button class="btn btn-sm btn-primary" style="font-size:9px" onclick="fcAddEntryModal('${catSafe}')">+ Add</button>
           ${cat!=='Uncategorised'?`
-          <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcRenameCatModal('${esc(cat).replace(/'/g,"\\'")}')">Rename</button>
-          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="fcDeleteCat('${esc(cat).replace(/'/g,"\\'")}')">Delete</button>`:''}
+          <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcRenameCatModal('${catSafe}')">Rename</button>
+          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="fcDeleteCat('${catSafe}')">Delete</button>`:''}
         </div>
       </div>
-      ${catEntries.length?`
-      <div class="card-body" style="padding:0">
+      ${ces.length?`<div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead><tr style="border-bottom:1px solid var(--bdr)">
-            <th style="padding:5px 10px;text-align:left;font-size:9.5px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Cost Name</th>
-            <th style="padding:5px 10px;text-align:right;font-size:9.5px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Amount</th>
-            <th style="padding:5px 10px;text-align:center;font-size:9.5px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.7px">VAT</th>
-            <th style="padding:5px 10px;text-align:right;font-size:9.5px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.7px">VAT Amt</th>
-            <th style="padding:5px 10px;text-align:right;font-size:9.5px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Net (excl. VAT)</th>
-            <th style="padding:5px 10px;text-align:right;font-size:9.5px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.7px">Annual Net</th>
-            <th style="padding:5px 10px;width:90px"></th>
+          <thead><tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
+            <th style="padding:6px 14px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Cost Name</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Gross</th>
+            <th style="padding:6px 10px;text-align:center;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT Amt</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Net /mo</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Net /yr</th>
+            <th style="padding:6px 10px;width:80px"></th>
           </tr></thead>
-          <tbody>
-          ${catEntries.map(c=>{
-            const type=c.vat_type||'incl';
-            const amtLabel=type==='excl'?'Excl.':type==='none'?'No VAT':'Incl.';
-            return`<tr style="border-bottom:1px solid var(--bdr)">
-              <td style="padding:7px 10px;font-weight:600">${esc(c.name)}</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">
-                ${fmt(parseFloat(c.amount||0))}
-                <span style="display:block;font-size:9px;color:var(--t3)">${amtLabel}</span>
-              </td>
-              <td style="padding:7px 10px;text-align:center">${vatBadge(c)}</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--amber)">${fmt(fcEntryVatAmt(c))}</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(fcEntryExcl(c))}</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--t3)">${fmt(fcEntryExcl(c)*12)}</td>
-              <td style="padding:7px 10px;text-align:right">
+          <tbody>${ces.map(c=>`
+            <tr style="border-bottom:1px solid var(--bdr)" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
+              <td style="padding:8px 14px;font-weight:600">${esc(c.name)}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono)">${fmt(fcEntryIncl(c))}</td>
+              <td style="padding:8px 10px;text-align:center">${vatBadge(c)}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber)">${fmt(fcEntryVatAmt(c))}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--red);font-size:13px">${fmt(fcEntryExcl(c))}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3)">${fmt(fcEntryExcl(c)*12)}</td>
+              <td style="padding:8px 10px;text-align:right">
                 <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
                 <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteFCEntry(${c.id})">✕</button>
               </td>
-            </tr>`;}).join('')}
+            </tr>`).join('')}
           </tbody>
           <tfoot><tr style="border-top:2px solid var(--bdr2);background:var(--bg2)">
-            <td style="padding:6px 10px;font-weight:700;font-size:11px">Total (${catEntries.length})</td>
-            <td style="padding:6px 10px;text-align:right;font-family:var(--mono);font-weight:700">${fmt(catGross)}</td>
+            <td style="padding:7px 14px;font-weight:700;font-size:11px;color:var(--navy)">Subtotal (${ces.length})</td>
+            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">${fmt(cg)}</td>
             <td></td>
-            <td style="padding:6px 10px;text-align:right;font-family:var(--mono);color:var(--amber);font-weight:700">${fmt(catVat)}</td>
-            <td style="padding:6px 10px;text-align:right;font-family:var(--mono);font-weight:800;color:var(--red);font-size:13px">${fmt(catNet)}</td>
-            <td style="padding:6px 10px;text-align:right;font-family:var(--mono);color:var(--t3)">${fmt(catNet*12)}</td>
+            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--amber);font-weight:700">${fmt(cv)}</td>
+            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:800;color:var(--red);font-size:13px">${fmt(cn)}</td>
+            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--t3)">${fmt(cn*12)}</td>
             <td></td>
           </tr></tfoot>
-        </table>
-      </div>`:`<div class="card-body"><div class="empty">No entries in this category — click "+ Add Entry" to add one.</div></div>`}
+        </table></div>`:`<div style="padding:14px 16px;color:var(--t3);font-size:12px">No entries — click + Add.</div>`}
     </div>`;
   }).join('');
+
+  const gtEl=document.getElementById('fc-grand-total-card');
+  if(gtEl)gtEl.innerHTML=entries.length?`
+    <div class="card" style="border:2px solid var(--navy);background:var(--navy);color:#fff">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;flex-wrap:wrap;gap:12px">
+        <div style="font-size:13px;font-weight:800;letter-spacing:-.2px">GRAND TOTAL — ${entries.length} entries</div>
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Monthly Gross</div><div style="font-size:17px;font-weight:700">${fmt(tGross)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">VAT</div><div style="font-size:17px;font-weight:700;color:#f0c060">${fmt(tVat)}</div></div>
+          <div style="text-align:center;border-left:1px solid rgba(255,255,255,.2);padding-left:24px"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Net / Month</div><div style="font-size:22px;font-weight:800;color:#ff9090">${fmt(tNet)}</div></div>
+          <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Net / Year</div><div style="font-size:17px;font-weight:700;color:#aac8f8">${fmt(tNet*12)}</div></div>
+        </div>
+      </div>
+    </div>`:'';
 }
+
 
 // ── FC View toggle ────────────────────────────────────────────────────────
 function setFCView(v){
@@ -4425,7 +4639,7 @@ function openModal(type,id){
   let item=null;
   if(id){
     const map={project:'projects',employee:'employees',invoice:'invoices',partnerinvoice:'partnerInvoices',transaction:'transactions',fixedcost:'fixedCosts',vacation:'vacations',futurecost:'futureCosts'};
-    item=(S[map[type]]||[]).find(x=>x.id===id);
+    item=(S[map[type]]||[]).find(x=>x.id===id||x.id===parseInt(id));
   }
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
@@ -4608,6 +4822,9 @@ async function saveInvoice(id){
   const data={project_id:parseInt(document.getElementById('f-proj').value),amount:parseFloat(document.getElementById('f-amount').value)||0,month:document.getElementById('f-month').value,billing_type:document.getElementById('f-billing').value,draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
   if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
   closeModal();await loadData();renderInvoices();
+  // Also refresh Partner page if this is a partner project
+  const savedProj=S.projects.find(p=>p.id===data.project_id);
+  if(savedProj&&savedProj.is_partner&&typeof renderPartner==='function')renderPartner();
 }
 
 function modalTransaction(t){
@@ -4748,6 +4965,9 @@ async function deleteItem(table,id){
   await loadData();
   const pageMap={projects:'renderProjects',employees:'renderEmployees',invoices:'renderInvoices',bank_transactions:'renderCashflow',fixed_costs:'renderFixedCosts',vacations:'renderVacation',future_costs:'renderForecast',partner_invoices:'renderPartner'};
   if(pageMap[table])eval(pageMap[table]+'()');
+  // Cross-refresh: invoices and partner page share data
+  if(table==='invoices'&&typeof renderPartner==='function')renderPartner();
+  if(table==='partner_invoices'&&typeof renderInvoices==='function')renderInvoices();
 }
 
 // ══ VAT OVERVIEW ══
@@ -5614,7 +5834,17 @@ async function _doImportXLSX(file){
 
 // ══ PARTNER INVOICING ══
 function getPartnerInvoiced(projectId){
-  return S.partnerInvoices.filter(pi=>pi.project_id===projectId).reduce((s,pi)=>s+parseFloat(pi.amount||0),0);
+  // Primary lookup by project_id
+  var directInvs=S.invoices.filter(function(i){return i.project_id===projectId||i.project_id==projectId;});
+  if(directInvs.length>0){
+    return directInvs.reduce(function(s,i){return s+parseFloat(i.amount||0);},0);
+  }
+  // Check if ANY invoice exists for this project (catches post-delete state)
+  var hasAnyInvoice=S.invoices.some(function(i){return i.project_id===projectId||i.project_id==projectId;});
+  if(hasAnyInvoice) return 0; // invoices exist but total is 0 — deleted state
+  // Legacy fallback to partner_invoices only if no invoices ever existed
+  return S.partnerInvoices.filter(function(pi){return pi.project_id===projectId||pi.project_id==projectId;})
+    .reduce(function(s,pi){return s+parseFloat(pi.amount||0);},0);
 }
 
 function renderPartner(){
@@ -5647,7 +5877,15 @@ function renderPartner(){
     const contract=parseFloat(p.revenue)||0;
     const remaining=contract-invoiced;
     const pct=contract>0?Math.min(100,invoiced/contract*100):0;
-    const pis=S.partnerInvoices.filter(pi=>pi.project_id===p.id).sort((a,b)=>b.date?.localeCompare(a.date)||0);
+    // Single source of truth: use S.invoices.
+    // Only show legacy partner_invoices if zero invoice rows exist for this project.
+    const _invEntries=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id).map(i=>({
+      id:i.id,_src:'invoice',date:i.month,period:i.month,
+      amount:i.amount,note:'',sent:i.invoice_sent,paid:i.paid
+    }));
+    const _hasAnyInv=S.invoices.some(i=>i.project_id===p.id||i.project_id==p.id);
+    const _piEntries=!_hasAnyInv?S.partnerInvoices.filter(pi=>pi.project_id===p.id||pi.project_id==p.id).map(pi=>({...pi,_src:'partnerinvoice'})):[];
+    const pis=(_invEntries.length?_invEntries:_piEntries).sort((a,b)=>(b.date||'')>(a.date||'')?1:-1);
     // Calculate next expected invoice
     const nextExpected=p.recurring_amount>0&&remaining>0?Math.min(p.recurring_amount,remaining):null;
     // How many invoices logged vs expected
@@ -5691,16 +5929,19 @@ function renderPartner(){
         ${pis.length>0?`<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:7px">Invoice log</div>
         <div class="table-wrap"><table>
           <thead><tr><th>Date</th><th>Period</th><th class="right">Amount</th><th>Note</th><th class="center">Sent</th><th class="center">Paid</th><th></th></tr></thead>
-          <tbody>${pis.map(pi=>`<tr>
+          <tbody>${pis.map(pi=>{
+            const _piType=pi._src==='invoice'?'invoice':'partnerinvoice';
+            const _piTbl=pi._src==='invoice'?'invoices':'partner_invoices';
+            return`<tr>
             <td class="text-muted">${pi.date||'—'}</td>
             <td>${pi.period||'—'}</td>
             <td class="right bold text-blue">${fmt(parseFloat(pi.amount||0))}</td>
             <td class="text-muted">${esc(pi.note||'')}</td>
             <td class="center">${pi.sent?'<span style="color:var(--green)">✓</span>':'—'}</td>
             <td class="center">${pi.paid?'<span style="color:var(--green)">✓</span>':'—'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="openModal('partnerinvoice',${pi.id})">Edit</button>
-                <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteItem('partner_invoices',${pi.id})">✕</button></td>
-          </tr>`).join('')}</tbody>
+            <td><button class="btn btn-sm btn-ghost" onclick="openModal('${_piType}',${pi.id})">Edit</button>
+                <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteItem('${_piTbl}',${pi.id})">✕</button></td>
+          </tr>`;}).join('')}</tbody>
         </table></div>`:'<div class="empty">No invoices logged yet for this partner project.</div>'}
       </div>
     </div>`;
@@ -5753,18 +5994,42 @@ function fillRecurringAmount(projId){
   if(p&&p.recurring_amount){const el=document.getElementById('f-pi-amount');if(el)el.value=p.recurring_amount;}
 }
 async function savePartnerInvoice(id){
-  const data={
-    project_id:parseInt(document.getElementById('f-pi-proj').value),
-    amount:parseFloat(document.getElementById('f-pi-amount').value)||0,
-    date:document.getElementById('f-pi-date').value,
-    period:document.getElementById('f-pi-period').value,
-    note:document.getElementById('f-pi-note').value,
-    sent:document.getElementById('f-pi-sent').checked?1:0,
-    paid:document.getElementById('f-pi-paid').checked?1:0,
+  const projId=parseInt(document.getElementById('f-pi-proj').value);
+  const amount=parseFloat(document.getElementById('f-pi-amount').value)||0;
+  const period=document.getElementById('f-pi-period').value;
+  const sent=document.getElementById('f-pi-sent').checked?1:0;
+  const paid=document.getElementById('f-pi-paid').checked?1:0;
+  if(!amount)return alert('Amount required.');
+
+  // Write to S.invoices (single source of truth).
+  // If this was originally a partner_invoices entry (id but _src='partnerinvoice'),
+  // we check whether to write to partner_invoices or invoices.
+  // Going forward all partner invoice logs go into invoices table.
+  const invData={
+    project_id:projId,
+    amount:amount,
+    month:period,
+    billing_type:'monthly',
+    draft_created:0,
+    invoice_sent:sent,
+    paid:paid
   };
-  if(!data.amount)return alert('Amount required.');
-  if(id)await DB.update('partner_invoices',id,data);else await DB.insert('partner_invoices',data);
-  closeModal();await loadData();renderPartner();
+
+  // Determine if this is editing an existing invoice vs partner_invoice
+  const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
+  const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
+
+  if(editingInvoice){
+    await DB.update('invoices',id,{amount,month:period,invoice_sent:sent,paid});
+  } else if(editingPartnerInv){
+    // Migrate: delete old partner_invoice, create new invoice row
+    await DB.delete('partner_invoices',id);
+    await DB.insert('invoices',invData);
+  } else {
+    // New entry: write to invoices table
+    await DB.insert('invoices',invData);
+  }
+  closeModal();await loadData();renderPartner();if(typeof renderInvoices==='function')renderInvoices();
 }
 
 // ══ EXCEL EXPORT (Full backup) ══
@@ -6646,8 +6911,19 @@ async function init(){
   if(!AUTH.isAuthenticated())return;
   // Sync PINs from Supabase first (so all devices share the same PIN)
   try { await AUTH.syncPinsFromSupabase(); } catch(e) {}
-  // Try Supabase first; silently falls back to localStorage
-  try { await supaLoadAll(); } catch(e) { console.warn('supaLoadAll failed:', e); }
+  // Always force fresh Supabase load on login — Supabase is primary source of truth
+  DB._store = null; // clear cache so supaLoadAll fetches fresh data
+  var _supaOk = false;
+  try { _supaOk = await supaLoadAll(); } catch(e) { console.warn('supaLoadAll failed:', e); }
+  // Update data source indicator
+  var _dsEl = document.getElementById('nav-data-source');
+  if(_dsEl) {
+    if(_supaOk) {
+      _dsEl.innerHTML = '<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
+    } else {
+      _dsEl.innerHTML = '<span style="color:rgba(255,180,50,.6)">● Local data only</span><br><span style="font-size:8px;opacity:.7">Push to Supabase to sync</span>';
+    }
+  }
   await loadData();
   // Silently remove staffing rows for deleted projects on startup
   await cleanOrphanedStaffing(false);
