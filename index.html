@@ -339,6 +339,8 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 @media (max-width:768px){
   .main{padding-bottom:64px;}
 }
+#employee-view{display:none;}
+#employee-view.ev-visible{display:flex;}
 </style>
 </head>
 
@@ -352,7 +354,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="auth-roles">
       <button class="auth-role-btn active" id="role-admin-btn" onclick="authSelectRole('admin')">Admin</button>
       <button class="auth-role-btn" id="role-viewer-btn" onclick="authSelectRole('viewer')">Viewer</button>
-      <button class="auth-role-btn" id="role-employee-btn" onclick="authSelectRole('employee')">Team</button>
+
     </div>
     <div class="pin-dots" id="pin-dots">
       <div class="pin-dot" id="pd0"></div>
@@ -972,8 +974,8 @@ const DB={
       if(!p.hasOwnProperty('recurring_amount'))p.recurring_amount=0;
       if(!p.hasOwnProperty('recurring_freq'))p.recurring_freq='monthly';
     });
-    // Always ensure real projects exist — merge by client+name so no duplicates
-    this._ensureRealProjects();
+    // Only seed projects if completely empty (first-time setup) — never re-add deleted projects
+    if(!this._store.projects||this._store.projects.length===0)this._ensureRealProjects();
     // Always ensure real employees exist
     this._ensureRealEmployees();
     // Data integrity: remove partner_invoices for projects that have invoices entries
@@ -1289,9 +1291,9 @@ async function supaLoadAll() {
       }
     }
 
-    // Guarantee real projects/employees always present
-    DB._ensureRealProjects();
-    DB._ensureRealEmployees();
+    // Only seed if Supabase returned empty tables (first-time setup only)
+    if(!store.projects||store.projects.length===0) DB._ensureRealProjects();
+    if(!store.employees||store.employees.length===0) DB._ensureRealEmployees();
     // Data integrity: for any project that has invoices entries,
     // remove partner_invoices entries to prevent double-counting.
     if(Array.isArray(store.invoices)&&Array.isArray(store.partner_invoices)){
@@ -6786,10 +6788,7 @@ function authSelectRole(role){
   document.getElementById('auth-err').textContent='';
   document.getElementById('role-admin-btn').classList.toggle('active',role==='admin');
   document.getElementById('role-viewer-btn').classList.toggle('active',role==='viewer');
-  const empBtn=document.getElementById('role-employee-btn');
-  if(empBtn)empBtn.classList.toggle('active',role==='employee');
 }
-
 function authKey(k){
   if(AUTH.input.length<4){AUTH.input+=String(k);}
   authUpdateDots();
@@ -6817,7 +6816,7 @@ function authSubmit(){
     if(AUTH.isEmployee()){
       // Employee view: show only staff view, hide full app
       document.querySelector('.app').style.display='none';
-      document.getElementById('employee-view').style.display='flex';
+      document.getElementById('employee-view').classList.add('ev-visible');
       (async()=>{
         try{await supaLoadAll();}catch(e){}
         await loadData();
@@ -7117,15 +7116,21 @@ function wkFmtLabel(mon,fri){
   if(teamToken==='nxtstaff2026'){
     AUTH.role='employee';
     sessionStorage.setItem(AUTH.SESSION_KEY,'employee');
-    document.getElementById('auth-overlay').classList.add('hidden');
-    document.querySelector('.app').style.display='none';
-    document.getElementById('employee-view').style.display='flex';
-    // Load from Supabase first so staffing data is fresh
-    (async()=>{
-      try{await supaLoadAll();}catch(e){}
-      await loadData();
-      renderEmployeeView();
-    })();
+    const _showTeamView=()=>{
+      const overlay=document.getElementById('auth-overlay');
+      const app=document.querySelector('.app');
+      const ev=document.getElementById('employee-view');
+      if(!ev){setTimeout(_showTeamView,50);return;}
+      if(overlay)overlay.classList.add('hidden');
+      if(app)app.style.display='none';
+      ev.classList.add('ev-visible');
+      (async()=>{
+        try{await supaLoadAll();}catch(e){console.warn('supa failed',e);}
+        await loadData();
+        renderEmployeeView();
+      })();
+    };
+    _showTeamView();
     return;
   }
 
@@ -7136,7 +7141,7 @@ function wkFmtLabel(mon,fri){
     updateRoleBadge();
     if(saved==='employee'){
       document.querySelector('.app').style.display='none';
-      document.getElementById('employee-view').style.display='flex';
+      document.getElementById('employee-view').classList.add('ev-visible');
       // Load from Supabase first so staffing data is fresh
       (async()=>{
         try{await supaLoadAll();}catch(e){}
@@ -7154,7 +7159,7 @@ function wkFmtLabel(mon,fri){
 <!-- ═══════════════════════════════════════════════════════════
      EMPLOYEE STAFFING VIEW — shown instead of main app for 'employee' role
      ═══════════════════════════════════════════════════════════ -->
-<div id="employee-view" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg2);font-family:var(--font)">
+<div id="employee-view" style="flex-direction:column;min-height:100vh;background:var(--bg2);font-family:var(--font)">
   <!-- Header -->
   <div style="background:var(--navy);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100">
     <div style="display:flex;align-items:center;gap:12px">
@@ -7166,7 +7171,7 @@ function wkFmtLabel(mon,fri){
     </div>
     <div style="display:flex;align-items:center;gap:10px">
       <div style="font-size:11px;color:rgba(255,255,255,.4)" id="ev-updated"></div>
-      <button onclick="document.getElementById('employee-view').style.display='none';document.querySelector('.app').style.display='';document.getElementById('auth-overlay').classList.remove('hidden');AUTH.role=null;AUTH.input='';authSelectRole('employee')" style="background:rgba(255,255,255,.1);border:none;color:rgba(255,255,255,.7);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:11px">Sign out</button>
+      <button onclick="document.getElementById('employee-view').classList.remove('ev-visible');document.querySelector('.app').style.display='';document.getElementById('auth-overlay').classList.remove('hidden');AUTH.role=null;AUTH.input='';authSelectRole('employee')" style="background:rgba(255,255,255,.1);border:none;color:rgba(255,255,255,.7);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:11px">Sign out</button>
     </div>
   </div>
   <!-- Week navigation -->
