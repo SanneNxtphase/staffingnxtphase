@@ -1317,6 +1317,7 @@ async function supaLoadAll() {
       }
     }
     localStorage.setItem('sp-v5', JSON.stringify(store));
+    DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
     console.log('[Supabase] Loaded from cloud');
     return true;
   } catch(e) {
