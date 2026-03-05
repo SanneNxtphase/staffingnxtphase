@@ -7005,7 +7005,7 @@ function renderEmployeeView(){
   if(upd)upd.textContent='Updated '+now.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
 
   // Get all employees (excluding Vakantie/Sales internals)
-  const emps=S.employees.filter(e=>e.name&&e.name!=='Vakantie'&&e.name!=='Sales');
+  const emps=S.employees.filter(e=>e.name&&e.name!=='Vakantie'&&e.name!=='Sales'&&e.name!=='Koen');
   const allWkKeys=weeks.map(w=>w.wkKey);
 
   // For each employee, collect their staffing for these weeks
