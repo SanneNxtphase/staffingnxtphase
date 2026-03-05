@@ -1853,7 +1853,12 @@ function navigate(page,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   el.classList.add('active');
-  loadData().then(()=>renderPage(page));
+  // For financial/cashflow pages: always pull fresh from Supabase so bank data is current
+  if(page==='financial'||page==='cashflow'){
+    (async()=>{try{await supaLoadAll();}catch(e){}await loadData();renderPage(page);})();
+  } else {
+    loadData().then(()=>renderPage(page));
+  }
 }
 function mobileNav(el){
   document.querySelectorAll('.mobile-nav-item').forEach(n=>n.classList.remove('active'));
@@ -6965,10 +6970,18 @@ async function cleanOrphanedStaffing(showUI=true){
 init();
 
 // ── EMPLOYEE VIEW STATE ──────────────────────────────────────────────────────
-let _evWeekOffset=0; // weeks from current week
-let _evRange=3;      // number of weeks to show (current + 2 ahead)
+let _evWeekOffset=0; // weeks from current week (0=this week, max 2)
+let _evRange=1;      // show 1 week at a time
 
-function evChangeWeek(delta){_evWeekOffset+=delta;renderEmployeeView();}
+function evChangeWeek(delta){
+  _evWeekOffset=Math.max(0,Math.min(2,_evWeekOffset+delta));
+  // Update arrow states
+  const prev=document.getElementById('ev-btn-prev');
+  const next=document.getElementById('ev-btn-next');
+  if(prev)prev.style.opacity=_evWeekOffset===0?'0.3':'1';
+  if(next)next.style.opacity=_evWeekOffset===2?'0.3':'1';
+  renderEmployeeView();
+}
 function evSetRange(n){
   _evRange=n;
   document.getElementById('ev-btn-2').style.borderColor=n===2?'var(--blue)':'var(--bdr)';
@@ -7001,9 +7014,12 @@ function renderEmployeeView(){
 
   // Update header
   const lbl=document.getElementById('ev-week-lbl');
-  if(lbl)lbl.textContent=weeks.length>1?`${weeks[0].label} — ${weeks[weeks.length-1].label}`:weeks[0]?.label||'';
-  const sub=document.getElementById('ev-subtitle');
-  if(sub)sub.textContent='Next 3 weeks';
+  if(lbl)lbl.textContent=weeks[0]?.label||'';
+  // Update arrow opacity based on current offset
+  const prevBtn=document.getElementById('ev-btn-prev');
+  const nextBtn=document.getElementById('ev-btn-next');
+  if(prevBtn)prevBtn.style.opacity=_evWeekOffset===0?'0.3':'1';
+  if(nextBtn)nextBtn.style.opacity=_evWeekOffset===2?'0.3':'1';
   const upd=document.getElementById('ev-updated');
   if(upd)upd.textContent='Updated '+now.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
 
@@ -7184,9 +7200,10 @@ function wkFmtLabel(mon,fri){
     </div>
   </div>
   <!-- Week navigation -->
-  <div style="background:var(--bg);border-bottom:1px solid var(--bdr);padding:12px 24px;display:flex;align-items:center;gap:12px">
-    <div id="ev-week-lbl" style="font-size:13px;font-weight:700;color:var(--navy)"></div>
-    <div style="margin-left:auto;font-size:11px;color:var(--t3)" id="ev-subtitle"></div>
+  <div style="background:var(--bg);border-bottom:1px solid var(--bdr);padding:12px 20px;display:flex;align-items:center;gap:10px">
+    <button onclick="evChangeWeek(-1)" id="ev-btn-prev" style="border:1px solid var(--bdr);background:var(--bg);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--t2)">←</button>
+    <div id="ev-week-lbl" style="font-size:13px;font-weight:700;color:var(--navy);flex:1;text-align:center"></div>
+    <button onclick="evChangeWeek(1)" id="ev-btn-next" style="border:1px solid var(--bdr);background:var(--bg);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--t2)">→</button>
   </div>
   <!-- Content -->
   <div style="padding:20px 24px;flex:1" id="ev-content">
