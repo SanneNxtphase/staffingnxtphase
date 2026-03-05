@@ -6871,47 +6871,7 @@ function requireAdmin(action='This action'){
 // Viewer guards are enforced at DB level (DB.insert/update/delete check AUTH.isViewer())
 // (All other save functions are defined later and will be guarded inline)
 
-// Check for existing session on page load (resume session without re-auth)
-(function checkSession(){
-  // ── Secret team URL token — share this link with team members ──────────
-  // Link: staffingnxtphase.vercel.app/?team=nxtstaff2026
-  const urlParams=new URLSearchParams(window.location.search);
-  const teamToken=urlParams.get('team');
-  if(teamToken==='nxtstaff2026'){
-    AUTH.role='employee';
-    sessionStorage.setItem(AUTH.SESSION_KEY,'employee');
-    document.getElementById('auth-overlay').classList.add('hidden');
-    document.querySelector('.app').style.display='none';
-    document.getElementById('employee-view').style.display='flex';
-    // Load from Supabase first so staffing data is fresh
-    (async()=>{
-      try{await supaLoadAll();}catch(e){}
-      await loadData();
-      renderEmployeeView();
-    })();
-    return;
-  }
 
-  const saved=sessionStorage.getItem(AUTH.SESSION_KEY);
-  if(saved==='admin'||saved==='viewer'||saved==='employee'){
-    AUTH.role=saved;
-    document.getElementById('auth-overlay').classList.add('hidden');
-    updateRoleBadge();
-    if(saved==='employee'){
-      document.querySelector('.app').style.display='none';
-      document.getElementById('employee-view').style.display='flex';
-      // Load from Supabase first so staffing data is fresh
-      (async()=>{
-        try{await supaLoadAll();}catch(e){}
-        await loadData();
-        renderEmployeeView();
-      })();
-      return;
-    }
-    // init() called normally for admin/viewer
-  }
-  // else: overlay remains visible, init() called after auth
-})();
 
 // Change PIN dialog (Admin only)
 function openChangePinModal(){
@@ -7147,6 +7107,48 @@ function wkFmtLabel(mon,fri){
   const fmtD=d=>d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
   return`${fmtD(mon)} – ${fmtD(fri)}`;
 }
+
+// Check for existing session on page load (resume session without re-auth)
+(function checkSession(){
+  // ── Secret team URL token — share this link with team members ──────────
+  // Link: staffingnxtphase.vercel.app/?team=nxtstaff2026
+  const urlParams=new URLSearchParams(window.location.search);
+  const teamToken=urlParams.get('team');
+  if(teamToken==='nxtstaff2026'){
+    AUTH.role='employee';
+    sessionStorage.setItem(AUTH.SESSION_KEY,'employee');
+    document.getElementById('auth-overlay').classList.add('hidden');
+    document.querySelector('.app').style.display='none';
+    document.getElementById('employee-view').style.display='flex';
+    // Load from Supabase first so staffing data is fresh
+    (async()=>{
+      try{await supaLoadAll();}catch(e){}
+      await loadData();
+      renderEmployeeView();
+    })();
+    return;
+  }
+
+  const saved=sessionStorage.getItem(AUTH.SESSION_KEY);
+  if(saved==='admin'||saved==='viewer'||saved==='employee'){
+    AUTH.role=saved;
+    document.getElementById('auth-overlay').classList.add('hidden');
+    updateRoleBadge();
+    if(saved==='employee'){
+      document.querySelector('.app').style.display='none';
+      document.getElementById('employee-view').style.display='flex';
+      // Load from Supabase first so staffing data is fresh
+      (async()=>{
+        try{await supaLoadAll();}catch(e){}
+        await loadData();
+        renderEmployeeView();
+      })();
+      return;
+    }
+    // init() called normally for admin/viewer
+  }
+  // else: overlay remains visible, init() called after auth
+})();
 </script>
 <!-- ═══════════════════════════════════════════════════════════
      EMPLOYEE STAFFING VIEW — shown instead of main app for 'employee' role
