@@ -1854,9 +1854,27 @@ function navigate(page,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   el.classList.add('active');
-  // For financial/cashflow pages: always pull fresh from Supabase so bank data is current
+  // For financial/cashflow pages: pull fresh data then render
   if(page==='financial'||page==='cashflow'){
-    (async()=>{try{await supaLoadAll();}catch(e){}await loadData();renderPage(page);})();
+    (async()=>{
+      // First load from localStorage cache
+      await loadData();
+      // Then try to fetch cashflow_months directly from Supabase
+      // and inject straight into S — bypasses localStorage chain
+      try{
+        const cfRows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
+        if(cfRows&&cfRows.length>0){
+          S.cashflowMonths=cfRows;
+          // Also persist to localStorage for next time
+          const store=DB._gs();
+          store.cashflow_months=cfRows;
+          DB._store=null;
+          localStorage.setItem('sp-v5',JSON.stringify(DB._gs()));
+          DB._store=null;
+        }
+      }catch(e){}
+      renderPage(page);
+    })();
   } else {
     loadData().then(()=>renderPage(page));
   }
