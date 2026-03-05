@@ -352,6 +352,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="auth-roles">
       <button class="auth-role-btn active" id="role-admin-btn" onclick="authSelectRole('admin')">Admin</button>
       <button class="auth-role-btn" id="role-viewer-btn" onclick="authSelectRole('viewer')">Viewer</button>
+      <button class="auth-role-btn" id="role-employee-btn" onclick="authSelectRole('employee')">Team</button>
     </div>
     <div class="pin-dots" id="pin-dots">
       <div class="pin-dot" id="pd0"></div>
@@ -374,7 +375,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
       <button class="pin-key del" type="button" onclick="authDel()">&#x232B;</button>
     </div>
     <div class="auth-err" id="auth-err"></div>
-    <div style="margin-top:14px;font-size:11px;color:var(--t3)">Default PIN: <strong>1234</strong> (Admin) &nbsp;&middot;&nbsp; <strong>0000</strong> (Viewer)</div>
+    <div style="margin-top:14px;font-size:11px;color:var(--t3)">Admin: <strong>1234</strong> &nbsp;&middot;&nbsp; Viewer: <strong>0000</strong> &nbsp;&middot;&nbsp; Team: <strong>8888</strong></div>
   </div>
 </div>
 <div class="app">
@@ -877,41 +878,46 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 </div>
 <div id="page-cashflow" class="page">
   <div class="page-header">
-    <div><div class="page-title">Cashflow</div><div class="page-sub">Single source of truth for Bank In/Out &mdash; Company Dashboard reads from here</div></div>
+    <div>
+      <div class="page-title">Cashflow</div>
+      <div class="page-sub">Real bank movement — liquidity only · does not affect P&amp;L or project margins</div>
+    </div>
     <button class="btn btn-primary" onclick="openCFMonthModal()">+ Add Month</button>
   </div>
-  <!-- Cashflow KPIs -->
-  <div class="kpi-row" id="scf-kpis"></div>
-  <div class="grid-2 mb-14">
-    <!-- Monthly table -->
-    <div class="card">
-      <div class="card-header"><div class="card-title">Monthly Cashflow</div></div>
-      <div class="card-body" style="padding:0">
-        <div class="table-wrap"><table>
-          <thead><tr>
-            <th>Month</th>
-            <th class="right">Opening Balance</th>
-            <th class="right">Closing Balance</th>
-            <th class="right">Net Movement</th>
-            <th class="right" style="color:var(--green)">Bank In<br><span style="font-size:8px;font-weight:400;color:var(--t3)">→ Dashboard</span></th>
-            <th class="right" style="color:var(--red)">Bank Out<br><span style="font-size:8px;font-weight:400;color:var(--t3)">→ Dashboard</span></th>
-            <th>Notes</th>
-            <th></th>
-          </tr></thead>
-          <tbody id="scf-tbody"></tbody>
-        </table></div>
-      </div>
+  <!-- KPI row -->
+  <div class="kpi-row mb-14" id="scf-kpis"></div>
+  <!-- Balance trend chart -->
+  <div class="card mb-14">
+    <div class="card-header">
+      <div class="card-title">Bank Balance Trend</div>
+      <div style="font-size:11px;color:var(--t3)">Closing balance per month — blue line · opening balance — dashed</div>
     </div>
-    <!-- Trend chart -->
-    <div class="card">
-      <div class="card-header"><div class="card-title">Balance Trend</div></div>
-      <div class="card-body" style="padding:0 14px 14px">
-        <div id="scf-chart" style="width:100%;height:260px"></div>
-      </div>
-    </div>
+    <div id="scf-chart" style="width:100%;height:200px;padding:0 14px 14px"></div>
   </div>
-  <div class="alert alert-info"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>
-    Cashflow tracks liquidity only. Enter your opening and closing bank balance per month. Net movement is calculated automatically. This data does not affect revenue or cost calculations.
+  <!-- Monthly detail table -->
+  <div class="card mb-14">
+    <div class="card-header">
+      <div class="card-title">Monthly Bank Movement</div>
+      <div style="font-size:11px;color:var(--t3)">Inflow · Outflow · Net · Running balance</div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Month</th>
+        <th class="right">Opening</th>
+        <th class="right" style="color:var(--green)">▲ Inflow</th>
+        <th class="right" style="color:var(--red)">▼ Outflow</th>
+        <th class="right">Net</th>
+        <th class="right">Closing</th>
+        <th style="min-width:80px">Movement</th>
+        <th>Notes</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="scf-tbody"></tbody>
+    </table></div>
+  </div>
+  <div class="alert alert-info" style="margin-top:0">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>
+    This view tracks <strong>real bank liquidity only</strong>. Enter opening and closing balance per month. Net movement and inflow/outflow are calculated automatically. This data does not affect revenue, costs, or project margins.
   </div>
 </div>
 
@@ -1943,7 +1949,8 @@ function renderDashboard(){
   document.getElementById('dash-month-lbl').textContent=monthLbl(y,m);
   const confRev=revForMonth(y,m,'confirmed'),draftRev=revForMonth(y,m,'draft');
   const sc=staffCostMonth(y,m),fc=fixedMonthly(),tc=sc+fc;
-  const profit=confRev-tc,margin=confRev>0?(profit/confRev*100):0;
+  // Project margin = Revenue - Staffing only. Fixed costs belong at company level.
+  const profit=confRev-sc,margin=confRev>0?(profit/confRev*100):0;
   const mStr=y+'-'+String(m).padStart(2,'0');
   const ci=getBankInForMonth(mStr);
   const co=getBankOutForMonth(mStr);
@@ -1954,7 +1961,7 @@ function renderDashboard(){
     <div class="kpi ${confRev-sc>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${confRev-sc>=0?'green':'red'}">${fmtS(confRev-sc)}</div><div class="kpi-sub">Rev minus staff cost only</div></div>
     <div class="kpi an"><div class="kpi-lbl">Active Projects</div><div class="kpi-val">${S.projects.filter(p=>{if(p.status!=='confirmed')return false;const weeks=getWeeksInMonth(y,m);return projectWkKeys(p).some(w=>weeks.includes(w));}).length}</div><div class="kpi-sub">${monthLbl(y,m)}</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Fixed Costs /mo</div><div class="kpi-val amber">${fmtS(fc)}</div><div class="kpi-sub">See Company Dashboard</div></div>
-    <div class="kpi ${profit>=0?'ag':'ar'}"><div class="kpi-lbl">All-in Result</div><div class="kpi-val ${profit>=0?'green':'red'}">${fmtS(profit)}</div><div class="kpi-sub">Staff + fixed, margin ${margin.toFixed(1)}%</div></div>`;
+    <div class="kpi ${profit>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${profit>=0?'green':'red'}">${fmtS(profit)}</div><div class="kpi-sub">Rev − staffing only · ${margin.toFixed(1)}%</div></div>`;
   document.getElementById('dash-draft-kpis').innerHTML=draftRev>0||allDraftRev>0?`
     <div class="draft-kpi"><div class="kpi-lbl">Draft Rev (this month)</div><div class="kpi-val amber">${fmtS(draftRev)}</div></div>
     <div class="draft-kpi"><div class="kpi-lbl">All Draft Projects</div><div class="kpi-val">${fmtS(allDraftRev)}</div><div class="kpi-sub">Total pipeline</div></div>
@@ -4375,24 +4382,50 @@ function renderSimpleCashflow(){
     <div class="kpi an"><div class="kpi-lbl">Months Tracked</div><div class="kpi-val">${entries.length}</div><div class="kpi-sub">Total periods entered</div></div>`;
 
   const tbody=document.getElementById('scf-tbody');
-  if(tbody) tbody.innerHTML=entries.length?entries.map(e=>{
-    const mov=parseFloat(e.closing||0)-parseFloat(e.opening||0);
-    const bankIn=Math.max(0,mov);
-    const bankOut=Math.max(0,-mov);
-    return`<tr>
-      <td class="bold" style="white-space:nowrap">${e.month}</td>
-      <td class="right mono">${fmt(parseFloat(e.opening||0))}</td>
-      <td class="right mono">${fmt(parseFloat(e.closing||0))}</td>
-      <td class="right mono" style="font-weight:700;color:${mov>=0?'var(--green)':'var(--red)'}">${mov>=0?'+':''}${fmt(mov)}</td>
-      <td class="right mono" style="color:var(--green)">${bankIn>0?fmt(bankIn):'-'}</td>
-      <td class="right mono" style="color:var(--red)">${bankOut>0?fmt(bankOut):'-'}</td>
-      <td style="font-size:11px;color:var(--t3)">${esc(e.notes||'')}</td>
-      <td style="text-align:right">
-        <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openCFMonthModal(${e.id})">Edit</button>
-        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteCFMonth(${e.id})">✕</button>
-      </td>
-    </tr>`;
-  }).join(''):'<tr><td colspan="6" class="empty" style="padding:20px">No cashflow data yet — click "+ Add Month" to record your first month.</td></tr>';
+  if(tbody){
+    const maxMov=entries.length?Math.max(...entries.map(e=>Math.abs(parseFloat(e.closing||0)-parseFloat(e.opening||0))),1):1;
+    tbody.innerHTML=entries.length?entries.map(e=>{
+      const open=parseFloat(e.opening||0);
+      const close=parseFloat(e.closing||0);
+      const mov=close-open;
+      const inflow=Math.max(0,mov);
+      const outflow=Math.max(0,-mov);
+      const barPct=(Math.abs(mov)/maxMov*100).toFixed(1);
+      const barColor=mov>=0?'var(--green)':'var(--red)';
+      const lbl=e.month.length>=7?new Date(e.month+'-01').toLocaleDateString('nl-NL',{month:'short',year:'2-digit'}):e.month;
+      return`<tr>
+        <td class="bold" style="white-space:nowrap;font-size:12px">${lbl}</td>
+        <td class="right mono" style="color:var(--t2);font-size:12px">${fmt(open)}</td>
+        <td class="right mono" style="color:var(--green);font-weight:700">${inflow>0?'+'+fmt(inflow):'-'}</td>
+        <td class="right mono" style="color:var(--red);font-weight:700">${outflow>0?'-'+fmt(outflow):'-'}</td>
+        <td class="right mono" style="font-weight:800;color:${mov>=0?'var(--green)':'var(--red)'}">${mov>=0?'+':''}${fmt(mov)}</td>
+        <td class="right mono" style="font-weight:700;color:var(--blue)">${fmt(close)}</td>
+        <td style="padding:8px 10px;min-width:80px">
+          <div style="height:8px;background:var(--bdr);border-radius:4px;overflow:hidden">
+            <div style="height:100%;width:${barPct}%;background:${barColor};border-radius:4px;transition:width .3s"></div>
+          </div>
+          <div style="font-size:9px;color:var(--t3);margin-top:2px">${mov>=0?'▲ in':'▼ out'}</div>
+        </td>
+        <td style="font-size:11px;color:var(--t3)">${esc(e.notes||'')}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openCFMonthModal(${e.id})">Edit</button>
+          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteCFMonth(${e.id})">✕</button>
+        </td>
+      </tr>`;
+    }).join('')+'<tr style="border-top:2px solid var(--bdr2);background:var(--bg2)">'+
+      (()=>{
+        const tIn=entries.reduce((s,e)=>{const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,m);},0);
+        const tOut=entries.reduce((s,e)=>{const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,-m);},0);
+        const tNet=tIn-tOut;
+        return`<td class="bold" style="padding:8px 14px;font-size:11px">TOTAL</td>
+          <td></td>
+          <td class="right mono" style="color:var(--green);font-weight:800">+${fmt(tIn)}</td>
+          <td class="right mono" style="color:var(--red);font-weight:800">-${fmt(tOut)}</td>
+          <td class="right mono" style="font-weight:800;color:${tNet>=0?'var(--green)':'var(--red)'}">${tNet>=0?'+':''}${fmt(tNet)}</td>
+          <td colspan="4"></td>`;
+      })()+'</tr>'
+    :'<tr><td colspan="9" class="empty" style="padding:20px">No cashflow data yet — click "+ Add Month" to record your first month.</td></tr>';
+  }
 
   // Line chart
   setTimeout(()=>{
@@ -6695,23 +6728,26 @@ const AUTH={
   selectedRole:'admin',
   ADMIN_KEY:'sp-pin-admin',
   VIEWER_KEY:'sp-pin-viewer',
+  EMPLOYEE_KEY:'sp-pin-employee',
   SESSION_KEY:'sp-session-role',
   DEFAULT_ADMIN:'1234',
   DEFAULT_VIEWER:'0000',
+  DEFAULT_EMPLOYEE:'8888',
 
   // Simple hash — prevents plaintext storage without full crypto
   hash(pin){let h=0;for(const c of pin){h=(h*31+c.charCodeAt(0))&0x7fffffff;}return String(h);},
 
   getPin(role){
-    const stored=localStorage.getItem(role==='admin'?this.ADMIN_KEY:this.VIEWER_KEY);
-    return stored||this.hash(role==='admin'?this.DEFAULT_ADMIN:this.DEFAULT_VIEWER);
+    if(role==='admin'){return localStorage.getItem(this.ADMIN_KEY)||this.hash(this.DEFAULT_ADMIN);}
+    if(role==='employee'){return localStorage.getItem(this.EMPLOYEE_KEY)||this.hash(this.DEFAULT_EMPLOYEE);}
+    return localStorage.getItem(this.VIEWER_KEY)||this.hash(this.DEFAULT_VIEWER);
   },
 
   verify(role,pin){return this.hash(pin)===this.getPin(role);},
 
   setPin(role,pin){
     const h=this.hash(pin);
-    const key=role==='admin'?this.ADMIN_KEY:this.VIEWER_KEY;
+    const key=role==='admin'?this.ADMIN_KEY:role==='employee'?this.EMPLOYEE_KEY:this.VIEWER_KEY;
     localStorage.setItem(key,h);
     // Sync PIN to Supabase so all devices share the same PIN
     const supaKey='pin_'+role;
@@ -6738,6 +6774,8 @@ const AUTH={
 
   isAdmin(){return this.role==='admin';},
   isViewer(){return this.role==='viewer';},
+  isEmployee(){return this.role==='employee';},
+  isStaffOnly(){return this.role==='employee';},
   isAuthenticated(){return this.role!==null;}
 };
 
@@ -6748,6 +6786,8 @@ function authSelectRole(role){
   document.getElementById('auth-err').textContent='';
   document.getElementById('role-admin-btn').classList.toggle('active',role==='admin');
   document.getElementById('role-viewer-btn').classList.toggle('active',role==='viewer');
+  const empBtn=document.getElementById('role-employee-btn');
+  if(empBtn)empBtn.classList.toggle('active',role==='employee');
 }
 
 function authKey(k){
@@ -6774,6 +6814,13 @@ function authSubmit(){
     sessionStorage.setItem(AUTH.SESSION_KEY,AUTH.role);
     document.getElementById('auth-overlay').classList.add('hidden');
     updateRoleBadge();
+    if(AUTH.isEmployee()){
+      // Employee view: show only staff view, hide full app
+      document.querySelector('.app').style.display='none';
+      document.getElementById('employee-view').style.display='flex';
+      loadData().then(renderEmployeeView);
+      return;
+    }
     init();
   } else {
     for(let i=0;i<4;i++){const d=document.getElementById('pd'+i);if(d)d.classList.add('error');}
@@ -6823,11 +6870,17 @@ function requireAdmin(action='This action'){
 // Check for existing session on page load (resume session without re-auth)
 (function checkSession(){
   const saved=sessionStorage.getItem(AUTH.SESSION_KEY);
-  if(saved==='admin'||saved==='viewer'){
+  if(saved==='admin'||saved==='viewer'||saved==='employee'){
     AUTH.role=saved;
     document.getElementById('auth-overlay').classList.add('hidden');
     updateRoleBadge();
-    // init() will be called normally
+    if(saved==='employee'){
+      document.querySelector('.app').style.display='none';
+      document.getElementById('employee-view').style.display='flex';
+      loadData().then(renderEmployeeView);
+      return;
+    }
+    // init() called normally for admin/viewer
   }
   // else: overlay remains visible, init() called after auth
 })();
@@ -6914,6 +6967,191 @@ async function cleanOrphanedStaffing(showUI=true){
 }
 
 init();
+
+// ── EMPLOYEE VIEW STATE ──────────────────────────────────────────────────────
+let _evWeekOffset=0; // weeks from current week
+let _evRange=2;      // number of weeks to show
+
+function evChangeWeek(delta){_evWeekOffset+=delta;renderEmployeeView();}
+function evSetRange(n){
+  _evRange=n;
+  document.getElementById('ev-btn-2').style.borderColor=n===2?'var(--blue)':'var(--bdr)';
+  document.getElementById('ev-btn-2').style.background=n===2?'var(--blue-p)':'var(--bg)';
+  document.getElementById('ev-btn-2').style.color=n===2?'var(--blue)':'var(--t2)';
+  document.getElementById('ev-btn-4').style.borderColor=n===4?'var(--blue)':'var(--bdr)';
+  document.getElementById('ev-btn-4').style.background=n===4?'var(--blue-p)':'var(--bg)';
+  document.getElementById('ev-btn-4').style.color=n===4?'var(--blue)':'var(--t2)';
+  renderEmployeeView();
+}
+
+function renderEmployeeView(){
+  const now=new Date();
+  const content=document.getElementById('ev-content');
+  if(!content)return;
+
+  // Build list of weeks to show
+  const weeks=[];
+  for(let i=0;i<_evRange;i++){
+    const wkOffset=_evWeekOffset+i;
+    // Get Monday of current week + offset
+    const mon=new Date(now);
+    const dayOfWeek=now.getDay()===0?6:now.getDay()-1; // 0=Mon
+    mon.setDate(now.getDate()-dayOfWeek+wkOffset*7);
+    mon.setHours(0,0,0,0);
+    const fri=new Date(mon);fri.setDate(mon.getDate()+4);
+    const wkKey=getISOWeekKey(mon);
+    weeks.push({wkKey,mon,fri,label:wkFmtLabel(mon,fri)});
+  }
+
+  // Update header
+  const lbl=document.getElementById('ev-week-lbl');
+  if(lbl)lbl.textContent=weeks.length>1?`${weeks[0].label.split('·')[0].trim()} — ${weeks[weeks.length-1].label.split('·')[0].trim()}`:weeks[0]?.label||'';
+  const sub=document.getElementById('ev-subtitle');
+  if(sub)sub.textContent=`${_evRange}-week staffing overview`;
+  const upd=document.getElementById('ev-updated');
+  if(upd)upd.textContent='Updated '+now.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
+
+  // Get all employees (excluding Vakantie/Sales internals)
+  const emps=S.employees.filter(e=>e.name&&e.name!=='Vakantie'&&e.name!=='Sales');
+  const allWkKeys=weeks.map(w=>w.wkKey);
+
+  // For each employee, collect their staffing for these weeks
+  let html='';
+
+  // Summary cards first — who is active this period
+  const activeEmps=emps.filter(e=>
+    S.staffing.some(s=>(s.employee_id===e.id||s.employee_id==e.id)&&allWkKeys.includes(s.week_key))
+  );
+
+  html+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:24px">`;
+  activeEmps.forEach(e=>{
+    const myStaff=S.staffing.filter(s=>(s.employee_id===e.id||s.employee_id==e.id)&&allWkKeys.includes(s.week_key));
+    const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
+    const projects=[...new Set(myStaff.map(s=>{
+      const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
+      return p?p.client_name:'?';
+    }))].filter(Boolean);
+    html+=`<div style="background:var(--bg);border:1.5px solid var(--bdr);border-radius:10px;padding:12px 14px">
+      <div style="font-weight:700;font-size:13px;color:var(--navy);margin-bottom:4px">${esc(e.name)}</div>
+      <div style="font-size:20px;font-weight:800;color:var(--blue);margin-bottom:2px">${totalDays.toFixed(1)}d</div>
+      <div style="font-size:10px;color:var(--t3);line-height:1.5">${projects.slice(0,3).map(p=>esc(p)).join(' · ')||'No projects'}</div>
+    </div>`;
+  });
+  html+='</div>';
+
+  // Per-week breakdown
+  weeks.forEach(({wkKey,mon,fri,label})=>{
+    const wkStaff=S.staffing.filter(s=>s.week_key===wkKey);
+    const isCurrentWeek=_evWeekOffset===0&&weeks.indexOf(weeks.find(w=>w.wkKey===wkKey))===0&&_evRange>1
+      ||(_evWeekOffset===0&&_evRange===1);
+
+    html+=`<div style="background:var(--bg);border:1.5px solid ${isCurrentWeek?'var(--blue)':'var(--bdr)'};border-radius:12px;margin-bottom:16px;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;background:${isCurrentWeek?'var(--blue-p)':'var(--bg2)'}">
+        <div style="font-weight:700;font-size:13px;color:${isCurrentWeek?'var(--blue)':'var(--navy)'}">
+          ${wkKey} ${isCurrentWeek?'<span style="background:var(--blue);color:#fff;font-size:9px;padding:1px 6px;border-radius:10px;margin-left:4px">THIS WEEK</span>':''}
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-left:4px">${label}</div>
+        <div style="margin-left:auto;font-size:11px;color:var(--t3)">${wkStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0).toFixed(1)} days staffed</div>
+      </div>`;
+
+    if(wkStaff.length===0){
+      html+=`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">No staffing entries for this week</div>`;
+    } else {
+      // Group by employee
+      const empRows=emps.map(e=>{
+        const rows=wkStaff.filter(s=>s.employee_id===e.id||s.employee_id==e.id);
+        if(!rows.length)return null;
+        return{emp:e,rows};
+      }).filter(Boolean);
+
+      html+=`<div style="padding:0">`;
+      empRows.forEach(({emp,rows},idx)=>{
+        const totalDays=rows.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
+        html+=`<div style="display:flex;align-items:flex-start;padding:10px 16px;${idx>0?'border-top:1px solid var(--bdr)':''}">
+          <div style="width:110px;flex-shrink:0">
+            <div style="font-weight:600;font-size:12px;color:var(--navy)">${esc(emp.name)}</div>
+            <div style="font-size:10px;color:var(--t3);margin-top:1px">${totalDays.toFixed(1)} day${totalDays!==1?'s':''}</div>
+          </div>
+          <div style="flex:1;display:flex;flex-wrap:wrap;gap:6px">`;
+        rows.forEach(r=>{
+          const proj=S.projects.find(p=>p.id===r.project_id||p.id==r.project_id);
+          const projName=proj?proj.name:'Unknown project';
+          const clientName=proj?proj.client_name:'';
+          const days=parseFloat(r.days)||0;
+          const pct=Math.round(days/5*100);
+          // Color based on project status
+          const colors=['#4A7FC1','#E8A838','#2BAC76','#C1504A','#8B4AC1','#4AC1B8'];
+          const ci=(S.projects.indexOf(proj)||0)%colors.length;
+          html+=`<div style="background:var(--bg2);border:1px solid var(--bdr);border-left:3px solid ${colors[ci]};border-radius:6px;padding:5px 10px;font-size:11px">
+            <div style="font-weight:700;color:var(--navy)">${esc(clientName)}</div>
+            <div style="color:var(--t2);font-size:10px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(projName)}">${esc(projName)}</div>
+            <div style="color:var(--blue);font-weight:700;margin-top:2px">${days}d <span style="color:var(--t3);font-weight:400;font-size:9px">(${pct}%)</span></div>
+          </div>`;
+        });
+        html+=`</div></div>`;
+      });
+      html+=`</div>`;
+    }
+    html+=`</div>`;
+  });
+
+  if(emps.length===0||allWkKeys.every(wk=>!S.staffing.some(s=>s.week_key===wk))){
+    html=`<div style="text-align:center;padding:60px 20px">
+      <div style="font-size:32px;margin-bottom:12px">📋</div>
+      <div style="font-weight:700;font-size:16px;color:var(--navy);margin-bottom:8px">No staffing data yet</div>
+      <div style="color:var(--t3);font-size:13px">Staffing entries will appear here once added by your admin.</div>
+    </div>`;
+  }
+
+  content.innerHTML=html;
+}
+
+function getISOWeekKey(mon){
+  // Returns "W{wk}" format matching the app's week keys
+  const jan4=new Date(mon.getFullYear(),0,4);
+  const startOfWeek1=new Date(jan4);
+  startOfWeek1.setDate(jan4.getDate()-((jan4.getDay()+6)%7));
+  const wkNum=Math.round((mon-startOfWeek1)/(7*86400000))+1;
+  return'W'+String(wkNum).padStart(2,'0');
+}
+
+function wkFmtLabel(mon,fri){
+  const fmtD=d=>d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
+  return`${fmtD(mon)} – ${fmtD(fri)}`;
+}
 </script>
+<!-- ═══════════════════════════════════════════════════════════
+     EMPLOYEE STAFFING VIEW — shown instead of main app for 'employee' role
+     ═══════════════════════════════════════════════════════════ -->
+<div id="employee-view" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg2);font-family:var(--font)">
+  <!-- Header -->
+  <div style="background:var(--navy);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:36px;height:36px;background:linear-gradient(135deg,var(--blue),var(--pink));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px">📋</div>
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#fff">NXTPhase — Team Staffing</div>
+        <div style="font-size:11px;color:rgba(255,255,255,.5)" id="ev-subtitle">Upcoming schedule</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="font-size:11px;color:rgba(255,255,255,.4)" id="ev-updated"></div>
+      <button onclick="document.getElementById('employee-view').style.display='none';document.querySelector('.app').style.display='';document.getElementById('auth-overlay').classList.remove('hidden');AUTH.role=null;AUTH.input='';authSelectRole('employee')" style="background:rgba(255,255,255,.1);border:none;color:rgba(255,255,255,.7);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:11px">Sign out</button>
+    </div>
+  </div>
+  <!-- Week navigation -->
+  <div style="background:var(--bg);border-bottom:1px solid var(--bdr);padding:12px 24px;display:flex;align-items:center;gap:12px">
+    <button onclick="evChangeWeek(-1)" style="border:1px solid var(--bdr);background:var(--bg);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--t2)">← Prev</button>
+    <div id="ev-week-lbl" style="font-size:13px;font-weight:700;color:var(--navy);min-width:180px;text-align:center"></div>
+    <button onclick="evChangeWeek(1)" style="border:1px solid var(--bdr);background:var(--bg);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--t2)">Next →</button>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button onclick="evSetRange(2)" id="ev-btn-2" style="border:1px solid var(--blue);background:var(--blue-p);color:var(--blue);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700">2 weeks</button>
+      <button onclick="evSetRange(4)" id="ev-btn-4" style="border:1px solid var(--bdr);background:var(--bg);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;color:var(--t2)">4 weeks</button>
+    </div>
+  </div>
+  <!-- Content -->
+  <div style="padding:20px 24px;flex:1" id="ev-content">
+    <div style="text-align:center;color:var(--t3);padding:40px">Loading schedule…</div>
+  </div>
+</div>
 </body>
 </html>
