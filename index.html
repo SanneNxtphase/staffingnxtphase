@@ -375,7 +375,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
       <button class="pin-key del" type="button" onclick="authDel()">&#x232B;</button>
     </div>
     <div class="auth-err" id="auth-err"></div>
-    <div style="margin-top:14px;font-size:11px;color:var(--t3)">Admin: <strong>1234</strong> &nbsp;&middot;&nbsp; Viewer: <strong>0000</strong> &nbsp;&middot;&nbsp; Team: <strong>8888</strong></div>
+
   </div>
 </div>
 <div class="app">
@@ -6818,7 +6818,11 @@ function authSubmit(){
       // Employee view: show only staff view, hide full app
       document.querySelector('.app').style.display='none';
       document.getElementById('employee-view').style.display='flex';
-      loadData().then(renderEmployeeView);
+      (async()=>{
+        try{await supaLoadAll();}catch(e){}
+        await loadData();
+        renderEmployeeView();
+      })();
       return;
     }
     init();
@@ -6869,6 +6873,25 @@ function requireAdmin(action='This action'){
 
 // Check for existing session on page load (resume session without re-auth)
 (function checkSession(){
+  // ── Secret team URL token — share this link with team members ──────────
+  // Link: staffingnxtphase.vercel.app/?team=nxtstaff2026
+  const urlParams=new URLSearchParams(window.location.search);
+  const teamToken=urlParams.get('team');
+  if(teamToken==='nxtstaff2026'){
+    AUTH.role='employee';
+    sessionStorage.setItem(AUTH.SESSION_KEY,'employee');
+    document.getElementById('auth-overlay').classList.add('hidden');
+    document.querySelector('.app').style.display='none';
+    document.getElementById('employee-view').style.display='flex';
+    // Load from Supabase first so staffing data is fresh
+    (async()=>{
+      try{await supaLoadAll();}catch(e){}
+      await loadData();
+      renderEmployeeView();
+    })();
+    return;
+  }
+
   const saved=sessionStorage.getItem(AUTH.SESSION_KEY);
   if(saved==='admin'||saved==='viewer'||saved==='employee'){
     AUTH.role=saved;
@@ -6877,7 +6900,12 @@ function requireAdmin(action='This action'){
     if(saved==='employee'){
       document.querySelector('.app').style.display='none';
       document.getElementById('employee-view').style.display='flex';
-      loadData().then(renderEmployeeView);
+      // Load from Supabase first so staffing data is fresh
+      (async()=>{
+        try{await supaLoadAll();}catch(e){}
+        await loadData();
+        renderEmployeeView();
+      })();
       return;
     }
     // init() called normally for admin/viewer
