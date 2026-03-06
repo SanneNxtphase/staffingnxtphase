@@ -1888,8 +1888,22 @@ function navigate(page,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   el.classList.add('active');
-  // All pages: load data then render
-  loadData().then(()=>renderPage(page));
+  if(page==='financial'){
+    // Always pull fresh from Supabase for financial page so bank data is current on mobile
+    (async()=>{
+      try{
+        const rows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
+        if(rows&&rows.length>0){
+          S.cashflowMonths=rows;
+          const st=DB._gs();st.cashflow_months=rows;DB._sv();DB._store=null;
+        }
+      }catch(e){}
+      await loadData();
+      renderPage(page);
+    })();
+  } else {
+    loadData().then(()=>renderPage(page));
+  }
 }
 function mobileNav(el){
   document.querySelectorAll('.mobile-nav-item').forEach(n=>n.classList.remove('active'));
@@ -5532,22 +5546,25 @@ function setFinTab(t){
 }
 
 function renderFinancial(){
-  // If cashflow data missing, fetch directly from Supabase then re-render
+  // Always try to get fresh cashflow data, show loading while fetching
+  const _doRender=()=>{
+    // If still empty after all attempts, render with dashes (no crash)
+    _renderFinancialActual();
+  };
   if(!S.cashflowMonths||S.cashflowMonths.length===0){
+    // Show loading indicator in the bank columns while fetching
+    const tbody=document.getElementById('fin-pl-tbody');
+    if(tbody)tbody.innerHTML='<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--t3);font-size:12px">⏳ Loading cashflow data…</td></tr>';
     _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc').then(rows=>{
       if(rows&&rows.length>0){
         S.cashflowMonths=rows;
-        // Save into localStorage store too
-        const st=DB._gs();
-        st.cashflow_months=rows;
-        DB._sv();
-        DB._store=null;
+        const st=DB._gs();st.cashflow_months=rows;DB._sv();DB._store=null;
       }
-      _renderFinancialActual();
-    }).catch(()=>_renderFinancialActual());
-    return;
+      _doRender();
+    }).catch(()=>_doRender());
+  } else {
+    _doRender();
   }
-  _renderFinancialActual();
 }
 function _renderFinancialActual(){
   const yearEl=document.getElementById('fin-year');
@@ -7050,6 +7067,16 @@ async function init(){
   await loadData();
   // Silently remove staffing rows for deleted projects on startup
   await cleanOrphanedStaffing(false);
+  // Also fetch cashflow_months directly into S so Financial tab always has data
+  if(!S.cashflowMonths||S.cashflowMonths.length===0){
+    try{
+      const cfRows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
+      if(cfRows&&cfRows.length>0){
+        S.cashflowMonths=cfRows;
+        const st=DB._gs();st.cashflow_months=cfRows;DB._sv();DB._store=null;
+      }
+    }catch(e){}
+  }
   renderDashboard();
   S.schedWeek=toWeekKey(new Date());
 }
