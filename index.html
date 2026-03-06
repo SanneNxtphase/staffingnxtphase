@@ -1933,7 +1933,24 @@ function navigate(page,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   el.classList.add('active');
-  if(page==='financial'){
+  if(page==='schedule'){
+    // Refresh staffing notes from Supabase when opening schedule
+    (async()=>{
+      await loadData();
+      try{
+        const snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key,value');
+        if(snSet&&snSet.length>0){
+          localStorage.setItem('sp-staff-notes',snSet[0].value||'{}');
+          // Re-merge into S.staffing
+          try{
+            const sn=JSON.parse(snSet[0].value||'{}');
+            S.staffing.forEach(s=>{const k=s.employee_id+':'+s.project_id+':'+s.week_key;if(sn[k])s.note=sn[k];});
+          }catch(e){}
+        }
+      }catch(e){}
+      renderPage(page);
+    })();
+  } else if(page==='financial'){
     // Always pull fresh from Supabase for financial page so bank data is current on mobile
     (async()=>{
       // Load all regular data first
@@ -5721,25 +5738,57 @@ function setFinTab(t){
 }
 
 function renderFinancial(){
-  // Always try to get fresh cashflow data, show loading while fetching
-  const _doRender=()=>{
-    // If still empty after all attempts, render with dashes (no crash)
+  // Show spinner immediately
+  const _spin=document.getElementById('fin-pl-tbody');
+  if(_spin)_spin.innerHTML='<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--t3);font-size:12px">⏳ Loading…</td></tr>';
+  const _kpis=document.getElementById('fin-kpis');
+  if(_kpis)_kpis.innerHTML='';
+
+  // Always fetch ALL required data fresh — never depend on prior state
+  const _fetches=[
+    _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc'),
+    _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc'),
+    _supaReq('GET','invoices',null,'?select=*&order=id.asc'),
+    _supaReq('GET','staffing',null,'?select=*&order=id.asc'),
+    _supaReq('GET','future_costs',null,'?select=*&order=id.asc'),
+    _supaReq('GET','settings',null,'?select=*'),
+  ];
+  Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows])=>{
+    // Apply fetched data into S (only override if we got real data)
+    if(cfRows&&cfRows.length>0) S.cashflowMonths=cfRows;
+    if(fcRows&&fcRows.length>0){
+      // Parse start/end month from notes field
+      fcRows.forEach(fc=>{
+        if(fc.notes){
+          const sm=fc.notes.match(/\|\|SM:(\d{4}-\d{2})\|\|/);
+          const em=fc.notes.match(/\|\|EM:(\d{4}-\d{2})\|\|/);
+          if(sm)fc.start_month=sm[1];
+          if(em)fc.end_month=em[1];
+        }
+      });
+      // Apply fc_date_overrides from settings
+      try{
+        const ovSet=setRows&&setRows.find(s=>s.key==='fc_date_overrides');
+        if(ovSet){const ov=JSON.parse(ovSet.value||'{}');
+          fcRows.forEach(fc=>{const o=ov[String(fc.id)];if(o){if(o.start_month)fc.start_month=o.start_month;if(o.end_month)fc.end_month=o.end_month;}});
+        }
+      }catch(e){}
+      S.fixedCosts=fcRows;
+    }
+    if(invRows&&invRows.length>0) S.invoices=invRows;
+    if(stRows&&stRows.length>0){
+      // Apply staffing notes
+      try{
+        const snSet=setRows&&setRows.find(s=>s.key==='staffing_notes');
+        if(snSet){const sn=JSON.parse(snSet.value||'{}');
+          stRows.forEach(r=>{const k=r.employee_id+':'+r.project_id+':'+r.week_key;if(sn[k])r.note=sn[k];});
+        }
+      }catch(e){}
+      S.staffing=stRows;
+    }
+    if(futRows&&futRows.length>0) S.futureCosts=futRows;
     _renderFinancialActual();
-  };
-  if(!S.cashflowMonths||S.cashflowMonths.length===0){
-    // Show loading indicator in the bank columns while fetching
-    const tbody=document.getElementById('fin-pl-tbody');
-    if(tbody)tbody.innerHTML='<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--t3);font-size:12px">⏳ Loading cashflow data…</td></tr>';
-    _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc').then(rows=>{
-      if(rows&&rows.length>0){
-        S.cashflowMonths=rows;
-        const st=DB._gs();st.cashflow_months=rows;DB._sv();DB._store=null;
-      }
-      _doRender();
-    }).catch(()=>_doRender());
-  } else {
-    _doRender();
-  }
+  }).catch(()=>_renderFinancialActual());
 }
 function _renderFinancialActual(){
   const yearEl=document.getElementById('fin-year');
@@ -7478,6 +7527,18 @@ function wkFmtLabel(mon,fri){
       (async()=>{
         try{await supaLoadAll();}catch(e){console.warn('supa failed',e);}
         await loadData();
+        // Always fetch staffing_notes fresh from Supabase and apply to S.staffing
+        try{
+          const _snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key,value');
+          if(_snSet&&_snSet.length>0){
+            localStorage.setItem('sp-staff-notes',_snSet[0].value||'{}');
+            const _sn=JSON.parse(_snSet[0].value||'{}');
+            S.staffing.forEach(s=>{
+              const k=s.employee_id+':'+s.project_id+':'+s.week_key;
+              if(_sn[k]) s.note=_sn[k];
+            });
+          }
+        }catch(e){}
         renderEmployeeView();
       })();
     };
