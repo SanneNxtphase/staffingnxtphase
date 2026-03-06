@@ -1326,6 +1326,26 @@ async function supaLoadAll() {
         console.log('[Data integrity] Removed '+(origPILen-store.partner_invoices.length)+' orphaned partner_invoices');
       }
     }
+    // Apply staffing notes from Supabase settings (cross-device sync)
+    var _staffNotes={};
+    try{
+      var _snSetting=supaSettings.find(function(s){return s.key==='staffing_notes';});
+      if(_snSetting) _staffNotes=JSON.parse(_snSetting.value||'{}');
+    }catch(e){}
+    // Also merge from old local store (in case Supabase settings not yet pushed)
+    if(_oldStore&&_oldStore.staffing){
+      _oldStore.staffing.forEach(function(old){
+        if(old.note){
+          var k=old.employee_id+':'+old.project_id+':'+old.week_key;
+          _staffNotes[k]=_staffNotes[k]||old.note;
+        }
+      });
+    }
+    // Apply notes to freshly loaded staffing rows
+    store.staffing.forEach(function(row){
+      var k=row.employee_id+':'+row.project_id+':'+row.week_key;
+      if(_staffNotes[k]) row.note=_staffNotes[k];
+    });
     // Parse start_month/end_month from notes field (encoded as ||SM:YYYY-MM||)
     store.fixed_costs.forEach(function(fc){
       if(fc.notes){
@@ -1362,6 +1382,11 @@ async function supaLoadAll() {
     });
     // Store settings into local store too
     if(supaSettings.length>0) store.settings = supaSettings;
+    // Extract staffing_notes from Supabase settings into localStorage
+    try{
+      const _snSetting=supaSettings.find(function(s){return s.key==='staffing_notes';});
+      if(_snSetting) localStorage.setItem('sp-staff-notes',_snSetting.value||'{}');
+    }catch(e){}
     localStorage.setItem('sp-v5', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
     console.log('[Supabase] Loaded from cloud');
@@ -1961,6 +1986,14 @@ async function loadData(){
   S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
   try{const ov=localStorage.getItem('sp-vat-overrides');if(ov)Object.assign(S.vatOverrides,JSON.parse(ov));}catch(e){}
+  // Merge staffing notes from localStorage into S.staffing rows
+  try{
+    const _sn=JSON.parse(localStorage.getItem('sp-staff-notes')||'{}');
+    S.staffing.forEach(s=>{
+      const k=s.employee_id+':'+s.project_id+':'+s.week_key;
+      if(_sn[k]) s.note=_sn[k];
+    });
+  }catch(e){}
 }
 function saveVatOverrides(){try{localStorage.setItem('sp-vat-overrides',JSON.stringify(S.vatOverrides));}catch(e){}}
 
@@ -2620,6 +2653,7 @@ function setView(v){
   renderStaffing();
 }
 function renderStaffing(){
+  _staffNoteApply(); // restore notes that survived Supabase sync
   const{y,m}=S.staffingMonth;
   document.getElementById('staff-month-lbl').textContent=monthLbl(y,m);
   const weeks=getWeeksInMonth(y,m);
@@ -3150,7 +3184,7 @@ async function editCell(empId,projId,wk,cell){
         </div>
         <div class="form-group" style="flex:1">
           <label class="form-lbl">Note <span style="color:var(--t3);font-size:10px">optional — e.g. "Sales outreach Client X"</span></label>
-          <input class="form-input" id="sc-note" value="${esc(curNote)}" placeholder="What is this person working on?">
+          <input class="form-input" id="sc-note" value="${esc(curNote)}" placeholder="What is this person working on?" autocomplete="off">
         </div>
       </div>
     </div>
@@ -3163,14 +3197,58 @@ async function editCell(empId,projId,wk,cell){
 }
 async function editCellSave(empId,projId,wk,days,note){
   closeModal();
+  // Save days+note locally
   await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days,note});
-  // Push note to Supabase directly
+  // Persist note in settings so it survives Supabase sync (staffing table may lack note column)
+  _staffNoteSave(empId,projId,wk,note);
+  // Push days to Supabase
   try{
     const ex=await _supaReq('GET','staffing',null,`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`);
-    if(ex&&ex.length>0) await _supaReq('PATCH','staffing',{days,note},'?id=eq.'+ex[0].id);
-    else if(days>0) await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days,note});
+    if(ex&&ex.length>0&&days>0){
+      await _supaReq('PATCH','staffing',{days},'?id=eq.'+ex[0].id);
+    } else if(days>0){
+      await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days});
+    } else if(ex&&ex.length>0&&days===0){
+      await _supaReq('DELETE','staffing',null,'?id=eq.'+ex[0].id);
+    }
   }catch(e){}
   await loadData();renderStaffing();
+}
+
+// Staffing notes stored in settings — survives Supabase sync without schema changes
+function _staffNoteKey(empId,projId,wk){return empId+':'+projId+':'+wk;}
+function _staffNoteSave(empId,projId,wk,note){
+  try{
+    const raw=localStorage.getItem('sp-staff-notes')||'{}';
+    const notes=JSON.parse(raw);
+    const k=_staffNoteKey(empId,projId,wk);
+    if(note) notes[k]=note; else delete notes[k];
+    localStorage.setItem('sp-staff-notes',JSON.stringify(notes));
+    // Push to Supabase settings
+    const json=JSON.stringify(notes);
+    (async()=>{
+      try{
+        const ex=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key');
+        if(ex&&ex.length>0) await _supaReq('PATCH','settings',{value:json},'?key=eq.staffing_notes');
+        else await _supaReq('POST','settings',{key:'staffing_notes',value:json});
+      }catch(e){}
+    })();
+  }catch(e){}
+}
+function _staffNotesLoad(){
+  // Load from Supabase settings (set during supaLoadAll) into localStorage
+  try{
+    const raw=localStorage.getItem('sp-staff-notes')||'{}';
+    return JSON.parse(raw);
+  }catch(e){return {};}
+}
+function _staffNoteApply(){
+  // Apply saved notes to S.staffing after any data load
+  const notes=_staffNotesLoad();
+  S.staffing.forEach(s=>{
+    const k=_staffNoteKey(s.employee_id,s.project_id,s.week_key);
+    if(notes[k]) s.note=notes[k];
+  });
 }
 
 // ══ SCHEDULES ══
@@ -3194,6 +3272,7 @@ function schedToggleEmp(empId){
 }
 function schedShowAll(){S.schedHiddenEmps.clear();renderSchedule();}
 function renderSchedule(){
+  _staffNoteApply(); // restore notes that survived Supabase sync
   if(!S.schedWeek)S.schedWeek=toWeekKey(new Date());
   // Render employee visibility toggles
   const togglesEl=document.getElementById('sched-emp-toggles');
@@ -3226,7 +3305,7 @@ function renderSchedule(){
     </div><div class="card-body" style="padding:0"><div class="table-wrap"><table>
     <thead><tr>
       <th>Employee</th>
-      ${activeProjs.map(p=>`<th class="center" style="min-width:80px">${esc(p.client_name)}<br><span style="font-weight:400;font-size:9px;opacity:.7">${esc(p.name)}</span></th>`).join('')}
+      ${activeProjs.map(p=>`<th class="center" style="min-width:120px;padding:8px 10px">${esc(p.client_name)}<br><span style="font-weight:400;font-size:9px;opacity:.7">${esc(p.name)}</span></th>`).join('')}
       <th class="right">Total</th>
     </tr></thead><tbody>`;
     S.employees.filter(emp=>!S.schedHiddenEmps.has(emp.id)).forEach(emp=>{
@@ -3237,8 +3316,15 @@ function renderSchedule(){
       html+=`<tr><td class="bold">${esc(emp.name)}<br><span class="text-muted" style="font-size:10px">${esc(emp.role||'')}</span></td>`;
       activeProjs.forEach(p=>{
         const _td=empRows.filter(s=>s.project_id===p.id).reduce((s,x)=>s+x.days,0);
-        const _tnotes=empRows.filter(s=>s.project_id===p.id&&s.note).map(s=>s.note).join('; ');
-        html+=`<td class="center" title="${esc(_tnotes)}">${_td?`<strong style="color:var(--blue)">${_td}d</strong>${_tnotes?`<div style="font-size:8px;color:var(--t3);font-style:italic;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_tnotes)}</div>`:''}`:''}` +'</td>';
+        const _tnotes=empRows.filter(s=>s.project_id===p.id&&s.note).map(s=>s.note).join(' · ');
+        let _tcell='';
+        if(_td){
+          _tcell='<strong style="color:var(--blue);font-size:13px">'+_td+'d</strong>';
+          if(_tnotes){
+            _tcell+='<div style="font-size:10px;color:var(--navy);margin-top:3px;font-weight:500;line-height:1.35;word-break:break-word;white-space:normal;max-width:110px;text-align:left">&#128393; '+esc(_tnotes)+'</div>';
+          }
+        }
+        html+='<td class="center" style="vertical-align:top;padding:8px 10px;min-width:120px">'+_tcell+'</td>';
       });
       html+=`<td class="right bold">${total}d${totalVac?` <span class="text-purple" style="font-size:10px">+${totalVac}vac</span>`:''}</td></tr>`;
     });
@@ -7166,6 +7252,8 @@ async function init(){
       }
     }catch(e){}
   }
+  // Push staffing notes to Supabase so team link can see them
+  if(S.staffing&&S.staffing.some(s=>s.note)) _staffingNotesPush();
   // Push fc_date_overrides to Supabase if any fixed costs have start/end months
   // This ensures mobile devices get the date overrides too
   if(S.fixedCosts&&S.fixedCosts.some(fc=>fc.start_month||fc.end_month)){
