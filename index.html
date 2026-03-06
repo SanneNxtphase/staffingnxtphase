@@ -1969,7 +1969,7 @@ function renderDashboard(){
   const{y,m}=S.dashMonth;
   document.getElementById('dash-month-lbl').textContent=monthLbl(y,m);
   const confRev=revForMonth(y,m,'confirmed'),draftRev=revForMonth(y,m,'draft');
-  const sc=staffCostMonth(y,m),fc=fixedMonthly(),tc=sc+fc;
+  const sc=staffCostMonth(y,m),fc=fixedMonthly(y,m),tc=sc+fc;
   // Project margin = Revenue - Staffing only. Fixed costs belong at company level.
   const profit=confRev-sc,margin=confRev>0?(profit/confRev*100):0;
   const mStr=y+'-'+String(m).padStart(2,'0');
@@ -2002,7 +2002,7 @@ function renderDashboard(){
     lbl:new Date(cy,cm-1,1).toLocaleDateString('en',{month:'short'}),
     r:revForMonth(cy,cm,'confirmed'),
     dr:revForMonth(cy,cm,'draft'),
-    c:staffCostMonth(cy,cm)+fixedMonthly()
+    c:staffCostMonth(cy,cm)+fixedMonthly(cy,cm)
   }));
   setTimeout(()=>{
     const hasAnyChartData=chartData6.some(d=>d.r>0||d.dr>0||d.c>0);
@@ -2129,7 +2129,7 @@ function renderDashboard(){
       mo:i+1,
       rev:revForMonth(trendYear,i+1,'confirmed'),
       dr:revForMonth(trendYear,i+1,'draft'),
-      fc:fixedMonthly(),  // flat line — same each month
+      fc:fixedMonthly(trendYear,i+1),  // per-month fixed costs
     }));
     const tEl=document.getElementById('dash-trend-svg');
     if(!tEl)return;
@@ -2312,7 +2312,6 @@ function fcChangeStart(d){
 function renderForecast(){
   const{y:sy,m:sm}=S.fcStart;
   const months=[];for(let i=0;i<12;i++){let m=sm+i,y=sy;while(m>12){m-=12;y++;}months.push({y,m});}
-  const fc=fixedMonthly();
   document.getElementById('fc-range-lbl').textContent=new Date(sy,sm-1,1).toLocaleDateString('en',{month:'short',year:'numeric'})+' – '+new Date(months[11].y,months[11].m-1,1).toLocaleDateString('en',{month:'short',year:'numeric'});
   
   // Get extra (manual) future costs per month — always treat as positive cost amounts
@@ -2331,20 +2330,20 @@ function renderForecast(){
   const data=months.map(({y,m})=>{
     const rev=revForMonth(y,m,'confirmed');
     const extra=getFutureCosts(y,m);
-    // Fixed costs are always positive monthly amounts
-    const fixedCost=Math.abs(fc);
+    // Fixed costs per month — respects start/end month dates
+    const fixedCost=fixedMonthly(y,m);
     const totalCost=fixedCost+extra;
     // Surplus = revenue minus all forward-looking costs
     const surplus=rev-totalCost;
     return{y,m,rev,fc:fixedCost,extra,totalCost,surplus};
   });
   const totalRev=data.reduce((s,d)=>s+d.rev,0);
-  const totalFC=fc*12;
+  const totalFC=data.reduce((s,d)=>s+d.fc,0);
   const totalExtra=data.reduce((s,d)=>s+d.extra,0);
   const totalSurplus=data.reduce((s,d)=>s+d.surplus,0);
   document.getElementById('fc-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">12-Month Revenue</div><div class="kpi-val blue">${fmtS(totalRev)}</div><div class="kpi-sub">Confirmed only</div></div>
-    <div class="kpi ar"><div class="kpi-lbl">Fixed Costs</div><div class="kpi-val red">${fmtS(totalFC)}</div><div class="kpi-sub">${fmt(fc)}/mo</div></div>
+    <div class="kpi ar"><div class="kpi-lbl">Fixed Costs</div><div class="kpi-val red">${fmtS(totalFC)}</div><div class="kpi-sub">12-month total</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Extra Future Costs</div><div class="kpi-val amber">${fmtS(totalExtra)}</div></div>
     <div class="kpi ${totalSurplus>=0?'ag':'ar'}"><div class="kpi-lbl">12-Month Surplus</div><div class="kpi-val ${totalSurplus>=0?'green':'red'}">${fmtS(totalSurplus)}</div></div>`;
   
@@ -3912,9 +3911,20 @@ function fcVatTypeLabel(type){
   return 'Incl. VAT';
 }
 
-// Override fixedMonthly to use excl-VAT amounts from planning layer
-function fixedMonthly(){
-  return Math.round(S.fixedCosts.filter(c=>c.active).reduce((s,c)=>s+fcEntryExcl(c),0)*100)/100;
+// fixedMonthly(y,m) — returns fixed costs active in a given month
+// If y/m omitted, returns all active costs (backward compat for contexts without month)
+function fixedMonthly(y,m){
+  return Math.round(S.fixedCosts.filter(c=>{
+    if(!c.active)return false;
+    const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
+    if(moStr){
+      // Check start_month — cost must have started by this month
+      if(c.start_month&&c.start_month>moStr)return false;
+      // Check end_month — cost must not have ended before this month
+      if(c.end_month&&c.end_month<moStr)return false;
+    }
+    return true;
+  }).reduce((s,c)=>s+fcEntryExcl(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const planningItems=S.fixedCosts.filter(c=>c.active);
@@ -4034,6 +4044,7 @@ function renderFixedCosts(){
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead><tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
             <th style="padding:6px 14px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Cost Name</th>
+            <th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Period</th>
             <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Gross</th>
             <th style="padding:6px 10px;text-align:center;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT</th>
             <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT Amt</th>
@@ -4573,7 +4584,7 @@ function renderHistory(){
       <tbody>`;
     months.forEach(m=>{
       const confR=revForMonth(y,m,'confirmed'),draftR=revForMonth(y,m,'draft');
-      const sc=staffCostMonth(y,m),fc=fixedMonthly(),tc=sc+fc;
+      const sc=staffCostMonth(y,m),fc=fixedMonthly(y,m),tc=sc+fc;
       const profit=confR-tc;
       const mo=mStr(m);
       const ci=getBankInForMonth(mo);
@@ -4920,6 +4931,16 @@ function modalFixedCost(c){
       <div><div style="color:var(--amber);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">VAT (BTW)</div><div id="prev-vat" style="font-weight:700;color:var(--amber);font-family:var(--mono)">${amt>0?fmt(prevVat):'—'}</div></div>
       <div><div style="color:var(--red);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Net (excl. VAT)</div><div id="prev-net" style="font-weight:700;color:var(--red);font-family:var(--mono)">${amt>0?fmt(prevNet):'—'}</div></div>
     </div>
+    <div class="form-row" style="margin-top:10px">
+      <div class="form-group">
+        <label class="form-lbl">Start Month <span style="color:var(--t3);font-size:10px">YYYY-MM — cost activates from here</span></label>
+        <input class="form-input" type="month" id="f-start-month" value="${esc(c?.start_month||'')}">
+      </div>
+      <div class="form-group">
+        <label class="form-lbl">End Month <span style="color:var(--t3);font-size:10px">YYYY-MM — optional, leave blank = no end</span></label>
+        <input class="form-input" type="month" id="f-end-month" value="${esc(c?.end_month||'')}">
+      </div>
+    </div>
     <div style="background:var(--bg2);border-radius:var(--rsm);padding:9px 12px;margin-top:8px">
       <label class="check-wrap"><input type="checkbox" id="f-active"${!c||c?.active?' checked':''}> <span style="font-weight:600">Active</span> <span style="font-size:10px;color:var(--t3);margin-left:4px">(inactive items excluded from totals)</span></label>
     </div>
@@ -4974,7 +4995,10 @@ async function saveFixedCost(id){
     cat=newCatName;
   }
   if(cat&&cat!==''){const cats=getFCCategories();if(!cats.includes(cat)){cats.push(cat);saveFCCategories(cats);}}
-  const data={name,category:cat,amount:amt,vat_pct:vatPct,vat_type:vatType,active};
+  const startMonth=document.getElementById('f-start-month')?.value?.trim()||null;
+  const endMonth=document.getElementById('f-end-month')?.value?.trim()||null;
+  const data={name,category:cat,amount:amt,vat_pct:vatPct,vat_type:vatType,active,
+    start_month:startMonth||null,end_month:endMonth||null};
   if(id)await DB.update('fixed_costs',id,data);
   else await DB.insert('fixed_costs',{...data,from_bank:0});
   closeModal();await loadData();renderFixedCosts();renderDashboard();
@@ -5473,8 +5497,7 @@ function _renderFinancialActual(){
   const yearEl=document.getElementById('fin-year');
   const year=parseInt(yearEl?.value)||new Date().getFullYear();
   const inclDraft=document.getElementById('fin-incl-draft')?.checked||false;
-  const fc=fixedMonthly(); // fixed costs from Fixed Costs register (source of truth)
-  const now=new Date();
+  const now=new Date(); // fixed costs calculated per-month in loop below
 
   // Helper: future costs that fall within a specific month
   const getFutureCostsForMonth=(y,m)=>{
@@ -5499,7 +5522,7 @@ function _renderFinancialActual(){
     const confRev=revForMonth(year,mo,'confirmed');
     const draftRev=inclDraft?revForMonth(year,mo,'draft'):0;
     const revenue=confRev+draftRev;
-    const fixedCosts=fc; // from Fixed Costs register
+    const fixedCosts=fixedMonthly(year,mo); // active costs for this month
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const totalOpCosts=fixedCosts+forecastCosts;
     const opResult=revenue-totalOpCosts;
@@ -5690,7 +5713,7 @@ function _renderFinTrend(data){
 function renderFinClients(){
   const status=document.getElementById('fin-cl-status')?.value||'';
   const sortBy=document.getElementById('fin-cl-sort')?.value||'revenue';
-  const fc=fixedMonthly();
+  const fc=fixedMonthly(); // clients view — uses flat rate for simplicity
   const allWks=Math.max(1,S.projects.reduce((s,p)=>s+projectWkCount(p),0));
   let projs=status?S.projects.filter(p=>p.status===status):S.projects;
   const rows=projs.map(p=>{
@@ -6185,7 +6208,6 @@ async function exportAllExcel(){
 
   // ── 10. Financial Summary (computed) ─────────────────────────────────────
   const finYear=parseInt(document.getElementById('fin-year')?.value||new Date().getFullYear());
-  const fc_monthly=fixedMonthly();
   const finRows=[];
   let cum=0;
   for(let mo=1;mo<=12;mo++){
@@ -6193,13 +6215,13 @@ async function exportAllExcel(){
     const rev=revForMonth(finYear,mo,'confirmed');
     const draftRev=revForMonth(finYear,mo,'draft');
     const sc=staffCostMonth(finYear,mo);
-    const totalCost=sc+fc_monthly;
+    const totalCost=sc+fixedMonthly(finYear,mo);
     const result=rev-totalCost;
     cum+=result;
     const bankIn=getBankInForMonth(moStr);
     const bankOut=getBankOutForMonth(moStr);
     const lbl=new Date(finYear,mo-1,1).toLocaleDateString('en',{month:'long',year:'numeric'});
-    finRows.push({month:lbl,revenue:rev,draft_revenue:draftRev,staff_cost:sc,fixed_cost:fc_monthly,total_cost:totalCost,result,margin_pct:rev>0?(result/rev*100):0,cumulative:cum,bank_in:bankIn,bank_out:bankOut,net_cash:bankIn-bankOut});
+    finRows.push({month:lbl,revenue:rev,draft_revenue:draftRev,staff_cost:sc,fixed_cost:_fcM,total_cost:totalCost,result,margin_pct:rev>0?(result/rev*100):0,cumulative:cum,bank_in:bankIn,bank_out:bankOut,net_cash:bankIn-bankOut});
   }
   const finCols=[
     {label:'Month',key:'month'},{label:'Revenue (€)',key:'revenue'},{label:'Draft Revenue (€)',key:'draft_revenue'},
@@ -6502,7 +6524,7 @@ function showRevenueDrilldown(year,mo){
   
   // Financial summary using same revForMonth as P&L
   const totalProjRev=projRev.reduce((s,r)=>s+r.rev,0);
-  const fixedCosts=fixedMonthly();
+  const fixedCosts=fixedMonthly(year,mo);
   let forecastCosts=0;
   S.futureCosts.forEach(fc=>{
     if(fc.recurring||fc.month===moStr){forecastCosts+=Math.abs(parseFloat(fc.amount||0));}
