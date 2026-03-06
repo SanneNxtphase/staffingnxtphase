@@ -3234,6 +3234,31 @@ async function editCellSave(empId,projId,wk,days,note){
 
 // Staffing notes stored in settings — survives Supabase sync without schema changes
 function _staffNoteKey(empId,projId,wk){return empId+':'+projId+':'+wk;}
+// Push ALL staffing notes from S.staffing to Supabase settings
+function _staffingNotesPush(){
+  try{
+    const notes={};
+    // Collect from S.staffing
+    (S.staffing||[]).forEach(s=>{
+      if(s.note){notes[s.employee_id+':'+s.project_id+':'+s.week_key]=s.note;}
+    });
+    // Also merge existing sp-staff-notes from localStorage
+    try{
+      const local=JSON.parse(localStorage.getItem('sp-staff-notes')||'{}');
+      Object.assign(notes,local); // local wins
+    }catch(e){}
+    const json=JSON.stringify(notes);
+    localStorage.setItem('sp-staff-notes',json);
+    // Push to Supabase
+    (async()=>{
+      try{
+        const ex=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key');
+        if(ex&&ex.length>0) await _supaReq('PATCH','settings',{value:json},'?key=eq.staffing_notes');
+        else await _supaReq('POST','settings',{key:'staffing_notes',value:json});
+      }catch(e){}
+    })();
+  }catch(e){}
+}
 function _staffNoteSave(empId,projId,wk,note){
   try{
     const raw=localStorage.getItem('sp-staff-notes')||'{}';
@@ -4186,19 +4211,22 @@ function renderFixedCosts(){
   const tNet  =entries.reduce((s,c)=>s+fcEntryExcl(c),0);
 
   // KPI row
+  // Current month fixed costs (matches dashboard)
+  const _fcPageNow=new Date(),_fcPageY=_fcPageNow.getFullYear(),_fcPageM=_fcPageNow.getMonth()+1;
+  const tNetThisMonth=fixedMonthly(_fcPageY,_fcPageM);
   const kpiEl=document.getElementById('fc-grand-kpis');
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
-      <div class="kpi-lbl">Monthly Gross</div><div class="kpi-val">${fmt(tGross)}</div>
-      <div class="kpi-sub">${entries.length} active entries</div></div>
+      <div class="kpi-lbl">This Month (Net)</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
+      <div class="kpi-sub">Active costs · matches Dashboard</div></div>
     <div class="kpi aa">
       <div class="kpi-lbl">VAT (BTW)</div><div class="kpi-val amber">${fmt(tVat)}</div>
-      <div class="kpi-sub">Reclaimable</div></div>
+      <div class="kpi-sub">Reclaimable this month</div></div>
     <div class="kpi ar" style="border-left:3px solid var(--red)">
-      <div class="kpi-lbl">Monthly Net</div><div class="kpi-val red">${fmt(tNet)}</div>
-      <div class="kpi-sub">Excl. VAT · leads P&L</div></div>
+      <div class="kpi-lbl">Full Rate (Net)</div><div class="kpi-val red">${fmt(tNet)}</div>
+      <div class="kpi-sub">When all costs active · excl. VAT</div></div>
     <div class="kpi ar">
-      <div class="kpi-lbl">Annual Net</div><div class="kpi-val red">${fmt(tNet*12)}</div>
+      <div class="kpi-lbl">Annual (Full Rate)</div><div class="kpi-val red">${fmt(tNet*12)}</div>
       <div class="kpi-sub">× 12 months</div></div>`;
 
   // Group by category
@@ -6010,7 +6038,12 @@ function _renderFinTrend(data){
 function renderFinClients(){
   const status=document.getElementById('fin-cl-status')?.value||'';
   const sortBy=document.getElementById('fin-cl-sort')?.value||'revenue';
-  const fc=fixedMonthly(); // clients view — uses flat rate for simplicity
+  // Use average monthly fixed cost across 12 months (respects start/end dates per month)
+  const _fcNow=new Date();
+  const _fcYear=_fcNow.getFullYear(),_fcMo=_fcNow.getMonth()+1;
+  let fc=0;
+  for(let _i=0;_i<12;_i++){let _m=_fcMo+_i,_y=_fcYear;while(_m>12){_m-=12;_y++;}fc+=fixedMonthly(_y,_m);}
+  fc=fc/12; // average monthly fixed cost — accounts for start/end dates
   const allWks=Math.max(1,S.projects.reduce((s,p)=>s+projectWkCount(p),0));
   let projs=status?S.projects.filter(p=>p.status===status):S.projects;
   const rows=projs.map(p=>{
