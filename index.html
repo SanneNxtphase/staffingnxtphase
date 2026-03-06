@@ -7330,10 +7330,12 @@ function renderEmployeeView(){
           // Color based on project status
           const colors=['#4A7FC1','#E8A838','#2BAC76','#C1504A','#8B4AC1','#4AC1B8'];
           const ci=(S.projects.indexOf(proj)||0)%colors.length;
-          html+=`<div style="background:var(--bg2);border:1px solid var(--bdr);border-left:3px solid ${colors[ci]};border-radius:6px;padding:5px 10px;font-size:11px">
+          const note=r.note||'';
+          html+=`<div style="background:var(--bg2);border:1px solid var(--bdr);border-left:3px solid ${colors[ci]};border-radius:6px;padding:5px 10px;font-size:11px;min-width:120px">
             <div style="font-weight:700;color:var(--navy)">${esc(clientName)}</div>
             <div style="color:var(--t2);font-size:10px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(projName)}">${esc(projName)}</div>
             <div style="color:var(--blue);font-weight:700;margin-top:2px">${days}d <span style="color:var(--t3);font-weight:400;font-size:9px">(${pct}%)</span></div>
+            ${note?`<div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--bdr);color:var(--t2);font-size:10px;font-style:italic;line-height:1.3">&#128393; ${esc(note)}</div>`:''}
           </div>`;
         });
         html+=`</div></div>`;
