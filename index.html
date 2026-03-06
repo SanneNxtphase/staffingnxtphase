@@ -1065,8 +1065,10 @@ const DB={
     const s=this._gs();
     if(action==='upsert-staffing'){
       const idx=s.staffing.findIndex(x=>x.employee_id===data.employee_id&&x.project_id===data.project_id&&x.week_key===data.week_key);
-      if(idx>=0){if(data.days===0||data.days==='0')s.staffing.splice(idx,1);else s.staffing[idx].days=parseFloat(data.days);}
-      else if(parseFloat(data.days)>0)s.staffing.push({id:this._ni('staffing'),...data,days:parseFloat(data.days)});
+      if(idx>=0){
+        if(data.days===0||data.days==='0') s.staffing.splice(idx,1);
+        else { s.staffing[idx].days=parseFloat(data.days); if(data.note!==undefined) s.staffing[idx].note=data.note||''; }
+      } else if(parseFloat(data.days)>0) s.staffing.push({id:this._ni('staffing'),...data,days:parseFloat(data.days),note:data.note||''});
       this._sv();return{};
     }
     if(action==='select')return(s[table]||[]).slice();
@@ -1159,9 +1161,13 @@ async function supaLoadAll() {
 
     var tables = ['projects','employees','staffing','vacations','fixed_costs',
       'bank_transactions','invoices','future_costs','partner_invoices','cashflow_months'];
-    var results = await Promise.all(tables.map(function(t) {
+    // Also fetch settings (for fc_date_overrides and starting_balance)
+    var settingsReq = _supaReq('GET', 'settings', null, '?select=*');
+    var results = await Promise.all([...tables.map(function(t) {
       return _supaReq('GET', t, null, '?select=*&order=id.asc');
-    }));
+    }), settingsReq]);
+    var supaSettings = results[tables.length] || [];
+    results = results.slice(0, tables.length);
 
     if (results.every(function(r) { return r === null; })) return false;
 
@@ -1320,28 +1326,42 @@ async function supaLoadAll() {
         console.log('[Data integrity] Removed '+(origPILen-store.partner_invoices.length)+' orphaned partner_invoices');
       }
     }
-    // Merge start_month/end_month back — from old local data AND from settings backup
+    // Parse start_month/end_month from notes field (encoded as ||SM:YYYY-MM||)
+    store.fixed_costs.forEach(function(fc){
+      if(fc.notes){
+        var sm=fc.notes.match(/\|\|SM:(\d{4}-\d{2})\|\|/);
+        var em=fc.notes.match(/\|\|EM:(\d{4}-\d{2})\|\|/);
+        if(sm) fc.start_month=sm[1];
+        if(em) fc.end_month=em[1];
+      }
+    });
+    // Merge start_month/end_month back — priority: Supabase settings > old local store
     var _fcOverrides = {};
+    // 1. From Supabase settings (most reliable, works across devices)
     try {
-      var _fcOvSetting = (store.settings||[]).find(function(s){return s.key==='fc_date_overrides';});
-      if(_fcOvSetting) _fcOverrides = JSON.parse(_fcOvSetting.value||'{}');
+      var _fcOvSupa = supaSettings.find(function(s){return s.key==='fc_date_overrides';});
+      if(_fcOvSupa) _fcOverrides = JSON.parse(_fcOvSupa.value||'{}');
     } catch(e) {}
+    // 2. Also merge from old local data (in case Supabase settings not yet pushed)
     if(_oldStore && _oldStore.fixed_costs) {
       _oldStore.fixed_costs.forEach(function(old){
         if(old.start_month||old.end_month){
-          _fcOverrides[old.id]=_fcOverrides[old.id]||{};
-          if(old.start_month) _fcOverrides[old.id].start_month=old.start_month;
-          if(old.end_month) _fcOverrides[old.id].end_month=old.end_month;
+          _fcOverrides[String(old.id)]=_fcOverrides[String(old.id)]||{};
+          if(old.start_month) _fcOverrides[String(old.id)].start_month=old.start_month;
+          if(old.end_month) _fcOverrides[String(old.id)].end_month=old.end_month;
         }
       });
     }
+    // Apply overrides to fresh Supabase data
     store.fixed_costs.forEach(function(fc) {
-      var ov = _fcOverrides[fc.id];
+      var ov = _fcOverrides[String(fc.id)] || _fcOverrides[fc.id];
       if(ov) {
         if(ov.start_month) fc.start_month = ov.start_month;
         if(ov.end_month) fc.end_month = ov.end_month;
       }
     });
+    // Store settings into local store too
+    if(supaSettings.length>0) store.settings = supaSettings;
     localStorage.setItem('sp-v5', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
     console.log('[Supabase] Loaded from cloud');
@@ -1891,14 +1911,30 @@ function navigate(page,el){
   if(page==='financial'){
     // Always pull fresh from Supabase for financial page so bank data is current on mobile
     (async()=>{
+      // Load all regular data first
+      await loadData();
+      // Then fetch cashflow_months directly — do NOT let loadData overwrite this
       try{
         const rows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
         if(rows&&rows.length>0){
+          // Set directly in S AND in localStorage
           S.cashflowMonths=rows;
-          const st=DB._gs();st.cashflow_months=rows;DB._sv();DB._store=null;
+          try{
+            const st=DB._gs();
+            st.cashflow_months=rows;
+            localStorage.setItem('sp-v5',JSON.stringify(st));
+            DB._store=null;
+          }catch(e){}
         }
       }catch(e){}
-      await loadData();
+      // If still empty, try one more time with a short delay (mobile network)
+      if(!S.cashflowMonths||S.cashflowMonths.length===0){
+        await new Promise(r=>setTimeout(r,800));
+        try{
+          const rows2=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
+          if(rows2&&rows2.length>0) S.cashflowMonths=rows2;
+        }catch(e){}
+      }
       renderPage(page);
     })();
   } else {
@@ -2704,7 +2740,8 @@ function renderStaffing(){
               const entry=S.staffing.find(s=>s.employee_id===emp.id&&s.project_id===p.id&&s.week_key===wk);
               const d=entry?entry.days:0;
               pTotalDays+=d;
-              return`<td class="center editable" onclick="editCell(${emp.id},${p.id},'${wk}',this)">${d||''}</td>`;
+              const _note=entry?.note||'';
+              return`<td class="center editable${_note?' has-note':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_note?esc(_note):'Click to edit'}">${d||''}${_note?`<span style="font-size:7px;color:var(--blue);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_note)}</span>`:''}</td>`;
             }).join('');
             const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
             tbody+=`<tr class="row-proj">
@@ -2726,7 +2763,8 @@ function renderStaffing(){
               const entry=S.staffing.find(s=>s.employee_id===emp.id&&s.project_id===p.id&&s.week_key===wk);
               const d=entry?entry.days:0;
               pTotalDays+=d;
-              return`<td class="center editable" style="color:var(--amber)" onclick="editCell(${emp.id},${p.id},'${wk}',this)">${d||''}</td>`;
+              const _dnote=entry?.note||'';
+              return`<td class="center editable${_dnote?' has-note':''}" style="color:var(--amber)" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_dnote?esc(_dnote):'Click to edit'}">${d||''}${_dnote?`<span style="font-size:7px;color:var(--amber);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_dnote)}</span>`:''}</td>`;
             }).join('');
             const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
             tbody+=`<tr class="row-proj">
@@ -3093,17 +3131,46 @@ async function bulkStaffConfirm(){
 async function editCell(empId,projId,wk,cell){
   const entry=S.staffing.find(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk);
   const cur=entry?entry.days:0;
-  const inp=document.createElement('input');
-  inp.className='cell-input';inp.type='number';inp.min='0';inp.max='7';inp.step='0.5';inp.value=cur||'';
-  inp.style.width='50px';
-  cell.innerHTML='';cell.appendChild(inp);inp.focus();inp.select();
-  const save=async()=>{
-    const v=parseFloat(inp.value)||0;
-    await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days:v});
-    await loadData();renderStaffing();
-  };
-  inp.addEventListener('blur',save);
-  inp.addEventListener('keydown',e=>{if(e.key==='Enter')inp.blur();if(e.key==='Escape'){inp.value=cur;inp.blur();}});
+  const curNote=entry?entry.note||'':'';
+  const emp=S.employees.find(e=>e.id===empId);
+  const proj=S.projects.find(p=>p.id===projId);
+  const wkNum=wk.split('-W')[1];
+  const m=document.getElementById('modal-content');
+  document.getElementById('modal-overlay').classList.add('open');
+  m.innerHTML=`
+    <div class="modal-header">
+      <div class="modal-title">Staffing · ${esc(emp?.name||'')} · ${esc(proj?.client_name+' / '+proj?.name||'')} · Wk ${wkNum}</div>
+      <div class="modal-x" onclick="closeModal()">&#x2715;</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group" style="max-width:120px">
+          <label class="form-lbl">Days assigned</label>
+          <input class="form-input" type="number" id="sc-days" min="0" max="7" step="0.5" value="${cur||''}" placeholder="0">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-lbl">Note <span style="color:var(--t3);font-size:10px">optional — e.g. "Sales outreach Client X"</span></label>
+          <input class="form-input" id="sc-note" value="${esc(curNote)}" placeholder="What is this person working on?">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      ${cur>0?`<button class="btn" style="color:var(--red)" onclick="editCellSave(${empId},${projId},'${wk}',0,'')">Remove</button>`:''}
+      <button class="btn btn-primary" onclick="editCellSave(${empId},${projId},'${wk}',parseFloat(document.getElementById('sc-days').value)||0,document.getElementById('sc-note').value.trim())">Save</button>
+    </div>`;
+  setTimeout(()=>document.getElementById('sc-days')?.focus(),50);
+}
+async function editCellSave(empId,projId,wk,days,note){
+  closeModal();
+  await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days,note});
+  // Push note to Supabase directly
+  try{
+    const ex=await _supaReq('GET','staffing',null,`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`);
+    if(ex&&ex.length>0) await _supaReq('PATCH','staffing',{days,note},'?id=eq.'+ex[0].id);
+    else if(days>0) await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days,note});
+  }catch(e){}
+  await loadData();renderStaffing();
 }
 
 // ══ SCHEDULES ══
@@ -3169,8 +3236,9 @@ function renderSchedule(){
       if(!total&&!totalVac)return;
       html+=`<tr><td class="bold">${esc(emp.name)}<br><span class="text-muted" style="font-size:10px">${esc(emp.role||'')}</span></td>`;
       activeProjs.forEach(p=>{
-        const d=empRows.filter(s=>s.project_id===p.id).reduce((s,x)=>s+x.days,0);
-        html+=`<td class="center">${d?`<strong style="color:var(--blue)">${d}d</strong>`:''}</td>`;
+        const _td=empRows.filter(s=>s.project_id===p.id).reduce((s,x)=>s+x.days,0);
+        const _tnotes=empRows.filter(s=>s.project_id===p.id&&s.note).map(s=>s.note).join('; ');
+        html+=`<td class="center" title="${esc(_tnotes)}">${_td?`<strong style="color:var(--blue)">${_td}d</strong>${_tnotes?`<div style="font-size:8px;color:var(--t3);font-style:italic;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_tnotes)}</div>`:''}`:''}` +'</td>';
       });
       html+=`<td class="right bold">${total}d${totalVac?` <span class="text-purple" style="font-size:10px">+${totalVac}vac</span>`:''}</td></tr>`;
     });
@@ -3215,8 +3283,9 @@ function renderSchedule(){
         const proj=S.projects.find(p=>p.id===s.project_id);
         const projName=proj?esc(proj.client_name)+' / '+esc(proj.name):'Unknown';
         const isDraft=proj&&proj.status==='draft';
-        bodyHtml+=`<div class="comp-card-row">
-          <div class="comp-card-proj">${projName}${isDraft?'<span class="badge badge-draft" style="margin-left:5px;font-size:8px">draft</span>':''}</div>
+        const _n1=s.note||'';
+        bodyHtml+=`<div class="comp-card-row" style="flex-wrap:wrap">
+          <div class="comp-card-proj" style="flex:1">${projName}${isDraft?'<span class="badge badge-draft" style="margin-left:5px;font-size:8px">draft</span>':''}${_n1?`<div style="font-size:9px;color:var(--blue);margin-top:1px;font-style:italic">&#128393; ${esc(_n1)}</div>`:''}</div>
           <div class="comp-card-days">${s.days}d</div>
           ${showCost?`<div style="font-size:9.5px;color:var(--t3);margin-left:7px;white-space:nowrap">${fmt(emp.daily_cost*s.days)}</div>`:''}
         </div>`;
@@ -3232,8 +3301,9 @@ function renderSchedule(){
         const proj=S.projects.find(p=>p.id===s.project_id);
         const projName=proj?esc(proj.client_name)+' / '+esc(proj.name):'Unknown';
         const isDraft=proj&&proj.status==='draft';
-        bodyHtml+=`<div class="comp-card-row">
-          <div class="comp-card-proj">${projName}${isDraft?'<span class="badge badge-draft" style="margin-left:5px;font-size:8px">draft</span>':''}</div>
+        const _n2=s.note||'';
+        bodyHtml+=`<div class="comp-card-row" style="flex-wrap:wrap">
+          <div class="comp-card-proj" style="flex:1">${projName}${isDraft?'<span class="badge badge-draft" style="margin-left:5px;font-size:8px">draft</span>':''}${_n2?`<div style="font-size:9px;color:var(--blue);margin-top:1px;font-style:italic">&#128393; ${esc(_n2)}</div>`:''}</div>
           <div class="comp-card-days">${s.days}d</div>
           ${showCost?`<div style="font-size:9.5px;color:var(--t3);margin-left:7px;white-space:nowrap">${fmt(emp.daily_cost*s.days)}</div>`:''}
         </div>`;
@@ -4992,12 +5062,22 @@ function _fcSaveDateOverrides(){
   const overrides={};
   S.fixedCosts.forEach(fc=>{
     if(fc.start_month||fc.end_month){
-      overrides[fc.id]={start_month:fc.start_month||null,end_month:fc.end_month||null};
+      overrides[String(fc.id)]={start_month:fc.start_month||null,end_month:fc.end_month||null};
     }
   });
-  DB.setSetting('fc_date_overrides',JSON.stringify(overrides));
-  try{_supaReq('PATCH','settings',{value:JSON.stringify(overrides)},'?key=eq.fc_date_overrides')
-    .then(r=>{if(!r)_supaReq('POST','settings',{key:'fc_date_overrides',value:JSON.stringify(overrides)});});}catch(e){}
+  const json=JSON.stringify(overrides);
+  DB.setSetting('fc_date_overrides',json);
+  // Push to Supabase settings so all devices get it
+  (async()=>{
+    try{
+      const ex=await _supaReq('GET','settings',null,'?key=eq.fc_date_overrides&select=key');
+      if(ex&&ex.length>0){
+        await _supaReq('PATCH','settings',{value:json},'?key=eq.fc_date_overrides');
+      } else {
+        await _supaReq('POST','settings',{key:'fc_date_overrides',value:json});
+      }
+    }catch(e){}
+  })();
 }
 function _fcLoadDateOverrides(){
   try{
@@ -5060,13 +5140,22 @@ async function saveFixedCost(id){
   const endMonth=document.getElementById('f-end-month')?.value?.trim()||null;
   const data={name,category:cat,amount:amt,vat_pct:vatPct,vat_type:vatType,active,
     start_month:startMonth||null,end_month:endMonth||null};
+  // Encode start_month/end_month into notes field so Supabase stores them
+  // even if the table doesn't have those columns
+  const notesBase=document.getElementById('f-notes')?.value?.trim()||'';
+  let notesEncoded=notesBase.replace(/\|\|SM:[^|]*\|\||\|\|EM:[^|]*\|\|/g,'').trim();
+  if(data.start_month) notesEncoded+='||SM:'+data.start_month+'||';
+  if(data.end_month) notesEncoded+='||EM:'+data.end_month+'||';
+  data.notes=notesEncoded;
   if(id){
     await DB.update('fixed_costs',id,data);
-    // Also push start_month/end_month directly to Supabase (these may not be standard columns)
-    // Try PATCH — if column doesn't exist Supabase ignores unknown fields
-    try{await _supaReq('PATCH','fixed_costs',{start_month:data.start_month||null,end_month:data.end_month||null},'?id=eq.'+id);}catch(e){}
+    try{await _supaReq('PATCH','fixed_costs',{notes:notesEncoded,start_month:data.start_month||null,end_month:data.end_month||null},'?id=eq.'+id);}catch(e){}
   } else {
     await DB.insert('fixed_costs',{...data,from_bank:0});
+    try{
+      const newRows=await _supaReq('GET','fixed_costs',null,'?name=eq.'+encodeURIComponent(name)+'&order=id.desc&limit=1');
+      if(newRows&&newRows[0]){await _supaReq('PATCH','fixed_costs',{notes:notesEncoded},'?id=eq.'+newRows[0].id);}
+    }catch(e){}
   }
   closeModal();await loadData();
   // Persist start/end month overrides in settings as backup (Supabase schema may lack these columns)
@@ -7067,7 +7156,7 @@ async function init(){
   await loadData();
   // Silently remove staffing rows for deleted projects on startup
   await cleanOrphanedStaffing(false);
-  // Also fetch cashflow_months directly into S so Financial tab always has data
+  // Ensure cashflow_months is populated
   if(!S.cashflowMonths||S.cashflowMonths.length===0){
     try{
       const cfRows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
@@ -7076,6 +7165,25 @@ async function init(){
         const st=DB._gs();st.cashflow_months=cfRows;DB._sv();DB._store=null;
       }
     }catch(e){}
+  }
+  // Push fc_date_overrides to Supabase if any fixed costs have start/end months
+  // This ensures mobile devices get the date overrides too
+  if(S.fixedCosts&&S.fixedCosts.some(fc=>fc.start_month||fc.end_month)){
+    _fcSaveDateOverrides();
+    // Also encode start/end month into notes field in Supabase (guaranteed cross-device)
+    S.fixedCosts.forEach(async fc=>{
+      if(fc.start_month||fc.end_month){
+        try{
+          const notesBase=(fc.notes||'').replace(/\|\|SM:[^|]*\|\||\|\|EM:[^|]*\|\|/g,'').trim();
+          let enc=notesBase;
+          if(fc.start_month)enc+='||SM:'+fc.start_month+'||';
+          if(fc.end_month)enc+='||EM:'+fc.end_month+'||';
+          if(enc!==(fc.notes||'')){
+            await _supaReq('PATCH','fixed_costs',{notes:enc},'?id=eq.'+fc.id);
+          }
+        }catch(e){}
+      }
+    });
   }
   renderDashboard();
   S.schedWeek=toWeekKey(new Date());
