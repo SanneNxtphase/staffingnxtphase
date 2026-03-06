@@ -1178,6 +1178,10 @@ async function supaLoadAll() {
       _localEmpMap[(e.name||'')] = e.id;
     });
 
+    // Capture local fixed_costs data before Supabase overwrites (to preserve start_month/end_month)
+    var _oldStore = null;
+    try { _oldStore = JSON.parse(JSON.stringify(store)); } catch(e) {}
+
     for (var i = 0; i < tables.length; i++) {
       // Only overwrite local data if Supabase returned actual rows
       // Empty array from Supabase means table is empty OR doesn't exist yet
@@ -1316,6 +1320,28 @@ async function supaLoadAll() {
         console.log('[Data integrity] Removed '+(origPILen-store.partner_invoices.length)+' orphaned partner_invoices');
       }
     }
+    // Merge start_month/end_month back — from old local data AND from settings backup
+    var _fcOverrides = {};
+    try {
+      var _fcOvSetting = (store.settings||[]).find(function(s){return s.key==='fc_date_overrides';});
+      if(_fcOvSetting) _fcOverrides = JSON.parse(_fcOvSetting.value||'{}');
+    } catch(e) {}
+    if(_oldStore && _oldStore.fixed_costs) {
+      _oldStore.fixed_costs.forEach(function(old){
+        if(old.start_month||old.end_month){
+          _fcOverrides[old.id]=_fcOverrides[old.id]||{};
+          if(old.start_month) _fcOverrides[old.id].start_month=old.start_month;
+          if(old.end_month) _fcOverrides[old.id].end_month=old.end_month;
+        }
+      });
+    }
+    store.fixed_costs.forEach(function(fc) {
+      var ov = _fcOverrides[fc.id];
+      if(ov) {
+        if(ov.start_month) fc.start_month = ov.start_month;
+        if(ov.end_month) fc.end_month = ov.end_month;
+      }
+    });
     localStorage.setItem('sp-v5', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
     console.log('[Supabase] Loaded from cloud');
@@ -4947,6 +4973,27 @@ function modalFixedCost(c){
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveFixedCost(${c?.id||''})">Save</button></div>`;
 }
+// Fixed cost date overrides — stored in settings so they survive Supabase sync
+function _fcSaveDateOverrides(){
+  const overrides={};
+  S.fixedCosts.forEach(fc=>{
+    if(fc.start_month||fc.end_month){
+      overrides[fc.id]={start_month:fc.start_month||null,end_month:fc.end_month||null};
+    }
+  });
+  DB.setSetting('fc_date_overrides',JSON.stringify(overrides));
+  try{_supaReq('PATCH','settings',{value:JSON.stringify(overrides)},'?key=eq.fc_date_overrides')
+    .then(r=>{if(!r)_supaReq('POST','settings',{key:'fc_date_overrides',value:JSON.stringify(overrides)});});}catch(e){}
+}
+function _fcLoadDateOverrides(){
+  try{
+    const raw=S.fixedCosts._dateOverrides||null;
+    // Load from settings
+    const stored=DB.getSetting&&typeof DB.getSetting==='function'?null:null;
+    // Applied inline in loadData flow
+  }catch(e){}
+}
+
 // Called right after modalFixedCost renders (from openModal flow)
 function fcModalPostRender(){
   const catEl=document.getElementById('f-cat');
@@ -4999,9 +5046,18 @@ async function saveFixedCost(id){
   const endMonth=document.getElementById('f-end-month')?.value?.trim()||null;
   const data={name,category:cat,amount:amt,vat_pct:vatPct,vat_type:vatType,active,
     start_month:startMonth||null,end_month:endMonth||null};
-  if(id)await DB.update('fixed_costs',id,data);
-  else await DB.insert('fixed_costs',{...data,from_bank:0});
-  closeModal();await loadData();renderFixedCosts();renderDashboard();
+  if(id){
+    await DB.update('fixed_costs',id,data);
+    // Also push start_month/end_month directly to Supabase (these may not be standard columns)
+    // Try PATCH — if column doesn't exist Supabase ignores unknown fields
+    try{await _supaReq('PATCH','fixed_costs',{start_month:data.start_month||null,end_month:data.end_month||null},'?id=eq.'+id);}catch(e){}
+  } else {
+    await DB.insert('fixed_costs',{...data,from_bank:0});
+  }
+  closeModal();await loadData();
+  // Persist start/end month overrides in settings as backup (Supabase schema may lack these columns)
+  _fcSaveDateOverrides();
+  renderFixedCosts();renderDashboard();
   showToast(id?`"${name}" updated`:`"${name}" added`);
 }
 
