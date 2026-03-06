@@ -1578,7 +1578,15 @@ function wkMonday(key){
 function wkFriday(key){const d=wkMonday(key);d.setDate(d.getDate()+4);return d;}
 function wkShort(key){const d=wkMonday(key);return d.toLocaleDateString('en',{month:'short',day:'numeric'});}
 function wkRange(key){const d=wkMonday(key),f=wkFriday(key);return d.toLocaleDateString('en',{month:'short',day:'numeric'})+' – '+f.getDate();}
-function addWeeks(dateStr,n){const d=new Date(dateStr);d.setDate(d.getDate()+n*7-1);return d.toISOString().split('T')[0];}
+function addWeeks(dateStr,n){
+  const d=new Date(dateStr);
+  // Find Monday of the start week
+  const dow=d.getDay()||7; // 1=Mon..7=Sun
+  d.setDate(d.getDate()-(dow-1)); // back to Monday
+  // Add (n-1) full weeks + 4 days = Friday of week n
+  d.setDate(d.getDate()+(n-1)*7+4);
+  return d.toISOString().split('T')[0];
+}
 function projectWkKeys(p){
   if(!p.start_date||!p.end_date)return[];
   const s=new Date(p.start_date),e=new Date(p.end_date);
@@ -1854,30 +1862,8 @@ function navigate(page,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   el.classList.add('active');
-  // For financial/cashflow pages: pull fresh data then render
-  if(page==='financial'||page==='cashflow'){
-    (async()=>{
-      // First load from localStorage cache
-      await loadData();
-      // Then try to fetch cashflow_months directly from Supabase
-      // and inject straight into S — bypasses localStorage chain
-      try{
-        const cfRows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
-        if(cfRows&&cfRows.length>0){
-          S.cashflowMonths=cfRows;
-          // Also persist to localStorage for next time
-          const store=DB._gs();
-          store.cashflow_months=cfRows;
-          DB._store=null;
-          localStorage.setItem('sp-v5',JSON.stringify(DB._gs()));
-          DB._store=null;
-        }
-      }catch(e){}
-      renderPage(page);
-    })();
-  } else {
-    loadData().then(()=>renderPage(page));
-  }
+  // All pages: load data then render
+  loadData().then(()=>renderPage(page));
 }
 function mobileNav(el){
   document.querySelectorAll('.mobile-nav-item').forEach(n=>n.classList.remove('active'));
@@ -5466,6 +5452,24 @@ function setFinTab(t){
 }
 
 function renderFinancial(){
+  // If cashflow data missing, fetch directly from Supabase then re-render
+  if(!S.cashflowMonths||S.cashflowMonths.length===0){
+    _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc').then(rows=>{
+      if(rows&&rows.length>0){
+        S.cashflowMonths=rows;
+        // Save into localStorage store too
+        const st=DB._gs();
+        st.cashflow_months=rows;
+        DB._sv();
+        DB._store=null;
+      }
+      _renderFinancialActual();
+    }).catch(()=>_renderFinancialActual());
+    return;
+  }
+  _renderFinancialActual();
+}
+function _renderFinancialActual(){
   const yearEl=document.getElementById('fin-year');
   const year=parseInt(yearEl?.value)||new Date().getFullYear();
   const inclDraft=document.getElementById('fin-incl-draft')?.checked||false;
