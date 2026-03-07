@@ -1809,6 +1809,18 @@ function staffCostMonth(y,m){
 //
 // Cashflow module & Company Dashboard will always show identical values.
 // ─────────────────────────────────────────────────────────────────────────
+function _parseCFNotes(entries){
+  // Parse encoded inflow/outflow from notes field
+  (entries||[]).forEach(e=>{
+    if(e.notes){
+      const inM=e.notes.match(/\|\|IN:([\d.]+)\|\|/);
+      const outM=e.notes.match(/\|\|OUT:([\d.]+)\|\|/);
+      if(inM)e.inflow=parseFloat(inM[1]);
+      if(outM)e.outflow=parseFloat(outM[1]);
+    }
+  });
+  return entries;
+}
 function getCFEntryForMonth(moStr){
   return S.cashflowMonths.find(e=>e.month===moStr)||null;
 }
@@ -1960,7 +1972,7 @@ function navigate(page,el){
         const rows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
         if(rows&&rows.length>0){
           // Set directly in S AND in localStorage
-          S.cashflowMonths=rows;
+          S.cashflowMonths=rows;_parseCFNotes(S.cashflowMonths);
           try{
             const st=DB._gs();
             st.cashflow_months=rows;
@@ -1974,7 +1986,7 @@ function navigate(page,el){
         await new Promise(r=>setTimeout(r,800));
         try{
           const rows2=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
-          if(rows2&&rows2.length>0) S.cashflowMonths=rows2;
+          if(rows2&&rows2.length>0){S.cashflowMonths=rows2;_parseCFNotes(S.cashflowMonths);}
         }catch(e){}
       }
       renderPage(page);
@@ -2000,7 +2012,7 @@ async function loadData(){
     DB.select('partner_invoices'),DB.select('cashflow_months')]);
   S.projects=pr||[];S.employees=em||[];S.staffing=st||[];S.vacations=va||[];
   S.fixedCosts=fc||[];S.transactions=tx||[];S.invoices=inv||[];S.futureCosts=fut||[];
-  S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];
+  S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];_parseCFNotes(S.cashflowMonths);
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
   try{const ov=localStorage.getItem('sp-vat-overrides');if(ov)Object.assign(S.vatOverrides,JSON.parse(ov));}catch(e){}
   // Merge staffing notes from localStorage into S.staffing rows
@@ -4853,14 +4865,18 @@ async function saveCFMonth(id){
   if((!closingEl?.value)&&inflow!=null&&outflow!=null) closing=opening+(inflow||0)-(outflow||0);
   const notes=document.getElementById('scf-notes')?.value?.trim()||'';
   if(!month||!/^\d{4}-\d{2}$/.test(month))return alert('Month must be in YYYY-MM format.');
-  const data={month,opening,closing,inflow,outflow,notes};
+  // Encode inflow/outflow into notes for cross-device sync (Supabase has no inflow/outflow cols)
+  let notesEncoded=notes;
+  if(inflow!=null) notesEncoded=notesEncoded.replace(/\|\|IN:[^|]+\|\|/g,'')+('||IN:'+inflow.toFixed(2)+'||');
+  if(outflow!=null) notesEncoded=notesEncoded.replace(/\|\|OUT:[^|]+\|\|/g,'')+('||OUT:'+outflow.toFixed(2)+'||');
+  const data={month,opening,closing,notes:notesEncoded};
   if(id)await DB.update('cashflow_months',id,data);
   else await DB.insert('cashflow_months',data);
-  // Push to Supabase directly
+  // Push to Supabase
   try{
     const ex=await _supaReq('GET','cashflow_months',null,'?month=eq.'+month+'&select=id');
-    if(ex&&ex.length>0) await _supaReq('PATCH','cashflow_months',data,'?month=eq.'+month);
-    else await _supaReq('POST','cashflow_months',data);
+    if(ex&&ex.length>0) await _supaReq('PATCH','cashflow_months',{month,opening,closing,notes:notesEncoded},'?month=eq.'+month);
+    else await _supaReq('POST','cashflow_months',{month,opening,closing,notes:notesEncoded});
   }catch(e){}
   closeModal();await loadData();renderSimpleCashflow();
   showToast(id?'Month updated':'Month added');
@@ -5855,7 +5871,7 @@ function renderFinancial(){
   ];
   Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows])=>{
     // Apply fetched data into S (only override if we got real data)
-    if(cfRows&&cfRows.length>0) S.cashflowMonths=cfRows;
+    if(cfRows&&cfRows.length>0){S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);}
     if(fcRows&&fcRows.length>0){
       // Parse start/end month from notes field
       fcRows.forEach(fc=>{
@@ -5932,8 +5948,9 @@ function _renderFinancialActual(){
     // the same data shown in the Cashflow tab. Both dashboards show identical values.
     const cfEntry=getCFEntryForMonth(moStr);
     const cfNet=cfEntry?(parseFloat(cfEntry.closing||0)-parseFloat(cfEntry.opening||0)):null;
-    const bankIn=cfEntry?Math.max(0,cfNet):0;
-    const bankOut=cfEntry?Math.max(0,-cfNet):0;
+    // Use explicit inflow/outflow if entered, else derive from opening/closing delta
+    const bankIn=cfEntry?(cfEntry.inflow!=null?parseFloat(cfEntry.inflow||0):Math.max(0,cfNet)):0;
+    const bankOut=cfEntry?(cfEntry.outflow!=null?parseFloat(cfEntry.outflow||0):Math.max(0,-cfNet)):0;
     const openBal=cfEntry?parseFloat(cfEntry.opening||0):null;
     const closeBal=cfEntry?parseFloat(cfEntry.closing||0):null;
     const netCash=cfNet!==null?cfNet:0;
@@ -7401,7 +7418,7 @@ async function init(){
     try{
       const cfRows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
       if(cfRows&&cfRows.length>0){
-        S.cashflowMonths=cfRows;
+        S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);
         const st=DB._gs();st.cashflow_months=cfRows;DB._sv();DB._store=null;
       }
     }catch(e){}
