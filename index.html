@@ -7497,7 +7497,7 @@ function renderEmployeeView(){
   const upd=document.getElementById('ev-updated');
   if(upd)upd.textContent='Updated '+now.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
 
-  const emps=S.employees.filter(e=>e.name&&e.name!=='Vakantie');
+  const emps=S.employees.filter(e=>e.name&&e.name!=='Vakantie'&&e.name!=='Koen');
 
   let html='';
 
@@ -7509,9 +7509,9 @@ function renderEmployeeView(){
       const myStaff=S.staffing.filter(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id));
       const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
       const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(Boolean))];
-      html+='<div style="background:var(--bg);border:1.5px solid var(--bdr);border-radius:10px;padding:10px 14px;min-width:130px">'
+      html+='<div style="background:var(--bg);border:1.5px solid var(--bdr);border-radius:8px;padding:8px 12px;min-width:110px">'
         +'<div style="font-weight:700;font-size:13px;color:var(--navy)">'+esc(e.name)+'</div>'
-        +'<div style="font-size:20px;font-weight:800;color:var(--blue);line-height:1.1">'+totalDays.toFixed(1)+'d</div>'
+        +'<div style="font-size:17px;font-weight:800;color:var(--blue);line-height:1.1">'+totalDays.toFixed(1)+'d</div>'
         +'<div style="font-size:10px;color:var(--t3);margin-top:2px">'+clients.slice(0,2).map(esc).join(' · ')+'</div>'
         +'</div>';
     });
@@ -7550,28 +7550,28 @@ function renderEmployeeView(){
       html+='<div style="overflow-x:auto">'
         +'<table style="width:100%;border-collapse:collapse;font-size:12px">'
         +'<thead><tr style="background:var(--bg2);border-bottom:1.5px solid var(--bdr2)">'
-        +'<th style="text-align:left;padding:8px 14px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Name</th>'
-        +'<th style="text-align:left;padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Client</th>'
-        +'<th style="text-align:left;padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Project</th>'
-        +'<th style="text-align:center;padding:8px 10px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Days</th>'
-        +'<th style="text-align:left;padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px">Note</th>'
+        +'<th style="text-align:left;padding:6px 14px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Name</th>'
+        +'<th style="text-align:left;padding:6px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Client</th>'
+        +'<th style="text-align:left;padding:6px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Project</th>'
+        +'<th style="text-align:center;padding:6px 10px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Days</th>'
+        +'<th style="text-align:left;padding:6px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px">Note</th>'
         +'</tr></thead><tbody>';
 
       rows.forEach(function(r,idx){
         const pct=Math.round(r.days/5*100);
         const daysColor=pct>=80?'var(--blue)':pct>=40?'var(--teal)':'var(--t2)';
         html+='<tr style="border-bottom:1px solid var(--bdr);'+(idx%2===1?'background:var(--bg2)':'')+'">'
-          +'<td style="padding:10px 14px;font-weight:700;color:var(--navy);white-space:nowrap">'+esc(r.emp.name)+'</td>'
-          +'<td style="padding:10px 12px;color:var(--t2);white-space:nowrap">'+esc(r.proj.client_name)+'</td>'
-          +'<td style="padding:10px 12px;color:var(--t2);max-width:180px">'
+          +'<td style="padding:7px 14px;font-weight:700;color:var(--navy);white-space:nowrap">'+esc(r.emp.name)+'</td>'
+          +'<td style="padding:7px 12px;color:var(--t2);white-space:nowrap">'+esc(r.proj.client_name)+'</td>'
+          +'<td style="padding:7px 12px;color:var(--t2);max-width:180px">'
             +'<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.proj.name)+'">'+esc(r.proj.name)+'</div>'
           +'</td>'
-          +'<td style="padding:10px 10px;text-align:center;white-space:nowrap">'
-            +'<span style="font-weight:800;font-size:14px;color:'+daysColor+'">'+r.days+'</span>'
+          +'<td style="padding:7px 10px;text-align:center;white-space:nowrap">'
+            +'<span style="font-weight:800;font-size:13px;color:'+daysColor+'">'+r.days+'</span>'
             +'<span style="font-size:10px;color:var(--t3);margin-left:2px">d</span>'
             +'<div style="font-size:9px;color:var(--t3)">'+pct+'%</div>'
           +'</td>'
-          +'<td style="padding:10px 12px;font-size:11px">'
+          +'<td style="padding:7px 12px;font-size:11px">'
             +(r.note?'<span style="color:var(--blue)">&#128393; </span><span style="color:var(--t2);font-style:italic">'+esc(r.note)+'</span>':'<span style="color:var(--bdr2)">—</span>')
           +'</td>'
           +'</tr>';
