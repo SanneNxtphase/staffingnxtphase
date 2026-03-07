@@ -1813,8 +1813,8 @@ function _parseCFNotes(entries){
   // Parse encoded inflow/outflow from notes field
   (entries||[]).forEach(e=>{
     if(e.notes){
-      const inM=e.notes.match(/\|\|IN:([\d.]+)\|\|/);
-      const outM=e.notes.match(/\|\|OUT:([\d.]+)\|\|/);
+      const inM=e.notes.match(/[\[|]+IN:([\d.]+)[\]|]*/);
+      const outM=e.notes.match(/[\[|]+OUT:([\d.]+)[\]|]*/);
       if(inM)e.inflow=parseFloat(inM[1]);
       if(outM)e.outflow=parseFloat(outM[1]);
     }
@@ -4709,7 +4709,7 @@ function renderSimpleCashflow(){
           </div>
           <div style="font-size:9px;color:var(--t3);margin-top:2px">${mov>=0?'▲ in':'▼ out'}</div>
         </td>
-        <td style="font-size:11px;color:var(--t3)">${esc((e.notes||'').replace(/\|\|IN:[\d.]+\|\|/g,'').replace(/\|\|OUT:[\d.]+\|\|/g,'').trim())}</td>
+        <td style="font-size:11px;color:var(--t3)">${esc((e.notes||'').replace(/\|+(?:IN|OUT):[\d.]+\|*/g,'').replace(/\[(?:IN|OUT):[\d.]+\]/g,'').trim())}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openCFMonthModal(${e.id})">Edit</button>
           <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteCFMonth(${e.id})">✕</button>
@@ -4818,7 +4818,7 @@ function openCFMonthModal(id){
       <span style="font-size:10px;color:var(--t3)" id="scf-prev-hint"></span>
     </div>
     <div class="form-group" style="margin-top:10px"><label class="form-lbl">Notes (optional)</label>
-      <input class="form-input" id="scf-notes" value="${esc((e?.notes||'').replace(/\|\|IN:[\d.]+\|\|/g,'').replace(/\|\|OUT:[\d.]+\|\|/g,'').trim())}" placeholder="e.g. Large client payment received" autocomplete="off">
+      <input class="form-input" id="scf-notes" value="${esc((e?.notes||'').replace(/\|+(?:IN|OUT):[\d.]+\|*/g,'').replace(/\[(?:IN|OUT):[\d.]+\]/g,'').trim())}" placeholder="e.g. Large client payment received" autocomplete="off">
     </div>
   </div>
   <div class="modal-footer">
@@ -4866,9 +4866,10 @@ async function saveCFMonth(id){
   const notes=document.getElementById('scf-notes')?.value?.trim()||'';
   if(!month||!/^\d{4}-\d{2}$/.test(month))return alert('Month must be in YYYY-MM format.');
   // Encode inflow/outflow into notes for cross-device sync (Supabase has no inflow/outflow cols)
-  let notesEncoded=notes;
-  if(inflow!=null) notesEncoded=notesEncoded.replace(/\|\|IN:[^|]+\|\|/g,'')+('||IN:'+inflow.toFixed(2)+'||');
-  if(outflow!=null) notesEncoded=notesEncoded.replace(/\|\|OUT:[^|]+\|\|/g,'')+('||OUT:'+outflow.toFixed(2)+'||');
+  // First strip ALL existing encoded tokens (any pipe count), then append clean ones
+  let notesEncoded=notes.replace(/\|+(?:IN|OUT):[\d.]+\|*/g,'').replace(/\[(?:IN|OUT):[\d.]+\]/g,'').trim();
+  if(inflow!=null) notesEncoded=(notesEncoded?notesEncoded+' ':'')+'[IN:'+inflow.toFixed(2)+']';
+  if(outflow!=null) notesEncoded=(notesEncoded?notesEncoded+' ':'')+'[OUT:'+outflow.toFixed(2)+']';
   const data={month,opening,closing,notes:notesEncoded};
   if(id)await DB.update('cashflow_months',id,data);
   else await DB.insert('cashflow_months',data);
