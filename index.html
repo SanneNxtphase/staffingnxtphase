@@ -7502,11 +7502,14 @@ function renderEmployeeView(){
   let html='';
 
   // Summary cards per person
+  // Summary cards use only the first (current) week
+  const firstWkKey=weeks[0]?.wkKey;
   const activeEmps=emps.filter(e=>S.staffing.some(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id)));
   if(activeEmps.length){
     html+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">';
     activeEmps.forEach(e=>{
-      const myStaff=S.staffing.filter(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id));
+      const myStaff=S.staffing.filter(s=>s.week_key===firstWkKey&&(s.employee_id===e.id||s.employee_id==e.id));
+      if(!myStaff.length)return; // skip if no hours this week
       const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
       const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(Boolean))];
       html+='<div style="background:var(--bg);border:1.5px solid var(--bdr);border-radius:8px;padding:8px 12px;min-width:110px">'
