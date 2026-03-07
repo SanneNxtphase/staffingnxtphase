@@ -2628,7 +2628,7 @@ function renderProjects(){
       <td class="right" style="color:var(--pink)">${fmt(cost)}</td>
       <td class="right bold ${mc}">${mg.toFixed(1)}%</td>
       <td><div class="btn-group">
-        <button class="btn btn-sm btn-ghost" onclick="openModal('project',${p.id})">Edit</button>
+        <button class="btn btn-sm btn-ghost" onclick="openModal('project',${parseInt(p.id)||p.id})">Edit</button>
         ${p.is_partner?`<button class="btn btn-sm btn-ghost" style="color:var(--blue)" onclick="openPartnerInvoice(${p.id})">+ Invoice</button>`:''}
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteItem('projects',${p.id})">&#x2715;</button>
       </div></td>
@@ -4983,7 +4983,9 @@ function openModal(type,id){
   let item=null;
   if(id){
     const map={project:'projects',employee:'employees',invoice:'invoices',partnerinvoice:'partnerInvoices',transaction:'transactions',fixedcost:'fixedCosts',vacation:'vacations',futurecost:'futureCosts'};
-    item=(S[map[type]]||[]).find(x=>x.id===id||x.id===parseInt(id));
+    const numId=parseInt(id);
+    item=(S[map[type]]||[]).find(x=>x.id===numId||(typeof x.id==='string'&&x.id===String(id)));
+    if(!item&&numId) console.warn('openModal: no item found for type='+type+' id='+id+' (parsed:'+numId+') — available ids:',  (S[map[type]]||[]).map(x=>x.id));
   }
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
@@ -5039,7 +5041,7 @@ function modalProject(p){
     </div>
     <div class="form-group"><label class="form-lbl">Notes</label><input class="form-input" id="f-notes" value="${esc(p?.notes||'')}"></div>
   </div>
-  <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveProject(${p?.id||''})">Save Project</button></div>`;
+  <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveProject(${p?.id?parseInt(p.id)||p.id:''})">Save Project</button></div>`;
 }
 function togglePartnerFields(show){document.getElementById('partner-fields').style.display=show?'grid':'none';}
 async function saveProject(id){
