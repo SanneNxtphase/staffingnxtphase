@@ -4640,8 +4640,14 @@ function renderSimpleCashflow(){
   // Aggregate Bank In / Bank Out from all entries
   let totalBankIn=0,totalBankOut=0;
   entries.forEach(e=>{
-    const net=parseFloat(e.closing||0)-parseFloat(e.opening||0);
-    if(net>0)totalBankIn+=net; else totalBankOut+=Math.abs(net);
+    // Use explicit inflow/outflow if entered, otherwise derive from opening/closing delta
+    if(e.inflow!=null&&e.outflow!=null){
+      totalBankIn+=parseFloat(e.inflow||0);
+      totalBankOut+=parseFloat(e.outflow||0);
+    } else {
+      const net=parseFloat(e.closing||0)-parseFloat(e.opening||0);
+      if(net>0)totalBankIn+=net; else totalBankOut+=Math.abs(net);
+    }
   });
   const netOverall=latestBalance-earliestBalance;
 
@@ -4666,11 +4672,23 @@ function renderSimpleCashflow(){
       const barPct=(Math.abs(mov)/maxMov*100).toFixed(1);
       const barColor=mov>=0?'var(--green)':'var(--red)';
       const lbl=e.month.length>=7?new Date(e.month+'-01').toLocaleDateString('nl-NL',{month:'short',year:'2-digit'}):e.month;
+      // Use explicit inflow/outflow if entered, otherwise derive from opening/closing
+      const explicitIn=e.inflow!=null?parseFloat(e.inflow||0):null;
+      const explicitOut=e.outflow!=null?parseFloat(e.outflow||0):null;
+      const displayIn=explicitIn!=null?explicitIn:Math.max(0,mov);
+      const displayOut=explicitOut!=null?explicitOut:Math.max(0,-mov);
+      const hasDetail=explicitIn!=null||explicitOut!=null;
       return`<tr>
         <td class="bold" style="white-space:nowrap;font-size:12px">${lbl}</td>
         <td class="right mono" style="color:var(--t2);font-size:12px">${fmt(open)}</td>
-        <td class="right mono" style="color:var(--green);font-weight:700">${inflow>0?'+'+fmt(inflow):'-'}</td>
-        <td class="right mono" style="color:var(--red);font-weight:700">${outflow>0?'-'+fmt(outflow):'-'}</td>
+        <td class="right mono" style="color:var(--green);font-weight:700">
+          ${displayIn>0?`<span style="color:var(--green)">+${fmt(displayIn)}</span>`:'<span style="color:var(--t3)">—</span>'}
+          ${!hasDetail&&displayIn>0?`<div style="font-size:8px;color:var(--t3)">derived</div>`:''}
+        </td>
+        <td class="right mono" style="color:var(--red);font-weight:700">
+          ${displayOut>0?`<span style="color:var(--red)">-${fmt(displayOut)}</span>`:'<span style="color:var(--t3)">—</span>'}
+          ${!hasDetail&&displayOut>0?`<div style="font-size:8px;color:var(--t3)">derived</div>`:''}
+        </td>
         <td class="right mono" style="font-weight:800;color:${mov>=0?'var(--green)':'var(--red)'}">${mov>=0?'+':''}${fmt(mov)}</td>
         <td class="right mono" style="font-weight:700;color:var(--blue)">${fmt(close)}</td>
         <td style="padding:8px 10px;min-width:80px">
@@ -4687,8 +4705,12 @@ function renderSimpleCashflow(){
       </tr>`;
     }).join('')+'<tr style="border-top:2px solid var(--bdr2);background:var(--bg2)">'+
       (()=>{
-        const tIn=entries.reduce((s,e)=>{const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,m);},0);
-        const tOut=entries.reduce((s,e)=>{const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,-m);},0);
+        const tIn=entries.reduce((s,e)=>{
+          if(e.inflow!=null)return s+parseFloat(e.inflow||0);
+          const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,m);},0);
+        const tOut=entries.reduce((s,e)=>{
+          if(e.outflow!=null)return s+parseFloat(e.outflow||0);
+          const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,-m);},0);
         const tNet=tIn-tOut;
         return`<td class="bold" style="padding:8px 14px;font-size:11px">TOTAL</td>
           <td></td>
@@ -4748,26 +4770,43 @@ function openCFMonthModal(id){
   const e=id?S.cashflowMonths.find(x=>x.id===id):null;
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
-  m.innerHTML=`<div class="modal-header"><div class="modal-title">${e?'Edit Month':'Add Month'}</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
+  m.innerHTML=`<div class="modal-header"><div class="modal-title">${e?'Edit Month':'Add Month'} — Cashflow</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
   <div class="modal-body">
     <div class="form-row">
-      <div class="form-group"><label class="form-lbl">Month (YYYY-MM)</label>
+      <div class="form-group" style="max-width:160px"><label class="form-lbl">Month (YYYY-MM)</label>
         <input class="form-input" id="scf-month" value="${esc(e?.month||new Date().toISOString().substring(0,7))}" placeholder="2026-03">
       </div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-lbl">Opening Balance (€)</label>
+      <div class="form-group">
+        <label class="form-lbl">Opening Balance (€)</label>
         <input class="form-input" type="number" id="scf-opening" value="${e?.opening??''}" placeholder="0.00" step="0.01" oninput="scfPreview()">
+        <div style="font-size:10px;color:var(--t3);margin-top:3px">Balance at start of month</div>
       </div>
-      <div class="form-group"><label class="form-lbl">Closing Balance (€)</label>
+      <div class="form-group">
+        <label class="form-lbl" style="color:var(--green)">↑ Total Inflow (€)</label>
+        <input class="form-input" type="number" id="scf-inflow" value="${e?.inflow??''}" placeholder="0.00" step="0.01" oninput="scfPreview()" style="border-color:var(--green)">
+        <div style="font-size:10px;color:var(--t3);margin-top:3px">Total money received</div>
+      </div>
+      <div class="form-group">
+        <label class="form-lbl" style="color:var(--red)">↓ Total Outflow (€)</label>
+        <input class="form-input" type="number" id="scf-outflow" value="${e?.outflow??''}" placeholder="0.00" step="0.01" oninput="scfPreview()" style="border-color:var(--red)">
+        <div style="font-size:10px;color:var(--t3);margin-top:3px">Total money spent</div>
+      </div>
+      <div class="form-group">
+        <label class="form-lbl">Closing Balance (€)</label>
         <input class="form-input" type="number" id="scf-closing" value="${e?.closing??''}" placeholder="0.00" step="0.01" oninput="scfPreview()">
+        <div style="font-size:10px;color:var(--t3);margin-top:3px">Balance at end of month</div>
       </div>
     </div>
-    <div id="scf-preview" style="background:var(--bg2);border-radius:var(--rsm);padding:8px 12px;font-size:12px;margin-top:4px">
-      Net movement: <strong id="scf-prev-mov">—</strong>
+    <div id="scf-preview" style="background:var(--bg2);border-radius:var(--rsm);padding:10px 14px;font-size:12px;margin-top:4px;display:flex;gap:16px;flex-wrap:wrap">
+      <span>Net movement: <strong id="scf-prev-mov" style="font-size:13px">—</strong></span>
+      <span style="color:var(--green)">↑ In: <strong id="scf-prev-in">—</strong></span>
+      <span style="color:var(--red)">↓ Out: <strong id="scf-prev-out">—</strong></span>
+      <span style="font-size:10px;color:var(--t3)" id="scf-prev-hint"></span>
     </div>
     <div class="form-group" style="margin-top:10px"><label class="form-lbl">Notes (optional)</label>
-      <input class="form-input" id="scf-notes" value="${esc(e?.notes||'')}" placeholder="e.g. Large client payment received">
+      <input class="form-input" id="scf-notes" value="${esc(e?.notes||'')}" placeholder="e.g. Large client payment received" autocomplete="off">
     </div>
   </div>
   <div class="modal-footer">
@@ -4776,22 +4815,53 @@ function openCFMonthModal(id){
   </div>`;
   setTimeout(()=>{document.getElementById('scf-month')?.focus();scfPreview();},50);
 }
-function scfPreview(){
-  const o=parseFloat(document.getElementById('scf-opening')?.value)||0;
-  const c=parseFloat(document.getElementById('scf-closing')?.value)||0;
-  const mov=c-o;
+function scfPreview(changed){
+  const oEl=document.getElementById('scf-opening');
+  const iEl=document.getElementById('scf-inflow');
+  const xEl=document.getElementById('scf-outflow');
+  const cEl=document.getElementById('scf-closing');
+  const o=parseFloat(oEl?.value)||0;
+  const inflow=parseFloat(iEl?.value)||0;
+  const outflow=parseFloat(xEl?.value)||0;
+  const c=parseFloat(cEl?.value)||0;
+  // Auto-calculate closing if opening+inflow+outflow are all filled
+  if(oEl?.value!==''&&iEl?.value!==''&&xEl?.value!==''&&cEl?.value===''){
+    const calc=o+inflow-outflow;
+    if(cEl)cEl.value=calc.toFixed(2);
+    const hint=document.getElementById('scf-prev-hint');
+    if(hint)hint.textContent='Closing balance calculated automatically';
+  }
+  // Auto-calculate closing if opening+inflow+outflow differ from closing (show hint)
+  const mov=(cEl?.value!=='')?c-o:inflow-outflow;
   const el=document.getElementById('scf-prev-mov');
+  const elIn=document.getElementById('scf-prev-in');
+  const elOut=document.getElementById('scf-prev-out');
   if(el){el.textContent=(mov>=0?'+':'')+fmt(mov);el.style.color=mov>=0?'var(--green)':'var(--red)';}
+  if(elIn)elIn.textContent=inflow>0?fmt(inflow):(c>o?fmt(c-o):'—');
+  if(elOut)elOut.textContent=outflow>0?fmt(outflow):(c<o?fmt(o-c):'—');
 }
 async function saveCFMonth(id){
   const month=document.getElementById('scf-month')?.value?.trim();
   const opening=parseFloat(document.getElementById('scf-opening')?.value)||0;
-  const closing=parseFloat(document.getElementById('scf-closing')?.value)||0;
+  const inflowVal=document.getElementById('scf-inflow')?.value;
+  const outflowVal=document.getElementById('scf-outflow')?.value;
+  const inflow=inflowVal!==''&&inflowVal!=null?parseFloat(inflowVal)||0:null;
+  const outflow=outflowVal!==''&&outflowVal!=null?parseFloat(outflowVal)||0:null;
+  // Auto-calc closing if inflow+outflow given but closing is blank
+  const closingEl=document.getElementById('scf-closing');
+  let closing=parseFloat(closingEl?.value)||0;
+  if((!closingEl?.value)&&inflow!=null&&outflow!=null) closing=opening+(inflow||0)-(outflow||0);
   const notes=document.getElementById('scf-notes')?.value?.trim()||'';
   if(!month||!/^\d{4}-\d{2}$/.test(month))return alert('Month must be in YYYY-MM format.');
-  const data={month,opening,closing,notes};
+  const data={month,opening,closing,inflow,outflow,notes};
   if(id)await DB.update('cashflow_months',id,data);
   else await DB.insert('cashflow_months',data);
+  // Push to Supabase directly
+  try{
+    const ex=await _supaReq('GET','cashflow_months',null,'?month=eq.'+month+'&select=id');
+    if(ex&&ex.length>0) await _supaReq('PATCH','cashflow_months',data,'?month=eq.'+month);
+    else await _supaReq('POST','cashflow_months',data);
+  }catch(e){}
   closeModal();await loadData();renderSimpleCashflow();
   showToast(id?'Month updated':'Month added');
 }
