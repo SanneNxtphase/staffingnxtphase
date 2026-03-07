@@ -4709,7 +4709,7 @@ function renderSimpleCashflow(){
           </div>
           <div style="font-size:9px;color:var(--t3);margin-top:2px">${mov>=0?'▲ in':'▼ out'}</div>
         </td>
-        <td style="font-size:11px;color:var(--t3)">${esc(e.notes||'')}</td>
+        <td style="font-size:11px;color:var(--t3)">${esc((e.notes||'').replace(/\|\|IN:[\d.]+\|\|/g,'').replace(/\|\|OUT:[\d.]+\|\|/g,'').trim())}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openCFMonthModal(${e.id})">Edit</button>
           <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteCFMonth(${e.id})">✕</button>
@@ -4818,7 +4818,7 @@ function openCFMonthModal(id){
       <span style="font-size:10px;color:var(--t3)" id="scf-prev-hint"></span>
     </div>
     <div class="form-group" style="margin-top:10px"><label class="form-lbl">Notes (optional)</label>
-      <input class="form-input" id="scf-notes" value="${esc(e?.notes||'')}" placeholder="e.g. Large client payment received" autocomplete="off">
+      <input class="form-input" id="scf-notes" value="${esc((e?.notes||'').replace(/\|\|IN:[\d.]+\|\|/g,'').replace(/\|\|OUT:[\d.]+\|\|/g,'').trim())}" placeholder="e.g. Large client payment received" autocomplete="off">
     </div>
   </div>
   <div class="modal-footer">
