@@ -7614,8 +7614,9 @@ document.addEventListener('keydown',function(e){
 });
 
 async function init(){
-  // Guard: only run if authenticated
+  // Guard: only run if authenticated and NOT employee (employee view has its own init)
   if(!AUTH.isAuthenticated())return;
+  if(AUTH.isEmployee()||AUTH.isStaffOnly())return;
   // Sync PINs from Supabase first (so all devices share the same PIN)
   try { await AUTH.syncPinsFromSupabase(); } catch(e) {}
   // Always force fresh Supabase load on login — Supabase is primary source of truth
