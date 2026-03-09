@@ -2148,7 +2148,7 @@ function renderDashboard(){
     <div class="kpi ap"><div class="kpi-lbl">Staffing Cost</div><div class="kpi-val">${fmtS(sc)}</div><div class="kpi-sub">${monthLbl(y,m)} · from grid</div></div>
     <div class="kpi ${confRev-sc>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${confRev-sc>=0?'green':'red'}">${fmtS(confRev-sc)}</div><div class="kpi-sub">Rev minus staff cost only</div></div>
     <div class="kpi an"><div class="kpi-lbl">Active Projects</div><div class="kpi-val">${S.projects.filter(p=>{if(p.status!=='confirmed')return false;const weeks=getWeeksInMonth(y,m);return projectWkKeys(p).some(w=>weeks.includes(w));}).length}</div><div class="kpi-sub">${monthLbl(y,m)}</div></div>
-    <div class="kpi aa"><div class="kpi-lbl">Fixed Costs /mo</div><div class="kpi-val amber">${fmtS(fc)}</div><div class="kpi-sub">See Company Dashboard</div></div>
+    <div class="kpi aa"><div class="kpi-lbl">Fixed Costs /mo</div><div class="kpi-val amber">${fmtS(fc)}</div><div class="kpi-sub">Excl. VAT · See Company Dashboard</div></div>
     <div class="kpi ${profit>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${profit>=0?'green':'red'}">${fmtS(profit)}</div><div class="kpi-sub">Rev − staffing only · ${margin.toFixed(1)}%</div></div>`;
   document.getElementById('dash-draft-kpis').innerHTML=draftRev>0||allDraftRev>0?`
     <div class="draft-kpi"><div class="kpi-lbl">Draft Rev (this month)</div><div class="kpi-val amber">${fmtS(draftRev)}</div></div>
@@ -2253,7 +2253,7 @@ function renderDashboard(){
   const maxCat=cats.length?cats[0][1]:1;
   const totalFixedCat=cats.reduce((s,[,v])=>s+v,0);
   let ph=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0 10px;border-bottom:2px solid var(--bdr);margin-bottom:10px">
-    <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t2)">Total Monthly Fixed</span>
+    <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t2)">Total Monthly Fixed — Excl. VAT</span>
     <span style="font-size:18px;font-weight:800;color:var(--red)">${fmt(fc)}</span>
   </div>`;
   ph+=cats.length?cats.map(([cat,amt],i)=>{
@@ -4390,20 +4390,30 @@ function renderFixedCosts(){
   // Current month fixed costs (matches dashboard)
   const _fcPageNow=new Date(),_fcPageY=_fcPageNow.getFullYear(),_fcPageM=_fcPageNow.getMonth()+1;
   const tNetThisMonth=fixedMonthly(_fcPageY,_fcPageM);
+  // This-month totals (incl VAT) — based on active entries for current month
+  const thisMonthEntries=S.fixedCosts.filter(c=>{
+    if(!c.active)return false;
+    const moStr=_fcPageY+'-'+String(_fcPageM).padStart(2,'0');
+    if(c.start_month&&c.start_month>moStr)return false;
+    if(c.end_month&&c.end_month<moStr)return false;
+    return true;
+  });
+  const tGrossThisMonth=thisMonthEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
+  const tVatThisMonth=thisMonthEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
   const kpiEl=document.getElementById('fc-grand-kpis');
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
-      <div class="kpi-lbl">This Month (Net)</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
-      <div class="kpi-sub">Active costs · matches Dashboard</div></div>
+      <div class="kpi-lbl">This Month — Excl. VAT</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
+      <div class="kpi-sub">Active costs · used in all dashboards</div></div>
     <div class="kpi aa">
-      <div class="kpi-lbl">VAT (BTW)</div><div class="kpi-val amber">${fmt(tVat)}</div>
-      <div class="kpi-sub">Reclaimable this month</div></div>
-    <div class="kpi ar" style="border-left:3px solid var(--red)">
-      <div class="kpi-lbl">Full Rate (Net)</div><div class="kpi-val red">${fmt(tNet)}</div>
-      <div class="kpi-sub">When all costs active · excl. VAT</div></div>
+      <div class="kpi-lbl">This Month — Incl. VAT</div><div class="kpi-val amber">${fmt(tGrossThisMonth)}</div>
+      <div class="kpi-sub">What you actually pay out</div></div>
+    <div class="kpi aa" style="border-left:3px solid var(--amber)">
+      <div class="kpi-lbl">VAT (BTW) This Month</div><div class="kpi-val amber">${fmt(tVatThisMonth)}</div>
+      <div class="kpi-sub">Reclaimable from tax authority</div></div>
     <div class="kpi ar">
-      <div class="kpi-lbl">Annual (Full Rate)</div><div class="kpi-val red">${fmt(tNet*12)}</div>
-      <div class="kpi-sub">× 12 months</div></div>`;
+      <div class="kpi-lbl">Annual — Excl. VAT</div><div class="kpi-val red">${fmt(tNetThisMonth*12)}</div>
+      <div class="kpi-sub">This month × 12</div></div>`;
 
   // Group by category
   const grouped={};
@@ -6163,7 +6173,7 @@ function _renderFinancialActual(){
   const hasCFData=S.cashflowMonths.length>0;
   document.getElementById('fin-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">YTD Revenue</div><div class="kpi-val blue">${fmtS(ytdRev)}</div><div class="kpi-sub">${inclDraft?'Conf+draft':'Confirmed'}</div></div>
-    <div class="kpi ar"><div class="kpi-lbl">YTD Fixed Costs</div><div class="kpi-val red">${fmtS(ytdFixed)}</div><div class="kpi-sub">From Fixed Costs register</div></div>
+    <div class="kpi ar"><div class="kpi-lbl">YTD Fixed Costs</div><div class="kpi-val red">${fmtS(ytdFixed)}</div><div class="kpi-sub">Excl. VAT · Fixed Costs register</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Staffing Costs</div><div class="kpi-val amber">${fmtS(ytdStaffing)}</div><div class="kpi-sub">Jan–${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ytdCurMonth-1]} ${year}</div></div>
     <div class="kpi ${ytdOpResult>=0?'ag':'ar'}"><div class="kpi-lbl">YTD Op. Result</div><div class="kpi-val ${ytdOpResult>=0?'green':'red'}">${fmtS(ytdOpResult)}</div><div class="kpi-sub">Margin ${ytdMargin.toFixed(1)}%</div></div>
     <div class="kpi ag"><div class="kpi-lbl">YTD Bank In</div><div class="kpi-val green">${hasCFData?fmtS(ytdBankIn):'—'}</div><div class="kpi-sub">From Cashflow module</div></div>
