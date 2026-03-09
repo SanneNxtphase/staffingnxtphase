@@ -425,6 +425,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="nav-item" onclick="navigate('staffing',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="3"/><path d="M1 14c0-3 2.5-5 5-5"/><circle cx="12" cy="7" r="2.5"/><path d="M9 14c0-2 1.5-4 3-4s3 2 3 4"/></svg>Staffing</div>
     <div class="nav-item" onclick="navigate('schedule',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2" width="14" height="12" rx="1"/><path d="M1 6h14M5 2v2M11 2v2M4 9h2M7 9h2M10 9h2"/></svg>Schedules</div>
     <div class="nav-item" onclick="navigate('vacation',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>Vacation</div>
+    <div class="nav-item" onclick="navigate('sickleave',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="3"/><path d="M3 14c0-3 2-5 5-5s5 2 5 5"/><path d="M8 3V1M6 4L5 3M10 4l1-1" stroke-width="1.5"/></svg>Sick Leave</div>
     <div class="nav-item" onclick="navigate('employees',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3.5"/><path d="M1 15c0-4 3-6.5 7-6.5s7 2.5 7 6.5"/></svg>Team</div>
     <div class="nav-sec">Finance</div>
     <div class="nav-item" onclick="navigate('partner',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3 2.5-5 6-5s6 2 6 5"/><path d="M11 7l1.5 1.5L15 6"/></svg>Partner Clients</div>
@@ -782,6 +783,22 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   <div class="card"><div class="table-wrap"><table>
     <thead><tr><th>Employee</th><th>Start</th><th>End</th><th class="right">Days</th><th>Week(s)</th><th>Note</th><th>Actions</th></tr></thead>
     <tbody id="vac-tbody"></tbody>
+  </table></div></div>
+</div>
+
+<div id="page-sickleave" class="page">
+  <div class="page-header">
+    <div><div class="page-title">Sick Leave</div><div class="page-sub">Admin only — reduces staffing capacity, not visible to employees</div></div>
+    <button class="btn" style="background:var(--red);color:#fff;border-color:var(--red)" onclick="openModal('sickleave')">+ Register Sick Leave</button>
+  </div>
+  <div class="alert" style="background:#fff5f5;border:1px solid var(--red);color:var(--red);border-radius:var(--r);padding:10px 14px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>
+    <span>Red cells in the staffing grid show sick days — deducted from available capacity. This page is <strong>admin only</strong> and never shown in the employee view.</span>
+  </div>
+  <div class="kpi-row" id="sl-kpis"></div>
+  <div class="card"><div class="table-wrap"><table>
+    <thead><tr><th>Employee</th><th>Start</th><th>End</th><th class="right">Days</th><th>Week(s)</th><th>Note</th><th>Actions</th></tr></thead>
+    <tbody id="sl-tbody"></tbody>
   </table></div></div>
 </div>
 
@@ -1159,7 +1176,7 @@ async function supaLoadAll() {
     var online = await _supaCheckOnline();
     if (!online) return false;
 
-    var tables = ['projects','employees','staffing','vacations','fixed_costs',
+    var tables = ['projects','employees','staffing','vacations','sick_leave','fixed_costs',
       'bank_transactions','invoices','future_costs','partner_invoices','cashflow_months'];
     // Also fetch settings (for fc_date_overrides and starting_balance)
     var settingsReq = _supaReq('GET', 'settings', null, '?select=*');
@@ -1768,6 +1785,17 @@ function revForWeekInMonth(p,wk,y,m){
   const wkCount=Math.max(1,projectWkCount(p));
   return(p.revenue/wkCount/7)*activeDays;
 }
+function sickInWeek(empId,wk){
+  if(!S.sickLeave||!S.sickLeave.length)return 0;
+  const wkS=wkMonday(wk),wkE=new Date(wkS);wkE.setDate(wkE.getDate()+4);
+  return S.sickLeave.filter(v=>v.employee_id===empId).reduce((sum,v)=>{
+    const vs=new Date(v.start_date),ve=new Date(v.end_date);
+    if(vs>wkE||ve<wkS)return sum;
+    let days=0;const d=new Date(Math.max(wkS,vs));const end=new Date(Math.min(wkE,ve));
+    while(d<=end){if(d.getDay()>=1&&d.getDay()<=5)days++;d.setDate(d.getDate()+1);}
+    return sum+days;
+  },0);
+}
 function vacInWeek(empId,wk){
   const wkS=wkMonday(wk),wkE=new Date(wkS);wkE.setDate(wkE.getDate()+4);
   return S.vacations.filter(v=>v.employee_id===empId).reduce((sum,v)=>{
@@ -2001,16 +2029,16 @@ function mobileNav(el){
 }
 function renderPage(name){
   ({dashboard:renderDashboard,financial:renderFinancial,partner:renderPartner,forecast:renderForecast,projects:renderProjects,
-    staffing:renderStaffing,schedule:renderSchedule,vacation:renderVacation,
+    staffing:renderStaffing,schedule:renderSchedule,vacation:renderVacation,sickleave:renderSickLeave,
     employees:renderEmployees,invoices:renderInvoices,cashflow:renderSimpleCashflow,
     fixedcosts:renderFixedCosts,history:renderHistory}[name]||function(){})();
 }
 async function loadData(){
-  const[pr,em,st,va,fc,tx,inv,fut,pi,cfm]=await Promise.all([
+  const[pr,em,st,va,fc,tx,inv,fut,pi,cfm,sl]=await Promise.all([
     DB.select('projects'),DB.select('employees'),DB.select('staffing'),DB.select('vacations'),
     DB.select('fixed_costs'),DB.select('bank_transactions'),DB.select('invoices'),DB.select('future_costs'),
-    DB.select('partner_invoices'),DB.select('cashflow_months')]);
-  S.projects=pr||[];S.employees=em||[];S.staffing=st||[];S.vacations=va||[];
+    DB.select('partner_invoices'),DB.select('cashflow_months'),DB.select('sick_leave')]);
+  S.projects=pr||[];S.employees=em||[];S.staffing=st||[];S.vacations=va||[];S.sickLeave=sl||[];
   S.fixedCosts=fc||[];S.transactions=tx||[];S.invoices=inv||[];S.futureCosts=fut||[];
   S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];_parseCFNotes(S.cashflowMonths);
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
@@ -2240,18 +2268,18 @@ function renderDashboard(){
     let assigned=0,vac=0,cap=0;
     wks2.forEach(wk=>{
       assigned+=assignedInWeek(emp.id,wk);
-      const v=vacInWeek(emp.id,wk);vac+=v;cap+=Math.max(0,(emp.available_days_per_week||5)-v);
+      const v=vacInWeek(emp.id,wk);const sk=sickInWeek(emp.id,wk);vac+=v;cap+=Math.max(0,(emp.available_days_per_week||5)-v-sk);
     });
     const pct=cap>0?(assigned/cap*100):0;
     const cls=pct>100?'over':pct<80?'under':'ok';
     const bc=pct>100?'pb-red':pct<80?'pb-amber':'pb-green';
     return`<div style="margin-bottom:11px">
       <div class="flex-between" style="margin-bottom:4px">
-        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span class="bold">${esc(emp.name)}</span>${vac>0?`<span class="badge badge-vacation" style="font-size:8px">${vac}d vac</span>`:''}</div>
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span class="bold">${esc(emp.name)}</span>${vac>0?`<span class="badge badge-vacation" style="font-size:8px">${vac}d vac</span>`:''}${sick>0?`<span class="badge" style="background:#fff0f0;color:var(--red);border:1px solid var(--red);font-size:8px">${sick}d sick</span>`:''}</div>
         <span class="badge badge-${cls}">${pct>100?'Over':pct<60?'Under':'OK'} ${Math.round(pct)}%</span>
       </div>
       <div class="progress" style="margin-bottom:3px"><div class="progress-bar ${bc}" style="width:${Math.min(100,pct)}%"></div></div>
-      <div class="text-muted" style="font-size:9px">${assigned}d / ${cap}d${vac>0?` (${vac}d vac deducted)`:''}</div>
+      <div class="text-muted" style="font-size:9px">${assigned}d / ${cap}d${vac>0?` (${vac}d vac)`:''} ${sick>0?`<span style="color:var(--red);font-size:9px">${sick}d sick</span>`:''}</div>
     </div>`;
   }).join('')||'<div class="empty">No employees</div>';
 
@@ -2749,7 +2777,8 @@ function renderStaffing(){
       let empTotalDays=0,empTotalCost=0,empTotalVac=0;
       const wkData=weeks.map(wk=>{
         const vac=vacInWeek(emp.id,wk);
-        const avail=Math.max(0,(emp.available_days_per_week||5)-vac);
+        const sick=sickInWeek(emp.id,wk);
+        const avail=Math.max(0,(emp.available_days_per_week||5)-vac-sick);
         const assigned=assignedInWeek(emp.id,wk);
         empTotalDays+=assigned;empTotalVac+=vac;
         const cost=S.staffing.filter(s=>s.employee_id===emp.id&&s.week_key===wk).reduce((s,x)=>{
@@ -3463,6 +3492,78 @@ function renderSchedule(){
   }).filter(Boolean).join('');
 
   document.getElementById('sched-cards').innerHTML=headerHtml+'<div class="comp-sched-wrap">'+(cards||'<div class="empty" style="padding:18px">No staffing assignments for these weeks.</div>')+'</div>';
+}
+
+
+// ══ SICK LEAVE ══
+function modalSickLeave(v){
+  const empOpts=S.employees.filter(e=>e.name&&e.name!=='Vakantie').map(e=>`<option value="${e.id}"${v&&v.employee_id===e.id?' selected':''}>${esc(e.name)}</option>`).join('');
+  return`<div class="modal-header"><div class="modal-title">${v?'Edit Sick Leave':'Register Sick Leave'}</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
+  <div class="modal-body">
+    <div class="alert" style="background:#fff5f5;border:1px solid var(--red);color:var(--red);border-radius:var(--r);padding:8px 12px;font-size:11px;margin-bottom:10px">
+      Sick leave is admin-only and reduces staffing capacity. It will not appear in the employee view.
+    </div>
+    <div class="form-group"><label class="form-lbl">Employee</label><select class="form-input" id="f-sl-emp">${empOpts}</select></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-lbl">Start Date</label><input class="form-input" type="date" id="f-sl-start" value="${v?.start_date||''}" oninput="slCalcDays()"></div>
+      <div class="form-group"><label class="form-lbl">End Date</label><input class="form-input" type="date" id="f-sl-end" value="${v?.end_date||''}" oninput="slCalcDays()"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-lbl">Working Days</label><input class="form-input" type="number" id="f-sl-days" value="${v?.days||''}" placeholder="Auto-calculated" step="0.5" min="0.5"></div>
+      <div class="form-group"><label class="form-lbl">Note (internal)</label><input class="form-input" id="f-sl-note" value="${esc(v?.note||'')}" placeholder="e.g. Flu" autocomplete="off"></div>
+    </div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn" style="background:var(--red);color:#fff;border-color:var(--red)" onclick="saveSickLeave(${v?.id||''})">Save</button></div>`;
+}
+function slCalcDays(){
+  const s=document.getElementById('f-sl-start')?.value,e=document.getElementById('f-sl-end')?.value;
+  if(s&&e){const d=countWorkdays(s,e);const el=document.getElementById('f-sl-days');if(el&&!el.value)el.value=d;}
+}
+async function saveSickLeave(id){
+  const sd=document.getElementById('f-sl-start').value,ed=document.getElementById('f-sl-end').value;
+  if(!sd||!ed)return alert('Start and end date required.');
+  if(ed<sd)return alert('End date must be after start date.');
+  let days=parseFloat(document.getElementById('f-sl-days').value)||0;
+  if(!days)days=countWorkdays(sd,ed);
+  const data={employee_id:parseInt(document.getElementById('f-sl-emp').value),start_date:sd,end_date:ed,days,note:document.getElementById('f-sl-note').value};
+  if(id)await DB.update('sick_leave',id,data);else await DB.insert('sick_leave',data);
+  closeModal();await loadData();renderSickLeave();renderPage('schedule');
+  showToast(id?'Sick leave updated':'Sick leave registered');
+}
+async function deleteSickLeave(id){
+  if(!confirm('Delete this sick leave entry?'))return;
+  await DB.delete('sick_leave',id);
+  await loadData();renderSickLeave();renderPage('schedule');
+  showToast('Sick leave deleted');
+}
+function renderSickLeave(){
+  const today=new Date().toISOString().split('T')[0];
+  const active=S.sickLeave.filter(v=>v.start_date<=today&&v.end_date>=today);
+  const total=S.sickLeave.reduce((s,v)=>s+parseFloat(v.days||0),0);
+  document.getElementById('sl-kpis').innerHTML=`
+    <div class="kpi" style="border-left:3px solid var(--red)"><div class="kpi-lbl">Currently Sick</div><div class="kpi-val red">${active.length}</div><div class="kpi-sub">Active today</div></div>
+    <div class="kpi ar"><div class="kpi-lbl">Total Days Registered</div><div class="kpi-val red">${total}</div><div class="kpi-sub">All entries</div></div>
+    <div class="kpi an"><div class="kpi-lbl">Total Entries</div><div class="kpi-val">${S.sickLeave.length}</div><div class="kpi-sub">All time</div></div>`;
+  const sorted=[...S.sickLeave].sort((a,b)=>b.start_date>a.start_date?1:-1);
+  document.getElementById('sl-tbody').innerHTML=sorted.length?sorted.map(v=>{
+    const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
+    const isActive=v.start_date<=today&&v.end_date>=today;
+    const wkStart=toWeekKey(new Date(v.start_date));
+    const wkEnd=toWeekKey(new Date(v.end_date));
+    const wkLabel=wkStart===wkEnd?wkStart:wkStart+' – '+wkEnd;
+    return`<tr style="${isActive?'background:#fff5f5':''}">
+      <td class="bold" style="${isActive?'color:var(--red)':''}">${esc(emp?.name||'?')}${isActive?'<span style="background:var(--red);color:#fff;font-size:8px;padding:1px 6px;border-radius:10px;margin-left:6px">SICK NOW</span>':''}</td>
+      <td>${v.start_date}</td>
+      <td style="${v.end_date<today?'color:var(--t3)':isActive?'color:var(--red);font-weight:600':''}">${v.end_date}</td>
+      <td class="right bold">${v.days}</td>
+      <td style="font-size:11px;color:var(--t3)">${wkLabel}</td>
+      <td style="font-size:11px;color:var(--t2)">${esc(v.note||'')}</td>
+      <td><div class="btn-group">
+        <button class="btn btn-sm btn-ghost" onclick="openModal('sickleave',${v.id})">Edit</button>
+        <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteSickLeave(${v.id})">&#x2715;</button>
+      </div></td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="7" class="empty">No sick leave registered yet</td></tr>';
 }
 
 // ══ VACATION ══
@@ -5013,6 +5114,7 @@ function openModal(type,id){
   else if(type==='transaction')m.innerHTML=modalTransaction(item);
   else if(type==='fixedcost'){m.innerHTML=modalFixedCost(item);setTimeout(fcModalPostRender,10);}
   else if(type==='vacation')m.innerHTML=modalVacation(item);
+  else if(type==='sickleave')m.innerHTML=modalSickLeave(item);
   else if(type==='futurecost')m.innerHTML=modalFutureCost(item);
   // Bind week auto-calc
   const sd=document.getElementById('f-start-date'),wd=document.getElementById('f-weeks'),ed=document.getElementById('f-end-date');
