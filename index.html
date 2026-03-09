@@ -2283,7 +2283,7 @@ function renderDashboard(){
   }).forEach(c=>{
     const cat=c.category||'Uncategorised';
     if(!fcCatMap[cat])fcCatMap[cat]=0;
-    fcCatMap[cat]+=Math.round(parseFloat(c.amount||0)*100)/100;
+    fcCatMap[cat]+=Math.round(fcEntryExcl(c)*100)/100; // excl. VAT to match dashboard KPI
   });
   const cats=Object.entries(fcCatMap).sort((a,b)=>b[1]-a[1]);
   const catColors=['var(--blue)','var(--pink)','var(--amber)','var(--green)','var(--purple)','var(--teal)'];
