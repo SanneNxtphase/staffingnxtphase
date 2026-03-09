@@ -2236,8 +2236,14 @@ function renderDashboard(){
     <div style="font-size:9.5px;color:var(--t3)">${monthLbl(y,m)} revenue · day-precise calculation</div>`;
 
   // Fixed Costs by Category — planning layer totals
+  const moStr=y+'-'+String(m).padStart(2,'0');
   const fcCatMap={};
-  S.fixedCosts.filter(c=>c.active).forEach(c=>{
+  S.fixedCosts.filter(c=>{
+    if(!c.active)return false;
+    if(c.start_month&&c.start_month>moStr)return false;
+    if(c.end_month&&c.end_month<moStr)return false;
+    return true;
+  }).forEach(c=>{
     const cat=c.category||'Uncategorised';
     if(!fcCatMap[cat])fcCatMap[cat]=0;
     fcCatMap[cat]+=Math.round(parseFloat(c.amount||0)*100)/100;
@@ -2248,7 +2254,7 @@ function renderDashboard(){
   const totalFixedCat=cats.reduce((s,[,v])=>s+v,0);
   let ph=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0 10px;border-bottom:2px solid var(--bdr);margin-bottom:10px">
     <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t2)">Total Monthly Fixed</span>
-    <span style="font-size:18px;font-weight:800;color:var(--red)">${fmt(totalFixedCat)}</span>
+    <span style="font-size:18px;font-weight:800;color:var(--red)">${fmt(fc)}</span>
   </div>`;
   ph+=cats.length?cats.map(([cat,amt],i)=>{
     const pct=maxCat>0?(amt/maxCat*100).toFixed(0):0;
