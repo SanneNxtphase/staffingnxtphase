@@ -2145,7 +2145,7 @@ function renderDashboard(){
   const allDraftRev=S.projects.filter(p=>p.status==='draft').reduce((s,p)=>s+p.revenue,0);
   document.getElementById('dash-conf-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">Confirmed Revenue</div><div class="kpi-val blue">${fmtS(confRev)}</div><div class="kpi-sub">Confirmed projects only</div></div>
-    <div class="kpi ap"><div class="kpi-lbl">Staffing Cost</div><div class="kpi-val">${fmtS(sc)}</div><div class="kpi-sub">From staffing grid</div></div>
+    <div class="kpi ap"><div class="kpi-lbl">Staffing Cost</div><div class="kpi-val">${fmtS(sc)}</div><div class="kpi-sub">${monthLbl(y,m)} · from grid</div></div>
     <div class="kpi ${confRev-sc>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${confRev-sc>=0?'green':'red'}">${fmtS(confRev-sc)}</div><div class="kpi-sub">Rev minus staff cost only</div></div>
     <div class="kpi an"><div class="kpi-lbl">Active Projects</div><div class="kpi-val">${S.projects.filter(p=>{if(p.status!=='confirmed')return false;const weeks=getWeeksInMonth(y,m);return projectWkKeys(p).some(w=>weeks.includes(w));}).length}</div><div class="kpi-sub">${monthLbl(y,m)}</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Fixed Costs /mo</div><div class="kpi-val amber">${fmtS(fc)}</div><div class="kpi-sub">See Company Dashboard</div></div>
@@ -6104,7 +6104,7 @@ function _renderFinancialActual(){
     const fixedCosts=fixedMonthly(year,mo); // active costs for this month
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const staffingCosts=staffCostMonth(year,mo); // staffing costs for this month
-    const totalOpCosts=fixedCosts+forecastCosts+staffingCosts;
+    const totalOpCosts=fixedCosts+forecastCosts; // staffingCosts tracked separately
     const opResult=revenue-totalOpCosts;
     const opMargin=revenue>0?(opResult/revenue*100):0;
     // Active projects this month
@@ -6148,7 +6148,13 @@ function _renderFinancialActual(){
   const ytdRev=ytdMos.reduce((s,m)=>s+m.revenue,0);
   const ytdFixed=ytdMos.reduce((s,m)=>s+m.fixedCosts,0);
   const ytdForecast=ytdMos.reduce((s,m)=>s+m.forecastCosts,0);
-  const ytdStaffing=ytdMos.reduce((s,m)=>s+m.staffingCosts,0);
+  // YTD Staffing: sum staffCostMonth for each month Jan..currentMonth in selected year
+  const ytdCurMonth=year===now.getFullYear()?now.getMonth()+1:12;
+  const ytdStaffing=(()=>{
+    let tot=0;
+    for(let mo=1;mo<=ytdCurMonth;mo++) tot+=staffCostMonth(year,mo);
+    return tot;
+  })();
   const ytdOpResult=ytdRev-ytdFixed-ytdForecast;
   const ytdMargin=ytdRev>0?ytdOpResult/ytdRev*100:0;
   const ytdBankIn=ytdMos.reduce((s,m)=>s+m.bankIn,0);
@@ -6158,7 +6164,7 @@ function _renderFinancialActual(){
   document.getElementById('fin-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">YTD Revenue</div><div class="kpi-val blue">${fmtS(ytdRev)}</div><div class="kpi-sub">${inclDraft?'Conf+draft':'Confirmed'}</div></div>
     <div class="kpi ar"><div class="kpi-lbl">YTD Fixed Costs</div><div class="kpi-val red">${fmtS(ytdFixed)}</div><div class="kpi-sub">From Fixed Costs register</div></div>
-    <div class="kpi aa"><div class="kpi-lbl">YTD Staffing Costs</div><div class="kpi-val amber">${fmtS(ytdStaffing)}</div><div class="kpi-sub">Cumulative staffing YTD</div></div>
+    <div class="kpi aa"><div class="kpi-lbl">Staffing Costs</div><div class="kpi-val amber">${fmtS(ytdStaffing)}</div><div class="kpi-sub">Jan–${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ytdCurMonth-1]} ${year}</div></div>
     <div class="kpi ${ytdOpResult>=0?'ag':'ar'}"><div class="kpi-lbl">YTD Op. Result</div><div class="kpi-val ${ytdOpResult>=0?'green':'red'}">${fmtS(ytdOpResult)}</div><div class="kpi-sub">Margin ${ytdMargin.toFixed(1)}%</div></div>
     <div class="kpi ag"><div class="kpi-lbl">YTD Bank In</div><div class="kpi-val green">${hasCFData?fmtS(ytdBankIn):'—'}</div><div class="kpi-sub">From Cashflow module</div></div>
     <div class="kpi ar"><div class="kpi-lbl">YTD Bank Out</div><div class="kpi-val red">${hasCFData?fmtS(ytdBankOut):'—'}</div><div class="kpi-sub">From Cashflow module</div></div>
