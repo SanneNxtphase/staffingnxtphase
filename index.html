@@ -2695,10 +2695,12 @@ function renderProjects(){
     let partnerProgress='';
     if(p.is_partner){
       const invoiced=getPartnerInvoiced(p.id);
+      const _pPaidLocal=S.invoices.filter(i=>(i.project_id===p.id||i.project_id==p.id)&&i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
+      const _pUnpaidLocal=Math.max(0,invoiced-_pPaidLocal);
       const rem=Math.max(0,parseFloat(p.revenue||0)-invoiced);
       const pct=p.revenue>0?Math.min(100,invoiced/p.revenue*100):0;
       partnerProgress=`<div style="margin-top:2px;font-size:9px;color:var(--t3)">
-        Invoiced: <strong style="color:var(--green)">${fmt(invoiced)}</strong> · Unpaid: <strong style="color:var(--amber)">${fmt(pUnpaid)}</strong> · To invoice: <strong>${fmt(rem)}</strong>
+        Invoiced: <strong style="color:var(--green)">${fmt(invoiced)}</strong> · Unpaid: <strong style="color:var(--amber)">${fmt(_pUnpaidLocal)}</strong> · To invoice: <strong>${fmt(rem)}</strong>
         <div class="progress" style="height:3px;margin-top:2px"><div class="progress-bar pb-blue" style="width:${pct}%;height:3px"></div></div>
       </div>`;
     }
