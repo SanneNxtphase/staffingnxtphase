@@ -3437,7 +3437,7 @@ function renderSchedule(){
     </tr></thead><tbody>`;
     S.employees.filter(emp=>!S.schedHiddenEmps.has(emp.id)).forEach(emp=>{
       const totalVac=activeWeeks.reduce((s,w)=>s+vacInWeek(emp.id,w),0);
-      const empRows=S.staffing.filter(s=>s.employee_id===emp.id&&activeWeeks.includes(s.week_key));
+      const empRows=S.staffing.filter(s=>s.employee_id===emp.id&&activeWeeks.includes(s.week_key)&&(()=>{const proj=S.projects.find(p=>p.id===s.project_id);return proj&&proj.status!=='stopped'&&projectWkKeys(proj).includes(s.week_key);})());
       const total=empRows.reduce((s,x)=>s+x.days,0);
       if(!total&&!totalVac)return;
       html+=`<tr><td class="bold">${esc(emp.name)}<br><span class="text-muted" style="font-size:10px">${esc(emp.role||'')}</span></td>`;
@@ -3486,8 +3486,8 @@ function renderSchedule(){
   const showCost=view==='full';
   const cards=S.employees.filter(emp=>!S.schedHiddenEmps.has(emp.id)).map(emp=>{
     // Only include rows where the project still exists
-    const wk1Rows=S.staffing.filter(s=>s.employee_id===emp.id&&s.week_key===wk&&S.projects.find(p=>p.id===s.project_id));
-    const wk2Rows=S.staffing.filter(s=>s.employee_id===emp.id&&s.week_key===wk2&&S.projects.find(p=>p.id===s.project_id));
+    const wk1Rows=S.staffing.filter(s=>s.employee_id===emp.id&&s.week_key===wk&&(()=>{const proj=S.projects.find(p=>p.id===s.project_id);return proj&&proj.status!=='stopped'&&projectWkKeys(proj).includes(wk);})());
+    const wk2Rows=S.staffing.filter(s=>s.employee_id===emp.id&&s.week_key===wk2&&(()=>{const proj=S.projects.find(p=>p.id===s.project_id);return proj&&proj.status!=='stopped'&&projectWkKeys(proj).includes(wk2);})());
     const allRows=[...wk1Rows,...wk2Rows];
     const vac1=vacInWeek(emp.id,wk);
     const vac2=vacInWeek(emp.id,wk2);
