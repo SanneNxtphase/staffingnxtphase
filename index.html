@@ -839,7 +839,8 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
           <th>Client / Project</th>
           <th class="right">Revenue</th>
           <th class="right">Invoiced</th>
-          <th class="right">Outstanding</th>
+          <th class="right" title="Sent but not yet paid">Unpaid</th>
+          <th class="right" title="Revenue not yet invoiced">To Invoice</th>
           <th style="min-width:90px">Last Sent</th>
           <th class="center" style="width:80px">Draft ✓</th>
           <th class="center" style="width:80px">Sent ✓</th>
@@ -2697,7 +2698,7 @@ function renderProjects(){
       const rem=Math.max(0,parseFloat(p.revenue||0)-invoiced);
       const pct=p.revenue>0?Math.min(100,invoiced/p.revenue*100):0;
       partnerProgress=`<div style="margin-top:2px;font-size:9px;color:var(--t3)">
-        Invoiced: <strong style="color:var(--green)">${fmt(invoiced)}</strong> · Remaining: <strong style="color:var(--amber)">${fmt(rem)}</strong>
+        Invoiced: <strong style="color:var(--green)">${fmt(invoiced)}</strong> · Unpaid: <strong style="color:var(--amber)">${fmt(pUnpaid)}</strong> · To invoice: <strong>${fmt(rem)}</strong>
         <div class="progress" style="height:3px;margin-top:2px"><div class="progress-bar pb-blue" style="width:${pct}%;height:3px"></div></div>
       </div>`;
     }
@@ -3746,7 +3747,7 @@ function renderInvoices(){
   document.getElementById('inv-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">Total Invoiced</div><div class="kpi-val blue">${fmt(total)}</div></div>
     <div class="kpi ag"><div class="kpi-lbl">Collected</div><div class="kpi-val green">${fmt(paid)}</div></div>
-    <div class="kpi aa"><div class="kpi-lbl">Outstanding</div><div class="kpi-val amber">${fmt(outstanding)}</div></div>
+    <div class="kpi aa"><div class="kpi-lbl">Unpaid (Sent)</div><div class="kpi-val amber">${fmt(outstanding)}</div></div>
     <div class="kpi an"><div class="kpi-lbl">Not Sent Yet</div><div class="kpi-val">${pending}</div></div>`;
 
   // ── Auto-populate confirmed project tracker ────────────────────────────────
@@ -3760,7 +3761,10 @@ function renderInvoices(){
   document.getElementById('inv-proj-tbody').innerHTML=confProjects.map(p=>{
     const pInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
     const invoiced=pInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
-    const outstanding2=Math.max(0,p.revenue-invoiced);
+    const paidAmt=pInvs.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
+    const unpaid=Math.max(0,invoiced-paidAmt); // sent but not collected
+    const toInvoice=Math.max(0,p.revenue-invoiced); // revenue not yet invoiced
+    const outstanding2=toInvoice; // kept for legacy references
     const allDraft=pInvs.every(i=>i.draft_created)||pInvs.length===0;
     const allSent=pInvs.length>0&&pInvs.every(i=>i.invoice_sent);
     const hasDraftCreated=pInvs.some(i=>i.draft_created);
@@ -3776,7 +3780,8 @@ function renderInvoices(){
       <td><div style="font-weight:600;font-size:12px;cursor:pointer;color:var(--blue);text-decoration:underline dotted" onclick="showClientInvoiceHistory('${esc(p.client_name).replace(/'/g,"\\'")}')" title="Click for invoice history">${esc(p.client_name)}</div><div style="font-size:10px;color:var(--t3)">${esc(p.name)}</div></td>
       <td class="right mono text-blue">${fmt(p.revenue)}</td>
       <td class="right mono">${invoiced>0?fmt(invoiced):'<span class="text-muted">—</span>'}</td>
-      <td class="right mono ${outstanding2>0?'text-amber':fullyInvoiced?'text-green':'text-muted'}">${outstanding2>0?fmt(outstanding2):fullyInvoiced?'<span style="color:var(--green)">✓ Paid</span>':invoiced>0?'<span style="color:var(--amber)">Awaiting payment</span>':'<span class="text-muted">—</span>'}</td>
+      <td class="right mono ${unpaid>0?'text-amber':allPaid&&invoiced>0?'text-green':'text-muted'}">${unpaid>0?fmt(unpaid):allPaid&&invoiced>0?'<span style="color:var(--green)">✓ Collected</span>':'<span class="text-muted">—</span>'}</td>
+      <td class="right mono ${toInvoice>0?'':'text-muted'}">${toInvoice>0?fmt(toInvoice):'<span class="text-muted">—</span>'}</td>
       <td style="font-size:10.5px;color:${lastSent!=='—'?'var(--blue)':'var(--t3)'}">${lastSent}</td>
       <td class="center">
         <button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:600;border:none;background:${hasDraftCreated?'var(--green)':'var(--bdr2)'};color:${hasDraftCreated?'#fff':'var(--t3)'}" onclick="invQuickDraft(${p.id})">
@@ -6557,12 +6562,16 @@ function renderPartner(){
   // KPIs
   const totContract=allPartners.reduce((s,p)=>s+parseFloat(p.revenue||0),0);
   const totInvoiced=allPartners.reduce((s,p)=>s+getPartnerInvoiced(p.id),0);
+  const totPaid=allPartners.reduce((s,p)=>{
+    return s+S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id).filter(i=>i.paid).reduce((ss,i)=>ss+parseFloat(i.amount||0),0);
+  },0);
+  const totUnpaid=Math.max(0,totInvoiced-totPaid);
   const totRemaining=totContract-totInvoiced;
   document.getElementById('partner-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">Total Contract Value</div><div class="kpi-val blue">${fmtS(totContract)}</div><div class="kpi-sub">${allPartners.length} partner project${allPartners.length!==1?'s':''}</div></div>
     <div class="kpi ag"><div class="kpi-lbl">Already Invoiced</div><div class="kpi-val green">${fmtS(totInvoiced)}</div></div>
-    <div class="kpi ${totRemaining>0?'aa':'ap'}"><div class="kpi-lbl">Remaining to Invoice</div><div class="kpi-val ${totRemaining>0?'amber':'text-muted'}">${fmtS(totRemaining)}</div></div>
-    <div class="kpi an"><div class="kpi-lbl">Active Partner Projects</div><div class="kpi-val">${partners.length}</div></div>`;
+    <div class="kpi aa"><div class="kpi-lbl">Unpaid (Sent)</div><div class="kpi-val amber">${fmtS(totUnpaid)}</div><div class="kpi-sub">Awaiting collection</div></div>
+    <div class="kpi ${totRemaining>0?'an':'ap'}"><div class="kpi-lbl">Still to Invoice</div><div class="kpi-val">${fmtS(totRemaining)}</div></div>`;
 
   if(allPartners.length===0){
     document.getElementById('partner-projects-wrap').innerHTML=`
@@ -6595,6 +6604,8 @@ function renderPartner(){
     const wks=projectWkCount(p);
     const expectedCount=p.recurring_freq==='weekly'?wks:Math.ceil(wks/4.33);
     const barColor=pct>=100?'pb-green':pct>=60?'pb-blue':'pb-amber';
+    const pPaid=pis.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
+    const pUnpaid=Math.max(0,invoiced-pPaid);
     return`<div class="card mb-14">
       <div class="card-header" style="background:${p.status==='stopped'?'var(--bg3)':''}">
         <div style="display:flex;align-items:center;gap:10px;flex:1">
