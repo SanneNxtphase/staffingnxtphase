@@ -796,8 +796,9 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <span>Red cells in the staffing grid show sick days — deducted from available capacity. This page is <strong>admin only</strong> and never shown in the employee view.</span>
   </div>
   <div class="kpi-row" id="sl-kpis"></div>
+  <div id="sl-emp-summary"></div>
   <div class="card"><div class="table-wrap"><table>
-    <thead><tr><th>Employee</th><th>Start</th><th>End</th><th class="right">Days</th><th>Week(s)</th><th>Note</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Employee</th><th>Start</th><th>End</th><th class="right">Days</th><th class="right">Cost</th><th>Week(s)</th><th>Note</th><th>Actions</th></tr></thead>
     <tbody id="sl-tbody"></tbody>
   </table></div></div>
 </div>
@@ -977,19 +978,19 @@ const DB={
       try{this._store=JSON.parse(raw);}catch(e){this._store=null;}
     }
     if(!this._store){
-      this._store={projects:[],employees:[],staffing:[],vacations:[],
+      this._store={projects:[],employees:[],staffing:[],vacations:[],sick_leave:[],
         fixed_costs:[],bank_transactions:[],invoices:[],future_costs:[],partner_invoices:[],cashflow_months:[],
         settings:[{key:'starting_balance',value:'0'}],
-        _ids:{projects:1,employees:1,staffing:1,vacations:1,fixed_costs:1,bank_transactions:1,invoices:1,future_costs:1,partner_invoices:1,cashflow_months:1}};
+        _ids:{projects:1,employees:1,staffing:1,vacations:1,sick_leave:1,fixed_costs:1,bank_transactions:1,invoices:1,future_costs:1,partner_invoices:1,cashflow_months:1}};
     }
     // Ensure all tables exist
-    ['projects','employees','staffing','vacations','fixed_costs','bank_transactions',
+    ['projects','employees','staffing','vacations','sick_leave','fixed_costs','bank_transactions',
      'invoices','future_costs','partner_invoices','cashflow_months'].forEach(t=>{
       if(!this._store[t])this._store[t]=[];
     });
     if(!this._store.settings)this._store.settings=[{key:'starting_balance',value:'0'}];
     if(!this._store._ids)this._store._ids={};
-    ['projects','employees','staffing','vacations','fixed_costs','bank_transactions',
+    ['projects','employees','staffing','vacations','sick_leave','fixed_costs','bank_transactions',
      'invoices','future_costs','partner_invoices','cashflow_months'].forEach(t=>{
       if(!this._store._ids[t])this._store._ids[t]=(this._store[t].reduce((m,r)=>Math.max(m,r.id||0),0))+1;
     });
@@ -3409,7 +3410,8 @@ function renderSchedule(){
         }
         html+='<td class="center" style="vertical-align:top;padding:8px 10px;min-width:120px">'+_tcell+'</td>';
       });
-      html+=`<td class="right bold">${total}d${totalVac?` <span class="text-purple" style="font-size:10px">+${totalVac}vac</span>`:''}</td></tr>`;
+      const totalSick2=activeWeeks.reduce((s,w)=>s+sickInWeek(emp.id,w),0);
+      html+=`<td class="right bold">${total}d${totalVac?` <span class="text-purple" style="font-size:10px">+${totalVac}vac</span>`:''}${totalSick2?` <span style="color:var(--red);font-size:10px">+${totalSick2}sick</span>`:''}</td></tr>`;
     });
     html+='</tbody></table></div></div></div>';
     document.getElementById('sched-cards').innerHTML=html;
@@ -3420,11 +3422,18 @@ function renderSchedule(){
   const totalDays=S.staffing.filter(s=>activeWeeks.includes(s.week_key)).reduce((sum,s)=>sum+s.days,0);
   const uniqueProjs=[...new Set(S.staffing.filter(s=>activeWeeks.includes(s.week_key)).map(s=>s.project_id))];
   
+  // Sick leave totals for header
+  const _sickEmps=S.employees.filter(e=>sickInWeek(e.id,wk)>0||sickInWeek(e.id,wk2)>0);
+  const _sickDays=S.employees.reduce((s,e)=>s+sickInWeek(e.id,wk)+sickInWeek(e.id,wk2),0);
+  const _sickCost=S.employees.reduce((s,e)=>s+(sickInWeek(e.id,wk)+sickInWeek(e.id,wk2))*(e.daily_cost||0),0);
   let headerHtml=`<div class="comp-sched-header">
     <div>
       <div class="comp-sched-title">Weeks ${wkNum}–${wkNum2}</div>
       <div class="comp-sched-sub">${wkRange(wk)} &nbsp;|&nbsp; ${wkRange(wk2)}</div>
     </div>
+    ${_sickDays>0?`<div style="background:#fff0f0;border:1px solid #ffcccc;border-radius:8px;padding:6px 12px;font-size:11px;color:var(--red);display:flex;gap:12px;align-items:center">
+      <span><strong>${_sickEmps.length}</strong> sick · <strong>${_sickDays}d</strong>${view==='full'?' · <strong>'+fmt(_sickCost)+'</strong> cost':''}</span>
+    </div>`:''}
     <div class="comp-sched-total">
       <div class="comp-sched-total-val">${totalDays}d</div>
       <div class="comp-sched-total-lbl">${uniqueProjs.length} project${uniqueProjs.length!==1?'s':''} · ${S.employees.filter(e=>S.staffing.some(s=>s.employee_id===e.id&&activeWeeks.includes(s.week_key))).length} people</div>
@@ -3439,14 +3448,19 @@ function renderSchedule(){
     const allRows=[...wk1Rows,...wk2Rows];
     const vac1=vacInWeek(emp.id,wk);
     const vac2=vacInWeek(emp.id,wk2);
+    const sick1=sickInWeek(emp.id,wk);
+    const sick2=sickInWeek(emp.id,wk2);
+    const sickCost1=sick1*(emp.daily_cost||0);
+    const sickCost2=sick2*(emp.daily_cost||0);
     const totalDays2=allRows.reduce((s,x)=>s+x.days,0);
     const totalCost=allRows.reduce((s,x)=>s+emp.daily_cost*x.days,0);
-    if(!totalDays2&&!vac1&&!vac2)return'';
+    if(!totalDays2&&!vac1&&!vac2&&!sick1&&!sick2)return'';
     
     let bodyHtml='';
     // Week 1
     bodyHtml+=`<div style="background:var(--bg2);padding:4px 13px;font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--bdr)">Wk ${wkNum} · ${wkRange(wk)}</div>`;
     if(vac1){bodyHtml+=`<div class="comp-card-vac">&#127958; Vacation — ${vac1}d</div>`;}
+    if(sick1){bodyHtml+=`<div style="background:#fff0f0;border-left:3px solid var(--red);padding:5px 13px;font-size:11px;color:var(--red);display:flex;justify-content:space-between;align-items:center"><span>Sick — ${sick1}d</span>${showCost?`<span style="font-size:9.5px">${fmt(sickCost1)}</span>`:''}</div>`;}
     if(wk1Rows.length){
       wk1Rows.forEach(s=>{
         const proj=S.projects.find(p=>p.id===s.project_id);
@@ -3465,6 +3479,7 @@ function renderSchedule(){
     // Week 2
     bodyHtml+=`<div style="background:var(--bg2);padding:4px 13px;font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">Wk ${wkNum2} · ${wkRange(wk2)}</div>`;
     if(vac2){bodyHtml+=`<div class="comp-card-vac">&#127958; Vacation — ${vac2}d</div>`;}
+    if(sick2){bodyHtml+=`<div style="background:#fff0f0;border-left:3px solid var(--red);padding:5px 13px;font-size:11px;color:var(--red);display:flex;justify-content:space-between;align-items:center"><span>Sick — ${sick2}d</span>${showCost?`<span style="font-size:9.5px">${fmt(sickCost2)}</span>`:''}</div>`;}
     if(wk2Rows.length){
       wk2Rows.forEach(s=>{
         const proj=S.projects.find(p=>p.id===s.project_id);
@@ -3485,7 +3500,7 @@ function renderSchedule(){
       <div class="comp-card-hdr">
         <div class="comp-card-name">${esc(emp.name)}</div>
         <div class="comp-card-role">${esc(emp.role||'')}</div>
-        ${totalDays2>0?`<div class="comp-card-dates">${totalDays2} day${totalDays2!==1?'s':''} over 2 wks${showCost?' · '+fmt(totalCost):''}</div>`:''}
+        ${(totalDays2>0||sick1||sick2)?('<div class="comp-card-dates">'+totalDays2+' day'+(totalDays2!==1?'s':'')+' over 2 wks'+(showCost?' · '+fmt(totalCost):'')+(((sick1||sick2)&&showCost)?' <span style="color:var(--red);font-size:9px">· '+fmt(sickCost1+sickCost2)+' sick cost</span>':'')+'</div>'):''}
       </div>
       <div class="comp-card-body">${bodyHtml}</div>
     </div>`;
@@ -3506,7 +3521,7 @@ function modalSickLeave(v){
     <div class="form-group"><label class="form-lbl">Employee</label><select class="form-input" id="f-sl-emp">${empOpts}</select></div>
     <div class="form-row">
       <div class="form-group"><label class="form-lbl">Start Date</label><input class="form-input" type="date" id="f-sl-start" value="${v?.start_date||''}" oninput="slCalcDays()"></div>
-      <div class="form-group"><label class="form-lbl">End Date</label><input class="form-input" type="date" id="f-sl-end" value="${v?.end_date||''}" oninput="slCalcDays()"></div>
+      <div class="form-group"><label class="form-lbl">End Date <span style="font-weight:400;color:var(--t3)">(optional)</span></label><input class="form-input" type="date" id="f-sl-end" value="${v?.end_date||''}" oninput="slCalcDays()" placeholder="Leave blank if unknown"></div>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-lbl">Working Days</label><input class="form-input" type="number" id="f-sl-days" value="${v?.days||''}" placeholder="Auto-calculated" step="0.5" min="0.5"></div>
@@ -3520,8 +3535,10 @@ function slCalcDays(){
   if(s&&e){const d=countWorkdays(s,e);const el=document.getElementById('f-sl-days');if(el&&!el.value)el.value=d;}
 }
 async function saveSickLeave(id){
-  const sd=document.getElementById('f-sl-start').value,ed=document.getElementById('f-sl-end').value;
-  if(!sd||!ed)return alert('Start and end date required.');
+  const sd=document.getElementById('f-sl-start').value;
+  if(!sd)return alert('Start date required.');
+  const edVal=document.getElementById('f-sl-end').value;
+  const ed=edVal||sd; // default end = start if not yet known
   if(ed<sd)return alert('End date must be after start date.');
   let days=parseFloat(document.getElementById('f-sl-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
@@ -3539,15 +3556,54 @@ async function deleteSickLeave(id){
 function renderSickLeave(){
   const today=new Date().toISOString().split('T')[0];
   const active=S.sickLeave.filter(v=>v.start_date<=today&&v.end_date>=today);
-  const total=S.sickLeave.reduce((s,v)=>s+parseFloat(v.days||0),0);
+  const totalDays=S.sickLeave.reduce((s,v)=>s+parseFloat(v.days||0),0);
+  // Calculate costs per entry and totals
+  const totalCost=S.sickLeave.reduce((s,v)=>{
+    const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
+    return s+(parseFloat(v.days||0)*(emp?.daily_cost||0));
+  },0);
+  const activeCost=active.reduce((s,v)=>{
+    const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
+    return s+(parseFloat(v.days||0)*(emp?.daily_cost||0));
+  },0);
   document.getElementById('sl-kpis').innerHTML=`
     <div class="kpi" style="border-left:3px solid var(--red)"><div class="kpi-lbl">Currently Sick</div><div class="kpi-val red">${active.length}</div><div class="kpi-sub">Active today</div></div>
-    <div class="kpi ar"><div class="kpi-lbl">Total Days Registered</div><div class="kpi-val red">${total}</div><div class="kpi-sub">All entries</div></div>
-    <div class="kpi an"><div class="kpi-lbl">Total Entries</div><div class="kpi-val">${S.sickLeave.length}</div><div class="kpi-sub">All time</div></div>`;
+    <div class="kpi ar"><div class="kpi-lbl">Cost — Active</div><div class="kpi-val red">${fmt(activeCost)}</div><div class="kpi-sub">${active.reduce((s,v)=>s+parseFloat(v.days||0),0)} days · current</div></div>
+    <div class="kpi ar"><div class="kpi-lbl">Total Days Registered</div><div class="kpi-val red">${totalDays}</div><div class="kpi-sub">All entries</div></div>
+    <div class="kpi ar"><div class="kpi-lbl">Total Cost Registered</div><div class="kpi-val red">${fmt(totalCost)}</div><div class="kpi-sub">All sick leave entries</div></div>`;
+  // Per-employee cost summary
+  const empSummary={};
+  S.sickLeave.forEach(v=>{
+    const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
+    if(!emp)return;
+    if(!empSummary[emp.id])empSummary[emp.id]={emp,days:0,cost:0};
+    empSummary[emp.id].days+=parseFloat(v.days||0);
+    empSummary[emp.id].cost+=parseFloat(v.days||0)*(emp.daily_cost||0);
+  });
+  const empRows=Object.values(empSummary).sort((a,b)=>b.cost-a.cost);
+  const sumEl=document.getElementById('sl-emp-summary');
+  if(sumEl)sumEl.innerHTML=empRows.length?`<div class="card" style="margin-bottom:14px">
+    <div class="card-header"><div class="card-title">Cost per Employee</div></div>
+    <div class="card-body" style="padding:0"><div class="table-wrap"><table>
+      <thead><tr><th>Employee</th><th class="right">Days</th><th class="right">Day Rate</th><th class="right">Total Cost</th></tr></thead>
+      <tbody>${empRows.map(r=>`<tr>
+        <td class="bold">${esc(r.emp.name)}</td>
+        <td class="right">${r.days}d</td>
+        <td class="right text-muted">${fmt(r.emp.daily_cost||0)}</td>
+        <td class="right bold" style="color:var(--red)">${fmt(r.cost)}</td>
+      </tr>`).join('')}
+      <tr style="border-top:2px solid var(--bdr2);background:var(--bg2)">
+        <td class="bold">TOTAL</td>
+        <td class="right bold">${totalDays}d</td>
+        <td></td>
+        <td class="right bold" style="color:var(--red)">${fmt(totalCost)}</td>
+      </tr></tbody>
+    </table></div></div></div>`:''
   const sorted=[...S.sickLeave].sort((a,b)=>b.start_date>a.start_date?1:-1);
   document.getElementById('sl-tbody').innerHTML=sorted.length?sorted.map(v=>{
     const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
     const isActive=v.start_date<=today&&v.end_date>=today;
+    const cost=(parseFloat(v.days||0))*(emp?.daily_cost||0);
     const wkStart=toWeekKey(new Date(v.start_date));
     const wkEnd=toWeekKey(new Date(v.end_date));
     const wkLabel=wkStart===wkEnd?wkStart:wkStart+' – '+wkEnd;
@@ -3556,6 +3612,7 @@ function renderSickLeave(){
       <td>${v.start_date}</td>
       <td style="${v.end_date<today?'color:var(--t3)':isActive?'color:var(--red);font-weight:600':''}">${v.end_date}</td>
       <td class="right bold">${v.days}</td>
+      <td class="right bold" style="color:var(--red)">${fmt(cost)}</td>
       <td style="font-size:11px;color:var(--t3)">${wkLabel}</td>
       <td style="font-size:11px;color:var(--t2)">${esc(v.note||'')}</td>
       <td><div class="btn-group">
@@ -3563,7 +3620,7 @@ function renderSickLeave(){
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteSickLeave(${v.id})">&#x2715;</button>
       </div></td>
     </tr>`;
-  }).join(''):'<tr><td colspan="7" class="empty">No sick leave registered yet</td></tr>';
+  }).join(''):'<tr><td colspan="8" class="empty">No sick leave registered yet</td></tr>';
 }
 
 // ══ VACATION ══
