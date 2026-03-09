@@ -1144,7 +1144,12 @@ function _supaUrl(table, qs) {
 
 async function _supaReq(method, table, body, qs) {
   try {
-    var opts = { method: method, headers: _supaHdr() };
+    var hdrs = _supaHdr();
+    // For POST with ?select=, add Prefer: return=representation so Supabase returns the new row
+    if (method === 'POST' && qs && qs.indexOf('select') >= 0) {
+      hdrs['Prefer'] = 'return=representation';
+    }
+    var opts = { method: method, headers: hdrs };
     if (body) opts.body = JSON.stringify(body);
     var r = await fetch(_supaUrl(table, qs), opts);
     if (!r.ok) return null;
@@ -1530,24 +1535,48 @@ async function pullFromSupabase(){
 
   DB.insert = async function(table, data) {
     var result = await origInsert(table, data);
+    var localId = result && (result.lastInsertRowid || result.id);
     if (_SUPA_ONLINE) {
       try {
-        var id = result && (result.lastInsertRowid || result.id);
         var store = DB._gs();
         var tableRows = store[table] || [];
         var row = null;
         for (var i = 0; i < tableRows.length; i++) {
-          if (tableRows[i].id === id) { row = tableRows[i]; break; }
+          if (tableRows[i].id === localId) { row = tableRows[i]; break; }
         }
         if (row) {
           var pay = {};
           var keys = Object.keys(row);
           for (var ki = 0; ki < keys.length; ki++) {
-            if (keys[ki] !== '_ids') pay[keys[ki]] = row[keys[ki]];
+            if (keys[ki] !== '_ids' && keys[ki] !== 'id') pay[keys[ki]] = row[keys[ki]];
           }
-          _supaReq('POST', table, pay);
+          // Insert to Supabase and get the real auto-assigned ID back
+          var supaResult = await _supaReq('POST', table, pay, '?select=id');
+          if (supaResult && supaResult[0] && supaResult[0].id) {
+            var supaId = supaResult[0].id;
+            if (supaId !== localId) {
+              // Remap the local temp ID to the real Supabase ID in the local store
+              if (row) row.id = supaId;
+              // Remap any related table rows that reference the old local ID
+              if (table === 'projects') {
+                var relTables = ['staffing','invoices','partner_invoices','vacations','future_costs'];
+                relTables.forEach(function(rt) {
+                  (store[rt]||[]).forEach(function(r) {
+                    if (r.project_id === localId) r.project_id = supaId;
+                  });
+                });
+              }
+              if (table === 'employees') {
+                (store.staffing||[]).forEach(function(r) {
+                  if (r.employee_id === localId) r.employee_id = supaId;
+                });
+              }
+              DB._sv(); // persist remapped IDs
+              console.log('[ID remap] '+table+' local '+localId+' → supabase '+supaId);
+            }
+          }
         }
-      } catch(e) {}
+      } catch(e) { console.warn('[insert sync error]', e); }
     }
     return result;
   };
@@ -1678,9 +1707,14 @@ function addWeeks(dateStr,n){
 }
 function projectWkKeys(p){
   if(!p.start_date||!p.end_date)return[];
-  const s=new Date(p.start_date),e=new Date(p.end_date);
-  const d=new Date(s);const dow=d.getDay()||7;if(dow>1)d.setDate(d.getDate()-(dow-1));
-  const keys=[];while(d<=e){keys.push(toWeekKey(d));d.setDate(d.getDate()+7);}return keys;
+  // Use UTC to avoid timezone-shifting dates (NL = UTC+1, midnight UTC = prev day local)
+  const[sy,sm,sd]=p.start_date.split('-').map(Number);
+  const[ey,em,ed]=p.end_date.split('-').map(Number);
+  const s=new Date(Date.UTC(sy,sm-1,sd));
+  const e=new Date(Date.UTC(ey,em-1,ed));
+  const d=new Date(s);
+  const dow=d.getUTCDay()||7;if(dow>1)d.setUTCDate(d.getUTCDate()-(dow-1));
+  const keys=[];while(d<=e){keys.push(toWeekKey(d));d.setUTCDate(d.getUTCDate()+7);}return keys;
 }
 function projectWkCount(p){return Math.max(1,projectWkKeys(p).length);}
 function revPerWk(p){return p.revenue/projectWkCount(p);}
@@ -1931,7 +1965,10 @@ function projStaffCost(pid){
 function assignedInWeek(empId,wk){
   return S.staffing.filter(s=>s.employee_id===empId&&s.week_key===wk).reduce((s,x)=>{
     const proj=S.projects.find(p=>p.id===x.project_id);
+    // Only count if project exists, is not stopped, AND the week falls within the project date range
+    // This prevents orphaned staffing rows from inflating the employee total
     if(!proj||proj.status==='stopped')return s;
+    if(!projectWkKeys(proj).includes(wk))return s;
     return s+x.days;
   },0);
 }
