@@ -502,6 +502,13 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="card"><div class="card-header"><div class="card-title">Staffing Capacity</div><span class="text-muted" style="font-size:9px">vacation-adjusted</span></div><div class="card-body" id="dash-staffing"></div></div>
     <div class="card"><div class="card-header"><div class="card-title">Outstanding Invoices</div></div><div class="card-body" id="dash-invoices"></div></div>
   </div>
+  <div class="card mt-14">
+    <div class="card-header">
+      <div class="card-title">&#127970; Bank Cashflow</div>
+      <span class="text-muted" style="font-size:9px">From Cashflow module · opening/closing balance</span>
+    </div>
+    <div class="kpi-row" id="dash-bank-kpis" style="margin-bottom:0"></div>
+  </div>
 </div>
 
 <div id="page-financial" class="page">
@@ -895,6 +902,15 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
       <option value="">All</option><option value="incl">Incl.</option>
       <option value="excl">Excl.</option><option value="none">No VAT</option>
     </select>
+    <span style="font-size:11px;color:var(--t3);font-weight:600;margin-left:8px">Status:</span>
+    <select class="filter-sel" id="fc-filter-active" onchange="renderFixedCosts()">
+      <option value="active">Active</option>
+      <option value="inactive">Inactive</option>
+      <option value="all">All</option>
+    </select>
+    <span style="font-size:11px;color:var(--t3);font-weight:600;margin-left:8px">Month:</span>
+    <input type="month" class="filter-sel" id="fc-filter-month" onchange="renderFixedCosts()" style="font-size:11px;padding:3px 8px">
+    <button class="btn btn-sm btn-ghost" onclick="document.getElementById('fc-filter-month').value='';renderFixedCosts()" style="font-size:10px">Clear</button>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
       <span style="font-size:11px;color:var(--t3);font-weight:600">Sort:</span>
       <select class="filter-sel" id="fc-sort" onchange="renderFixedCosts()">
@@ -905,6 +921,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   </div>
   <div id="fc-category-cards"></div>
   <div id="fc-grand-total-card" style="margin-top:4px"></div>
+  <div id="fc-monthly-breakdown" style="margin-top:14px"></div>
 </div>
 <div id="page-cashflow" class="page">
   <div class="page-header">
@@ -1377,6 +1394,10 @@ async function supaLoadAll() {
         var em=fc.notes.match(/\|\|EM:(\d{4}-\d{2})\|\|/);
         if(sm) fc.start_month=sm[1];
         if(em) fc.end_month=em[1];
+        var freq=fc.notes.match(/\|\|FREQ:([^|]+)\|\|/);
+        var freqm=fc.notes.match(/\|\|FREQM:(\d+)\|\|/);
+        if(freq) fc.frequency=freq[1];
+        if(freqm) fc.frequency_month=parseInt(freqm[1]);
       }
     });
     // Merge start_month/end_month back — priority: Supabase settings > old local store
@@ -2178,8 +2199,13 @@ function renderDashboard(){
   // Project margin = Revenue - Staffing only. Fixed costs belong at company level.
   const profit=confRev-sc,margin=confRev>0?(profit/confRev*100):0;
   const mStr=y+'-'+String(m).padStart(2,'0');
-  const ci=getBankInForMonth(mStr);
-  const co=getBankOutForMonth(mStr);
+  // Bank cashflow: use Cashflow module (cashflow_months) as single source of truth
+  const cfEntry=getCFEntryForMonth(mStr);
+  const ci=cfEntry?Math.max(0,parseFloat(cfEntry.closing||0)-parseFloat(cfEntry.opening||0)):null; // net positive = inflow
+  const co=cfEntry?Math.max(0,parseFloat(cfEntry.opening||0)-parseFloat(cfEntry.closing||0)):null; // net negative = outflow
+  const cfOpening=cfEntry?parseFloat(cfEntry.opening||0):null;
+  const cfClosing=cfEntry?parseFloat(cfEntry.closing||0):null;
+  const cfNet=cfEntry?(parseFloat(cfEntry.closing||0)-parseFloat(cfEntry.opening||0)):null;
   const allDraftRev=S.projects.filter(p=>p.status==='draft').reduce((s,p)=>s+p.revenue,0);
   document.getElementById('dash-conf-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">Confirmed Revenue</div><div class="kpi-val blue">${fmtS(confRev)}</div><div class="kpi-sub">Confirmed projects only</div></div>
@@ -2276,12 +2302,7 @@ function renderDashboard(){
   // Fixed Costs by Category — planning layer totals
   const moStr=y+'-'+String(m).padStart(2,'0');
   const fcCatMap={};
-  S.fixedCosts.filter(c=>{
-    if(!c.active)return false;
-    if(c.start_month&&c.start_month>moStr)return false;
-    if(c.end_month&&c.end_month<moStr)return false;
-    return true;
-  }).forEach(c=>{
+  S.fixedCosts.filter(c=>fcActiveInMonth(c,y,m)).forEach(c=>{
     const cat=c.category||'Uncategorised';
     if(!fcCatMap[cat])fcCatMap[cat]=0;
     fcCatMap[cat]+=Math.round(fcEntryExcl(c)*100)/100; // excl. VAT to match dashboard KPI
@@ -2331,6 +2352,25 @@ function renderDashboard(){
   // Invoices
   const unpaid=S.invoices.filter(i=>!i.paid);
   const utotal=unpaid.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+
+  // Bank Cashflow card
+  const bankKpiEl=document.getElementById('dash-bank-kpis');
+  if(bankKpiEl){
+    if(!cfEntry){
+      bankKpiEl.innerHTML=`<div class="kpi an" style="width:100%;text-align:center"><div class="kpi-lbl">No cashflow data for ${monthLbl(y,m)}</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Enter opening/closing balance in the <strong>Cashflow</strong> module</div></div>`;
+    } else {
+      const netColor=cfNet>=0?'green':'red';
+      const cfInflow=cfEntry.inflow!=null?cfEntry.inflow:null;
+      const cfOutflow=cfEntry.outflow!=null?cfEntry.outflow:null;
+      bankKpiEl.innerHTML=`
+        <div class="kpi ag"><div class="kpi-lbl">Opening Balance</div><div class="kpi-val green">${fmtS(cfOpening)}</div><div class="kpi-sub">${monthLbl(y,m)} start</div></div>
+        <div class="kpi ab"><div class="kpi-lbl">Closing Balance</div><div class="kpi-val blue">${fmtS(cfClosing)}</div><div class="kpi-sub">${monthLbl(y,m)} end</div></div>
+        ${cfInflow!=null?`<div class="kpi ag"><div class="kpi-lbl">Monthly Inflow</div><div class="kpi-val green">+${fmtS(cfInflow)}</div><div class="kpi-sub">Total in</div></div>`:''}
+        ${cfOutflow!=null?`<div class="kpi ar"><div class="kpi-lbl">Monthly Outflow</div><div class="kpi-val red">-${fmtS(cfOutflow)}</div><div class="kpi-sub">Total out</div></div>`:''}
+        <div class="kpi ${cfNet>=0?'ag':'ar'}"><div class="kpi-lbl">Net Movement</div><div class="kpi-val ${netColor}">${cfNet>=0?'+':''}${fmtS(cfNet)}</div><div class="kpi-sub">${cfNet>=0?'Balance up':'Balance down'}</div></div>`;
+    }
+  }
+
   // Full year Jan–Dec Revenue Trend chart
   setTimeout(()=>{
     const trendYear=y;
@@ -3847,6 +3887,13 @@ function renderInvoices(){
   if(paidTotal){const pt=paidInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);paidTotal.textContent=paidInvs.length+' invoices · '+fmt(pt)+' collected';}
 }
 
+// Reactivate an inactive fixed cost
+async function fcReactivate(id){
+  await DB.update('fixed_costs',id,{active:1});
+  await loadData();renderFixedCosts();renderDashboard();
+  showToast('Cost item reactivated');
+}
+
 // Quick-mark draft for latest invoice on a project, or create one if none exists
 async function invQuickDraft(projectId){
   const inv=S.invoices.filter(i=>i.project_id===projectId).sort((a,b)=>(b.month||'')>(a.month||'')?1:-1)[0];
@@ -4371,18 +4418,29 @@ function fcVatTypeLabel(type){
 
 // fixedMonthly(y,m) — returns fixed costs active in a given month
 // If y/m omitted, returns all active costs (backward compat for contexts without month)
+function fcActiveInMonth(c,y,m){
+  // Returns true if this fixed cost applies in the given month
+  if(!c.active)return false;
+  const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
+  if(moStr){
+    if(c.start_month&&c.start_month>moStr)return false;
+    if(c.end_month&&c.end_month<moStr)return false;
+  }
+  // Check frequency: quarterly/yearly only apply in specific months
+  const freq=c.frequency||'monthly';
+  if(freq==='quarterly'){
+    // Apply in months: frequency_month, frequency_month+3, +6, +9 (1-indexed, wrap around)
+    const baseMonth=parseInt(c.frequency_month)||1;
+    // Check if m aligns with baseMonth modulo 3
+    if(((m-baseMonth+12)%3)!==0)return false;
+  } else if(freq==='yearly'){
+    const baseMonth=parseInt(c.frequency_month)||1;
+    if(m!==baseMonth)return false;
+  }
+  return true;
+}
 function fixedMonthly(y,m){
-  return Math.round(S.fixedCosts.filter(c=>{
-    if(!c.active)return false;
-    const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
-    if(moStr){
-      // Check start_month — cost must have started by this month
-      if(c.start_month&&c.start_month>moStr)return false;
-      // Check end_month — cost must not have ended before this month
-      if(c.end_month&&c.end_month<moStr)return false;
-    }
-    return true;
-  }).reduce((s,c)=>s+fcEntryExcl(c),0)*100)/100;
+  return Math.round(S.fixedCosts.filter(c=>fcActiveInMonth(c,y,m)).reduce((s,c)=>s+fcEntryExcl(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const planningItems=S.fixedCosts.filter(c=>c.active);
@@ -4397,7 +4455,20 @@ function fixedMonthlySplit(){
 }
 
 function renderFixedCosts(){
-  const allEntries=S.fixedCosts.filter(c=>c.active);
+  const fActiveEl=document.getElementById('fc-filter-active');
+  const fMonthEl=document.getElementById('fc-filter-month');
+  const activeFilter=fActiveEl?.value||'active';
+  const monthFilter=fMonthEl?.value||''; // 'YYYY-MM' or ''
+  let allEntries=S.fixedCosts.filter(c=>{
+    if(activeFilter==='active'&&!c.active)return false;
+    if(activeFilter==='inactive'&&c.active)return false;
+    // If month filter set, only show costs active that month
+    if(monthFilter){
+      const[mfy,mfm]=monthFilter.split('-').map(Number);
+      if(!fcActiveInMonth(c,mfy,mfm))return false;
+    }
+    return true;
+  });
   const fCatEl=document.getElementById('fc-filter-cat');
   const fVatEl=document.getElementById('fc-filter-vat');
   const sortEl=document.getElementById('fc-sort');
@@ -4412,7 +4483,7 @@ function renderFixedCosts(){
   const fVat=fVatEl?.value||'';
   const sMode=sortEl?.value||'cat';
 
-  let entries=allEntries.filter(c=>{
+  let entries=[...allEntries].filter(c=>{
     if(fCat&&(c.category||'Uncategorised')!==fCat)return false;
     if(fVat&&(c.vat_type||'incl')!==fVat)return false;
     return true;
@@ -4426,9 +4497,11 @@ function renderFixedCosts(){
     return(a.name||'').localeCompare(b.name||'');
   });
 
-  const tGross=entries.reduce((s,c)=>s+fcEntryIncl(c),0);
-  const tVat  =entries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
-  const tNet  =entries.reduce((s,c)=>s+fcEntryExcl(c),0);
+  // Totals always reflect ACTIVE items only (inactive = €0 contribution)
+  const activeEntries=entries.filter(c=>c.active);
+  const tGross=activeEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
+  const tVat  =activeEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
+  const tNet  =activeEntries.reduce((s,c)=>s+fcEntryExcl(c),0);
 
   // KPI row
   // Current month fixed costs (matches dashboard)
@@ -4484,9 +4557,10 @@ function renderFixedCosts(){
 
   cardsEl.innerHTML=cats.map(cat=>{
     const ces=grouped[cat]||[];
-    const cg=ces.reduce((s,c)=>s+fcEntryIncl(c),0);
-    const cv=ces.reduce((s,c)=>s+fcEntryVatAmt(c),0);
-    const cn=ces.reduce((s,c)=>s+fcEntryExcl(c),0);
+    const activeCes=ces.filter(c=>c.active);
+    const cg=activeCes.reduce((s,c)=>s+fcEntryIncl(c),0);
+    const cv=activeCes.reduce((s,c)=>s+fcEntryVatAmt(c),0);
+    const cn=activeCes.reduce((s,c)=>s+fcEntryExcl(c),0);
     const pct=tNet>0?(cn/tNet*100).toFixed(0):0;
     const catSafe=esc(cat).replace(/'/g,"\\'");
     return`<div class="card mb-14">
@@ -4525,13 +4599,18 @@ function renderFixedCosts(){
           </tr></thead>
           <tbody>${ces.map(c=>`
             <tr style="border-bottom:1px solid var(--bdr)" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
-              <td style="padding:8px 14px;font-weight:600">${esc(c.name)}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono)">${fmt(fcEntryIncl(c))}</td>
-              <td style="padding:8px 10px;text-align:center">${vatBadge(c)}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber)">${fmt(fcEntryVatAmt(c))}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--red);font-size:13px">${fmt(fcEntryExcl(c))}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3)">${fmt(fcEntryExcl(c)*12)}</td>
+              <td style="padding:8px 14px;font-weight:600;${!c.active?'opacity:.5;text-decoration:line-through;color:var(--t3)':''}">${esc(c.name)}
+                ${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:700">INACTIVE</span>':''}
+              </td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);${!c.active?'opacity:.4':''}">${fmt(fcEntryIncl(c))}</td>
+              <td style="padding:8px 10px;text-align:center">${vatBadge(c)}
+                ${(()=>{const fr=c.frequency||'monthly';return fr!=='monthly'?`<br><span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700">${fr==='quarterly'?'Q':'Y'}</span>`:'';})()} 
+              </td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber);${!c.active?'opacity:.4':''}">${fmt(fcEntryVatAmt(c))}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'};font-size:13px">${fmt(fcEntryExcl(c))}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3);${!c.active?'opacity:.4':''}">${fmt(fcEntryExcl(c)*12)}</td>
               <td style="padding:8px 10px;text-align:right">
+                ${!c.active?`<button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--green)" onclick="fcReactivate(${c.id})">Reactivate</button>`:''}
                 <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
                 <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteFCEntry(${c.id})">✕</button>
               </td>
@@ -4563,6 +4642,58 @@ function renderFixedCosts(){
         </div>
       </div>
     </div>`:'';
+
+  // ── Monthly breakdown (when month filter is active) ──────────────────────
+  const mbEl=document.getElementById('fc-monthly-breakdown');
+  if(mbEl){
+    if(monthFilter){
+      const[mfy2,mfm2]=monthFilter.split('-').map(Number);
+      const monthLabel=new Date(mfy2,mfm2-1,1).toLocaleDateString('en',{month:'long',year:'numeric'});
+      const moTotal=fixedMonthly(mfy2,mfm2);
+      // Group active entries for that month by category
+      const moEntries=S.fixedCosts.filter(c=>fcActiveInMonth(c,mfy2,mfm2));
+      const moCats=[...new Set(moEntries.map(c=>c.category||'Uncategorised'))].sort();
+      const moGross=moEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
+      const moVat=moEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
+      mbEl.innerHTML=`<div class="card">
+        <div class="card-header"><div class="card-title">&#128197; Monthly View — ${esc(monthLabel)}</div>
+          <div style="display:flex;gap:16px;font-size:11px">
+            <span style="color:var(--t3)">Excl. VAT: <strong style="color:var(--red)">${fmt(moTotal)}</strong></span>
+            <span style="color:var(--t3)">BTW: <strong style="color:var(--amber)">${fmt(moVat)}</strong></span>
+            <span style="color:var(--t3)">Incl. VAT: <strong>${fmt(moGross)}</strong></span>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <table><thead><tr>
+            <th>Category</th><th>Name</th><th>Frequency</th>
+            <th class="right">Excl. VAT</th><th class="right">VAT</th><th class="right">Incl. VAT</th><th>Status</th>
+          </tr></thead><tbody>
+          ${moCats.map(cat=>{
+            const ces=moEntries.filter(c=>(c.category||'Uncategorised')===cat);
+            const catNet=ces.reduce((s,c)=>s+fcEntryExcl(c),0);
+            let rows=ces.map(c=>{
+              const freq=c.frequency||'monthly';
+              const freqLabel=freq==='quarterly'?'Quarterly':freq==='yearly'?'Yearly':'Monthly';
+              return`<tr>
+                <td class="text-muted" style="font-size:10px">${esc(cat)}</td>
+                <td style="font-weight:600">${esc(c.name)}</td>
+                <td><span style="font-size:10px;background:${freq==='monthly'?'var(--blue-p)':freq==='quarterly'?'var(--amber-p)':'var(--green-p)'};color:${freq==='monthly'?'var(--blue)':freq==='quarterly'?'var(--amber)':'var(--green)'};padding:2px 6px;border-radius:3px;font-weight:600">${freqLabel}</span></td>
+                <td class="right mono" style="color:var(--red)">${fmt(fcEntryExcl(c))}</td>
+                <td class="right mono text-muted">${fmt(fcEntryVatAmt(c))}</td>
+                <td class="right mono bold">${fmt(fcEntryIncl(c))}</td>
+                <td><span style="font-size:10px;color:${c.active?'var(--green)':'var(--red)'}">${c.active?'Active':'Inactive'}</span></td>
+              </tr>`;
+            }).join('');
+            return rows+`<tr style="background:var(--bg2)"><td colspan="3" style="font-size:10px;font-weight:700;padding:4px 12px;color:var(--t3)">${esc(cat)} subtotal</td><td class="right mono bold" style="color:var(--red)">${fmt(catNet)}</td><td colspan="3"></td></tr>`;
+          }).join('')}
+          <tr style="background:var(--navy);color:#fff"><td colspan="3" style="font-weight:700;padding:6px 12px">TOTAL ${esc(monthLabel).toUpperCase()}</td><td class="right mono bold" style="color:#aee8ff">${fmt(moTotal)}</td><td class="right mono" style="color:#ffd080">${fmt(moVat)}</td><td class="right mono bold" style="color:#fff">${fmt(moGross)}</td><td></td></tr>
+          </tbody></table>
+        </div>
+      </div>`;
+    } else {
+      mbEl.innerHTML='';
+    }
+  }
 }
 
 
@@ -5490,6 +5621,22 @@ function modalFixedCost(c){
         <input class="form-input" type="month" id="f-end-month" value="${esc(c?.end_month||'')}">
       </div>
     </div>
+    <div class="form-row" style="margin-top:8px">
+      <div class="form-group">
+        <label class="form-lbl">Frequency</label>
+        <select class="form-input" id="f-fc-freq" onchange="document.getElementById('fc-freq-month-group').style.display=this.value!=='monthly'?'flex':'none'">
+          <option value="monthly"${(c?.frequency||'monthly')==='monthly'?' selected':''}>Monthly</option>
+          <option value="quarterly"${c?.frequency==='quarterly'?' selected':''}>Quarterly (every 3 months)</option>
+          <option value="yearly"${c?.frequency==='yearly'?' selected':''}>Yearly</option>
+        </select>
+      </div>
+      <div class="form-group" id="fc-freq-month-group" style="display:${c?.frequency&&c.frequency!=='monthly'?'flex':'none'}">
+        <label class="form-lbl">First billing month <span style="color:var(--t3);font-size:10px">1=Jan, 2=Feb…</span></label>
+        <select class="form-input" id="f-fc-freq-month">
+          ${[1,2,3,4,5,6,7,8,9,10,11,12].map(i=>`<option value="${i}"${(c?.frequency_month||1)===i?' selected':''}>Month ${i}</option>`).join('')}
+        </select>
+      </div>
+    </div>
     <div style="background:var(--bg2);border-radius:var(--rsm);padding:9px 12px;margin-top:8px">
       <label class="check-wrap"><input type="checkbox" id="f-active"${!c||c?.active?' checked':''}> <span style="font-weight:600">Active</span> <span style="font-size:10px;color:var(--t3);margin-left:4px">(inactive items excluded from totals)</span></label>
     </div>
@@ -5577,14 +5724,19 @@ async function saveFixedCost(id){
   if(cat&&cat!==''){const cats=getFCCategories();if(!cats.includes(cat)){cats.push(cat);saveFCCategories(cats);}}
   const startMonth=document.getElementById('f-start-month')?.value?.trim()||null;
   const endMonth=document.getElementById('f-end-month')?.value?.trim()||null;
+  const frequency=document.getElementById('f-fc-freq')?.value||'monthly';
+  const frequencyMonth=parseInt(document.getElementById('f-fc-freq-month')?.value||'1');
   const data={name,category:cat,amount:amt,vat_pct:vatPct,vat_type:vatType,active,
-    start_month:startMonth||null,end_month:endMonth||null};
+    start_month:startMonth||null,end_month:endMonth||null,
+    frequency,frequency_month:frequencyMonth};
   // Encode start_month/end_month into notes field so Supabase stores them
   // even if the table doesn't have those columns
   const notesBase=document.getElementById('f-notes')?.value?.trim()||'';
-  let notesEncoded=notesBase.replace(/\|\|SM:[^|]*\|\||\|\|EM:[^|]*\|\|/g,'').trim();
+  let notesEncoded=notesBase.replace(/\|\|SM:[^|]*\|\||\|\|EM:[^|]*\|\||\|\|FREQ:[^|]*\|\||\|\|FREQM:[^|]*\|\|/g,'').trim();
   if(data.start_month) notesEncoded+='||SM:'+data.start_month+'||';
   if(data.end_month) notesEncoded+='||EM:'+data.end_month+'||';
+  if(data.frequency&&data.frequency!=='monthly') notesEncoded+='||FREQ:'+data.frequency+'||';
+  if(data.frequency&&data.frequency!=='monthly') notesEncoded+='||FREQM:'+data.frequency_month+'||';
   data.notes=notesEncoded;
   if(id){
     await DB.update('fixed_costs',id,data);
