@@ -1439,6 +1439,27 @@ async function supaLoadAll() {
     }catch(e){}
     localStorage.setItem('sp-v5', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
+    // Auto-repair: push correct amount/vat_type/frequency from old local data to Supabase
+    // This fixes cases where a previous PATCH failed (e.g. unknown column error)
+    if(_oldStore && _oldStore.fixed_costs && store.fixed_costs) {
+      store.fixed_costs.forEach(async function(fc){
+        var old = _oldStore.fixed_costs.find(function(o){return o.id===fc.id;});
+        if(!old) return;
+        var needsRepair = false;
+        var repair = {};
+        // Repair amount if old local has higher/different value (user set it locally)
+        if(old.amount && old.amount !== fc.amount){ repair.amount=old.amount; needsRepair=true; }
+        if(old.vat_type && old.vat_type !== fc.vat_type){ repair.vat_type=old.vat_type; needsRepair=true; }
+        if(old.vat_pct && old.vat_pct !== fc.vat_pct){ repair.vat_pct=old.vat_pct; needsRepair=true; }
+        if(old.frequency && old.frequency!=='monthly' && old.frequency!==fc.frequency){ repair.frequency=old.frequency; repair.frequency_month=parseInt(old.frequency_month)||1; needsRepair=true; }
+        if(old.notes && old.notes !== fc.notes){ repair.notes=old.notes; needsRepair=true; }
+        if(needsRepair){
+          // Also apply repair to in-memory store so current session is correct
+          Object.assign(fc, repair);
+          try{ await _supaReq('PATCH','fixed_costs',repair,'?id=eq.'+fc.id); }catch(e){}
+        }
+      });
+    }
     console.log('[Supabase] Loaded from cloud');
     return true;
   } catch(e) {
@@ -5770,19 +5791,28 @@ async function saveFixedCost(id){
   data.notes=notesEncoded;
   if(id){
     await DB.update('fixed_costs',id,data);
+    // Always send core financial fields to Supabase (these columns always exist)
+    const _coreFields = {
+      name:data.name, category:data.category,
+      amount:data.amount, vat_pct:data.vat_pct, vat_type:data.vat_type,
+      active:data.active, notes:notesEncoded,
+      start_month:data.start_month||null, end_month:data.end_month||null
+    };
     try{
-      await _supaReq('PATCH','fixed_costs',{notes:notesEncoded,start_month:data.start_month||null,end_month:data.end_month||null,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+id);
+      // Try with frequency columns first
+      await _supaReq('PATCH','fixed_costs',{..._coreFields,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+id);
     }catch(e){
-      // Fallback: Supabase table may not have frequency columns — save notes only
-      try{await _supaReq('PATCH','fixed_costs',{notes:notesEncoded,start_month:data.start_month||null,end_month:data.end_month||null},'?id=eq.'+id);}catch(e2){}
+      // Frequency columns don't exist — save core fields only (notes has FREQ encoded)
+      try{await _supaReq('PATCH','fixed_costs',_coreFields,'?id=eq.'+id);}catch(e2){}
     }
   } else {
     await DB.insert('fixed_costs',{...data,from_bank:0});
     try{
       const newRows=await _supaReq('GET','fixed_costs',null,'?name=eq.'+encodeURIComponent(name)+'&order=id.desc&limit=1');
       if(newRows&&newRows[0]){
-        try{await _supaReq('PATCH','fixed_costs',{notes:notesEncoded,start_month:data.start_month||null,end_month:data.end_month||null,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+newRows[0].id);}
-        catch(e){try{await _supaReq('PATCH','fixed_costs',{notes:notesEncoded,start_month:data.start_month||null,end_month:data.end_month||null},'?id=eq.'+newRows[0].id);}catch(e2){}}
+        const _cf2={name:data.name,category:data.category,amount:data.amount,vat_pct:data.vat_pct,vat_type:data.vat_type,active:data.active,notes:notesEncoded,start_month:data.start_month||null,end_month:data.end_month||null};
+        try{await _supaReq('PATCH','fixed_costs',{..._cf2,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+newRows[0].id);}
+        catch(e){try{await _supaReq('PATCH','fixed_costs',_cf2,'?id=eq.'+newRows[0].id);}catch(e2){}}
       }
     }catch(e){}
   }
