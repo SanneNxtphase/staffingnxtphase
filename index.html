@@ -5286,6 +5286,91 @@ function fcSaveNewCategory(){
   closeModal();renderFixedCosts();
   showToast(`Category "${name}" created`);
 }
+
+function fcAssignCategoryModal(){
+  const uncatItems = S.fixedCosts.filter(c=>(c.category||'Uncategorised')==='Uncategorised'||(c.category||'')==='');
+  if(!uncatItems.length){ showToast('No uncategorised entries found'); return; }
+  const cats = getFCCategories();
+  const m = document.getElementById('modal-content');
+  document.getElementById('modal-overlay').classList.add('open');
+  m.innerHTML = `
+    <div class="modal-header">
+      <div class="modal-title">📂 Assign Uncategorised Entries</div>
+      <div class="modal-x" onclick="closeModal()">&#x2715;</div>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--t2);margin-bottom:14px">
+        <strong>${uncatItems.length} uncategorised</strong> entr${uncatItems.length===1?'y':'ies'} found. 
+        Choose a category to assign them to, or create a new one.
+      </div>
+
+      <div class="form-group">
+        <label class="form-lbl">Assign to category</label>
+        <select class="form-input" id="fca-cat-sel" onchange="fcaToggleNew(this.value)">
+          <option value="">— Select existing category —</option>
+          ${cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+          <option value="__new__">+ Create new category…</option>
+        </select>
+      </div>
+      <div id="fca-new-wrap" style="display:none" class="form-group">
+        <label class="form-lbl">New category name</label>
+        <input class="form-input" id="fca-new-name" placeholder="e.g. Salaries">
+      </div>
+
+      <div style="margin-top:14px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:8px">
+          Select which entries to assign
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button type="button" class="btn btn-sm btn-ghost" style="font-size:11px" onclick="fcaSelectAll(true)">Select all</button>
+          <button type="button" class="btn btn-sm btn-ghost" style="font-size:11px" onclick="fcaSelectAll(false)">Deselect all</button>
+        </div>
+        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--bdr);border-radius:var(--r)">
+          ${uncatItems.map(c=>`
+            <label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px">
+              <input type="checkbox" class="fca-chk" value="${c.id}" checked style="width:14px;height:14px;flex-shrink:0">
+              <span style="flex:1;font-weight:500">${esc(c.name)}</span>
+              <span style="color:var(--t3)">${fmt(parseFloat(c.amount||0))}/mo</span>
+            </label>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="fcaDoAssign()">Assign →</button>
+    </div>`;
+}
+function fcaToggleNew(val){
+  document.getElementById('fca-new-wrap').style.display = val==='__new__' ? 'block' : 'none';
+}
+function fcaSelectAll(checked){
+  document.querySelectorAll('.fca-chk').forEach(cb=>cb.checked=checked);
+}
+async function fcaDoAssign(){
+  let cat = document.getElementById('fca-cat-sel')?.value;
+  if(cat==='__new__'){
+    cat = (document.getElementById('fca-new-name')?.value||'').trim();
+    if(!cat){ showToast('Enter a category name','error'); return; }
+    const cats=getFCCategories();
+    if(!cats.includes(cat)){ cats.push(cat); saveFCCategories(cats); }
+  }
+  if(!cat){ showToast('Select a category first','error'); return; }
+  const selected=[...document.querySelectorAll('.fca-chk:checked')].map(cb=>parseInt(cb.value));
+  if(!selected.length){ showToast('Select at least one entry','error'); return; }
+  let done=0;
+  for(const id of selected){
+    const fc=S.fixedCosts.find(c=>c.id===id);
+    if(!fc) continue;
+    await DB.update('fixed_costs',id,{category:cat});
+    try{ await _supaReq('PATCH','fixed_costs',{category:cat},'?id=eq.'+id); }catch(e){}
+    fc.category=cat;
+    done++;
+  }
+  closeModal();
+  await loadData();
+  renderFixedCosts();
+  showToast(`✓ ${done} entr${done===1?'y':'ies'} assigned to "${cat}"`);
+}
 function fcRenameCatModal(oldName){
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
@@ -5308,11 +5393,14 @@ async function fcDoRename(oldName){
   const idx=cats.indexOf(oldName);
   if(idx>=0)cats[idx]=newName;else cats.push(newName);
   saveFCCategories(cats);
-  // Update all fixed_costs entries
+  // Update all fixed_costs entries — local + Supabase
   for(const c of S.fixedCosts.filter(x=>x.category===oldName)){
     await DB.update('fixed_costs',c.id,{category:newName});
     c.category=newName;
+    try{ await _supaReq('PATCH','fixed_costs',{category:newName},'?id=eq.'+c.id); }catch(e){}
   }
+  // Also save new name in localStorage categories list to Supabase settings
+  _fcSaveDateOverrides();
   closeModal();await loadData();renderFixedCosts();
   showToast(`Category renamed to "${newName}"`);
 }
@@ -5322,6 +5410,7 @@ async function fcDeleteCat(catName){
     if(!confirm(`Delete category "${catName}"? Its ${count} entr${count===1?'y':'ies'} will become Uncategorised.`))return;
     for(const c of S.fixedCosts.filter(x=>x.category===catName)){
       await DB.update('fixed_costs',c.id,{category:''});c.category='';
+      try{ await _supaReq('PATCH','fixed_costs',{category:''},'?id=eq.'+c.id); }catch(e){}
     }
   }
   const cats=getFCCategories().filter(c=>c!==catName);saveFCCategories(cats);
@@ -6263,6 +6352,27 @@ function fcModalPreview(){
   if(pv)pv.textContent=amt>0?fmt(vatAmt):'—';
   if(pn)pn.textContent=amt>0?fmt(net):'—';
 }
+// ── One-time repair: push all fixed cost overrides to Supabase columns ────────
+async function repairFixedCostsSupabase(){
+  const items = S.fixedCosts || [];
+  let patched = 0;
+  for(const fc of items){
+    const hasOverride = fc.start_month || fc.end_month || 
+      (fc.frequency && fc.frequency !== 'monthly');
+    if(!hasOverride) continue;
+    try{
+      await _supaReq('PATCH','fixed_costs',{
+        start_month: fc.start_month||null,
+        end_month: fc.end_month||null,
+        frequency: fc.frequency||'monthly',
+        frequency_month: parseInt(fc.frequency_month)||1
+      },'?id=eq.'+fc.id);
+      patched++;
+    }catch(e){}
+  }
+  if(patched>0) showToast(`✓ Synced ${patched} fixed cost(s) to Supabase`);
+  return patched;
+}
 async function saveFixedCost(id){
   const name=document.getElementById('f-name').value.trim();
   let cat=document.getElementById('f-cat')?.value?.trim()||'';
@@ -6807,6 +6917,11 @@ function setFinTab(t){
 }
 
 function renderFinancial(){
+  // One-time repair: ensure all fixed cost overrides are in Supabase
+  if(!window._fcRepairDone){
+    window._fcRepairDone=true;
+    setTimeout(()=>repairFixedCostsSupabase(),2000);
+  }
   // Show spinner immediately
   const _spin=document.getElementById('fin-pl-tbody');
   if(_spin)_spin.innerHTML='<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--t3);font-size:12px">⏳ Loading…</td></tr>';
@@ -6851,8 +6966,8 @@ function renderFinancial(){
           const em=_n.match(/\|\|EM:(\d{4}-\d{2})\|\|/);
           const freq=_n.match(/\|\|FREQ:([^|]+)\|\|/);
           const freqm=_n.match(/\|\|FREQM:(\d+)\|\|/);
-          if(sm)fc.start_month=sm[1];
-          if(em)fc.end_month=em[1];
+          if(sm&&!fc.start_month)fc.start_month=sm[1];
+          if(em&&!fc.end_month)fc.end_month=em[1];
           if(freq&&(!fc.frequency||fc.frequency==='monthly'))fc.frequency=freq[1];
           if(freqm&&!fc.frequency_month)fc.frequency_month=parseInt(freqm[1]);
         }
@@ -8242,11 +8357,12 @@ const AUTH={
   async syncPinsFromSupabase(){
     if(typeof _supaReq!=='function')return;
     try{
-      const res=await _supaReq('GET','settings',null,'?key=in.(pin_admin,pin_viewer)&select=key,value');
+      const res=await _supaReq('GET','settings',null,'?key=in.(pin_admin,pin_viewer,pin_employee)&select=key,value');
       if(!res)return;
       res.forEach(row=>{
         if(row.key==='pin_admin')localStorage.setItem(this.ADMIN_KEY,row.value);
         if(row.key==='pin_viewer')localStorage.setItem(this.VIEWER_KEY,row.value);
+        if(row.key==='pin_employee')localStorage.setItem(this.EMPLOYEE_KEY,row.value);
       });
     }catch(e){}
   },
@@ -8395,8 +8511,7 @@ async function init(){
   // Guard: only run if authenticated and NOT employee (employee view has its own init)
   if(!AUTH.isAuthenticated())return;
   if(AUTH.isEmployee()||AUTH.isStaffOnly())return;
-  // Sync PINs from Supabase first (so all devices share the same PIN)
-  try { await AUTH.syncPinsFromSupabase(); } catch(e) {}
+  // PINs already synced at startup (before auth screen showed)
   // Always force fresh Supabase load on login — Supabase is primary source of truth
   DB._store = null; // clear cache so supaLoadAll fetches fresh data
   var _supaOk = false;
@@ -8669,7 +8784,10 @@ function wkFmtLabel(mon,fri){
     return;
   }
 
-  const saved=sessionStorage.getItem(AUTH.SESSION_KEY);
+  // Sync PINs from Supabase BEFORE showing auth screen, then check session
+  // Use promise chain so we work in both sync and async IIFE contexts
+  AUTH.syncPinsFromSupabase().catch(()=>{}).finally(()=>{
+    const saved=sessionStorage.getItem(AUTH.SESSION_KEY);
   if(saved==='admin'||saved==='viewer'||saved==='employee'){
     AUTH.role=saved;
     document.getElementById('auth-overlay').classList.add('hidden');
@@ -8688,6 +8806,7 @@ function wkFmtLabel(mon,fri){
     // init() called normally for admin/viewer
   }
   // else: overlay remains visible, init() called after auth
+  }); // end syncPins.finally
 })();
 
 // ══════════════════════════════════════════════════════════════════
