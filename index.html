@@ -350,6 +350,40 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 }
 #employee-view{display:none;}
 #employee-view.ev-visible{display:flex;}
+
+/* Mobile financial card view */
+.fin-mobile-cards { display: none; }
+@media (max-width: 768px) {
+  .fin-mobile-cards { display: block; }
+  .fin-table-desktop { display: none !important; }
+  .fin-tab-bar { overflow-x: auto; white-space: nowrap; }
+  .fin-month-card {
+    background: var(--bg);
+    border: 1.5px solid var(--bdr);
+    border-radius: var(--r);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .fin-month-card.current { border-color: var(--blue); }
+  .fin-month-card-header {
+    background: var(--bg2);
+    padding: 9px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--bdr);
+  }
+  .fin-month-card-header .month-lbl { font-weight: 700; font-size: 13px; color: var(--navy); }
+  .fin-month-card-header .result-chip {
+    font-size: 11px; font-weight: 700;
+    padding: 2px 8px; border-radius: 10px;
+  }
+  .fin-month-card-body { padding: 10px 14px; }
+  .fin-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--bdr); font-size: 12px; }
+  .fin-row:last-child { border-bottom: none; }
+  .fin-row-lbl { color: var(--t2); }
+  .fin-row-val { font-weight: 600; }
+}
 </style>
 </head>
 
@@ -412,10 +446,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 15V5l4.5-3L10 4l5-3v14"/></svg>
     Financials
   </div>
-  <div class="mobile-nav-item" onclick="navigate('extcosts',this);mobileNav(this)">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v6M5.5 7h4a1.5 1.5 0 010 3h-4"/></svg>
-    Ext. Costs
-  </div>
+
 </nav>
 <div class="sidebar">
   <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v25 · Live</div></div></div></div>
@@ -527,8 +558,13 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   </div>
   <div class="alert alert-info" style="margin-bottom:14px"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg><span><strong>Dual-view Company Dashboard:</strong> <strong>Op. Result</strong> = Revenue – Fixed Costs (from Fixed Costs register) – Forecast Costs. <strong>Cashflow columns</strong> (Bank In/Out) are shown <em>separately</em> for liquidity monitoring only — they never influence the P&amp;L calculation. Starting balance and balance changes can be tracked in the Bank &amp; Cashflow section.</span></div>
   <div class="kpi-row" id="fin-kpis"></div>
+  <!-- Mobile card view (hidden on desktop via CSS) -->
+  <div class="fin-mobile-cards" id="fin-mobile-cards"></div>
+
+  <!-- Desktop tab bar (hidden on mobile via CSS) -->
+  <div class="fin-table-desktop">
   <!-- Tab bar -->
-  <div style="display:flex;border-bottom:2px solid var(--bdr);margin-bottom:16px;gap:0">
+  <div class="fin-tab-bar" style="display:flex;border-bottom:2px solid var(--bdr);margin-bottom:16px;gap:0">
     <button id="ftab-summary" onclick="setFinTab('summary')" style="padding:7px 16px;font-size:11.5px;font-weight:600;cursor:pointer;color:var(--blue);background:none;border:none;border-bottom:2.5px solid var(--blue);margin-bottom:-2px;font-family:var(--font)">&#128200; Monthly P&amp;L</button>
     <button id="ftab-trend"   onclick="setFinTab('trend')"   style="padding:7px 16px;font-size:11.5px;font-weight:600;cursor:pointer;color:var(--t3);background:none;border:none;border-bottom:2.5px solid transparent;margin-bottom:-2px;font-family:var(--font)">&#128202; Trend Chart</button>
     <button id="ftab-clients" onclick="setFinTab('clients')" style="padding:7px 16px;font-size:11.5px;font-weight:600;cursor:pointer;color:var(--t3);background:none;border:none;border-bottom:2.5px solid transparent;margin-bottom:-2px;font-family:var(--font)">&#127970; Client Performance</button>
@@ -623,7 +659,8 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
         </table></div></div>
       </div>
     </div>
-  </div>
+  
+  </div><!-- end fin-table-desktop --></div>
 </div>
 
 <div id="page-extcosts" class="page">
@@ -2125,7 +2162,8 @@ function navigate(page,el){
   } else if(page==='financial'){
     // Always pull fresh from Supabase for financial page so bank data is current on mobile
     (async()=>{
-      // Load all regular data first
+      // Load all data fresh from Supabase (mobile may have stale localStorage)
+      try{ await supaLoadAll(); }catch(e){}
       await loadData();
       // Then fetch cashflow_months directly — do NOT let loadData overwrite this
       try{
@@ -7001,6 +7039,49 @@ function renderFinancial(){
     _renderFinancialActual();
   }).catch(()=>_renderFinancialActual());
 }
+
+function renderFinMobileCards(months, year) {
+  const el = document.getElementById('fin-mobile-cards');
+  if (!el) return;
+  const now = new Date();
+
+  el.innerHTML = months.map(({mo, moStr, revenue, fixedCosts, forecastCosts, extCosts, totalOpCosts, opResult, opMargin, staffingCosts, isCurrent, isPast}) => {
+    const lbl = new Date(year, mo-1, 1).toLocaleDateString('nl-NL', {month:'long', year:'2-digit'});
+    const isPos = opResult >= 0;
+    const chipColor = isPos ? 'var(--green)' : 'var(--red)';
+    const chipBg = isPos ? 'var(--green-p)' : 'var(--red-p)';
+
+    const row = (label, val, color) => `
+      <div class="fin-row">
+        <span class="fin-row-lbl">${label}</span>
+        <span class="fin-row-val" style="color:${color||'var(--navy)'}">${val}</span>
+      </div>`;
+
+    const hasExt = extCosts > 0;
+    const hasForecast = forecastCosts > 0;
+
+    return `<div class="fin-month-card${isCurrent?' current':''}">
+      <div class="fin-month-card-header">
+        <span class="month-lbl">${isCurrent?'<span style="display:inline-block;width:6px;height:6px;background:var(--blue);border-radius:50%;margin-right:5px;vertical-align:middle"></span>':''}${lbl}</span>
+        <span class="result-chip" style="background:${chipBg};color:${chipColor}">${isPos?'+':''}${fmt(opResult)}</span>
+      </div>
+      <div class="fin-month-card-body">
+        ${row('Revenue', fmt(revenue), 'var(--green)')}
+        ${row('Fixed Costs', revenue>0||fixedCosts>0 ? '-'+fmt(fixedCosts) : '—', 'var(--red)')}
+        ${hasForecast ? row('Forecast Costs', '-'+fmt(forecastCosts), 'var(--amber)') : ''}
+        ${hasExt ? row('Ext. Costs', '-'+fmt(extCosts), 'var(--orange,#f97316)') : ''}
+        <div class="fin-row" style="border-top:2px solid var(--bdr);margin-top:2px;font-weight:700">
+          <span class="fin-row-lbl" style="font-weight:700">Op. Result</span>
+          <span class="fin-row-val" style="color:${chipColor}">${isPos?'+':''}${fmt(opResult)}</span>
+        </div>
+        <div class="fin-row" style="opacity:.7">
+          <span class="fin-row-lbl">Margin</span>
+          <span class="fin-row-val">${opMargin.toFixed(1)}%</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
 function _renderFinancialActual(){
   const yearEl=document.getElementById('fin-year');
   const year=parseInt(yearEl?.value)||new Date().getFullYear();
@@ -7160,6 +7241,8 @@ function _renderFinancialActual(){
   if(_finTab==='trend')_renderFinTrend(_finData);
   else if(_finTab==='bank')renderFinBank();
   else if(_finTab==='clients')renderFinClients();
+  // Mobile cards — always render regardless of active tab
+  renderFinMobileCards(_finData.months, _finData.year);
 }
 
 // ── SVG line chart renderer ───────────────────────────────────────────────────
