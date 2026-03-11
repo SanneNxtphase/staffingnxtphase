@@ -412,6 +412,10 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 15V5l4.5-3L10 4l5-3v14"/></svg>
     Financials
   </div>
+  <div class="mobile-nav-item" onclick="navigate('extcosts',this);mobileNav(this)">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v6M5.5 7h4a1.5 1.5 0 010 3h-4"/></svg>
+    Ext. Costs
+  </div>
 </nav>
 <div class="sidebar">
   <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v25 · Live</div></div></div></div>
@@ -433,6 +437,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="nav-item" onclick="navigate('extcosts',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 8h3M5 10.5h5M10 6l1.5 1.5L13 5"/></svg>Ext. Project Costs</div>
     <div class="nav-item" onclick="navigate('fixedcosts',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v.5M8 10.5V11M6 8c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2"/></svg>Fixed Costs</div>
     <div class="nav-item" onclick="navigate('cashflow',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12 5 8l3 3 3-4 3-2"/><path d="M1 4h14"/></svg>Cashflow</div>
+    <div class="nav-item" onclick="navigate('bankplanner',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 7h14M5 11h2M9 11h2"/></svg>Bank Planner</div>
     <div class="nav-sec">Records</div>
     <div class="nav-item" onclick="navigate('history',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2M4 1L2 3M12 1l2 2"/></svg>History</div>
   </nav>
@@ -776,7 +781,14 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   <div class="filter-bar">
     <span class="filter-lbl">Filter:</span>
     <select class="filter-sel" id="sf-emp" onchange="renderStaffing()"><option value="">All Employees</option></select>
-    <select class="filter-sel" id="sf-proj" onchange="renderStaffing()"><option value="">All Projects</option></select>
+    <div style="position:relative;display:inline-block">
+      <input class="filter-sel" id="sf-proj-search" placeholder="All Projects" autocomplete="off" style="width:220px;cursor:pointer"
+        oninput="sfFilterProjects(this.value)"
+        onfocus="sfOpenDrop()"
+        onblur="setTimeout(sfCloseDrop,200)">
+      <div id="sf-proj-drop" style="display:none;position:absolute;z-index:300;min-width:280px;max-height:260px;overflow-y:auto;background:var(--bg);border:1px solid var(--bdr2);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);top:calc(100% + 4px);left:0"></div>
+      <input type="hidden" id="sf-proj" value="">
+    </div>
     <button class="btn btn-primary btn-sm" style="margin-left:8px;display:flex;align-items:center;gap:5px" onclick="openBulkStaffModal()">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M8 4v8M4 8h8"/></svg>
       Assign Full Project
@@ -2139,6 +2151,10 @@ function navigate(page,el){
       }
       renderPage(page);
     })();
+  } else if(page==='extcosts'){
+    (async()=>{ try{await supaLoadAll();await loadData();}catch(e){} renderPage(page); })();
+  } else if(page==='bankplanner'){
+    loadData().then(()=>{ renderPage(page); setTimeout(initBankPlanner,100); });
   } else {
     loadData().then(()=>renderPage(page));
   }
@@ -3186,6 +3202,61 @@ function setView(v){
   ['full','people','project'].forEach(x=>document.getElementById('vb-'+x).classList.toggle('active',x===v));
   renderStaffing();
 }
+
+function sfOpenDrop(){
+  sfRenderDrop((window._sfProjects||[]), document.getElementById('sf-proj-search')?.value||'');
+  const drop=document.getElementById('sf-proj-drop');
+  if(drop) drop.style.display='block';
+}
+function sfCloseDrop(){
+  const drop=document.getElementById('sf-proj-drop');
+  if(drop) drop.style.display='none';
+}
+function sfFilterProjects(q){
+  const list=(window._sfProjects||[]).filter(p=>!q||(p.client_name+' '+p.name).toLowerCase().includes(q.toLowerCase()));
+  sfRenderDrop(list,q);
+  const drop=document.getElementById('sf-proj-drop');
+  if(drop) drop.style.display='block';
+}
+function sfRenderDrop(list, q){
+  const drop=document.getElementById('sf-proj-drop');
+  if(!drop) return;
+  drop.innerHTML='';
+  // "All Projects" option
+  const all=document.createElement('div');
+  all.style.cssText='padding:8px 12px;cursor:pointer;border-bottom:2px solid var(--bdr2);font-size:12px;font-weight:600;color:var(--t2)';
+  all.textContent='All Projects';
+  all.addEventListener('mouseenter',function(){this.style.background='var(--bg2)';});
+  all.addEventListener('mouseleave',function(){this.style.background='';});
+  all.addEventListener('click',function(){sfPickProject('','');});
+  drop.appendChild(all);
+  if(!list.length){
+    const empty=document.createElement('div');
+    empty.style.cssText='padding:10px 14px;color:var(--t3);font-size:12px';
+    empty.textContent='No projects found';
+    drop.appendChild(empty);
+    return;
+  }
+  list.forEach(p=>{
+    const div=document.createElement('div');
+    div.style.cssText='padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr)';
+    const badge=p.status==='confirmed'
+      ?'<span style="background:var(--blue-p);color:var(--blue);font-size:9px;border-radius:2px;padding:1px 4px;margin-right:5px">confirmed</span>'
+      :'<span style="background:var(--amber-p,#fef3c7);color:var(--amber);font-size:9px;border-radius:2px;padding:1px 4px;margin-right:5px">draft</span>';
+    div.innerHTML=badge+'<span style="font-size:12px;font-weight:600">'+esc(p.client_name)+'</span>'
+      +' <span style="font-size:12px;color:var(--t2)">/ '+esc(p.name)+'</span>';
+    div.addEventListener('mouseenter',function(){this.style.background='var(--bg2)';});
+    div.addEventListener('mouseleave',function(){this.style.background='';});
+    div.addEventListener('click',function(){sfPickProject(p.id,p.client_name+' / '+p.name);});
+    drop.appendChild(div);
+  });
+}
+function sfPickProject(id, label){
+  document.getElementById('sf-proj').value=id;
+  document.getElementById('sf-proj-search').value=label;
+  sfCloseDrop();
+  renderStaffing();
+}
 function renderStaffing(){
   _staffNoteApply(); // restore notes that survived Supabase sync
   const{y,m}=S.staffingMonth;
@@ -3196,11 +3267,17 @@ function renderStaffing(){
   const projSel=document.getElementById('sf-proj');
   const curEmp=empSel.value,curProj=projSel.value;
   empSel.innerHTML='<option value="">All Employees</option>'+S.employees.map(e=>`<option value="${e.id}"${e.id==curEmp?' selected':''}>${esc(e.name)}</option>`).join('');
-  projSel.innerHTML='<option value="">All Projects</option>'+S.projects.filter(p=>p.status!=='stopped').map(p=>`<option value="${p.id}"${p.id==curProj?' selected':''}>${esc(p.client_name+' / '+p.name)}</option>`).join('');
-  empSel.value=curEmp;projSel.value=curProj;
+  // Store for searchable dropdown
+  window._sfProjects=S.projects.filter(p=>p.status!=='stopped')
+    .sort((a,b)=>a.status==='confirmed'&&b.status!=='confirmed'?-1:b.status==='confirmed'&&a.status!=='confirmed'?1:0);
+  // Restore selected label if any
+  const selP=window._sfProjects.find(p=>p.id==curProj);
+  const sfSearch=document.getElementById('sf-proj-search');
+  if(sfSearch) sfSearch.value=selP?(selP.client_name+' / '+selP.name):'';
+  empSel.value=curEmp;
 
   const filterEmpId=parseInt(empSel.value)||null;
-  const filterProjId=parseInt(projSel.value)||null;
+  const filterProjId=parseInt(document.getElementById('sf-proj')?.value)||null;
   const view=S.staffingView;
 
   let emps=S.employees.filter(e=>!filterEmpId||e.id===filterEmpId);
@@ -3535,11 +3612,11 @@ function openBulkStaffModal(){
 
   // Build employee options
   const empOpts=S.employees.map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.role||'')})</option>`).join('');
-  // Build project options — only confirmed/draft with dates
-  const projOpts=S.projects
+  // Store project list for searchable dropdown
+  window._bsAllProjects=S.projects
     .filter(p=>p.status!=='stopped'&&p.start_date&&p.end_date)
-    .map(p=>`<option value="${p.id}">${esc(p.client_name+' / '+p.name)} (${p.start_date} → ${p.end_date})</option>`)
-    .join('');
+    .sort((a,b)=>a.status==='confirmed'&&b.status!=='confirmed'?-1:b.status==='confirmed'&&a.status!=='confirmed'?1:0);
+  const projOpts=''; // replaced by searchable UI
 
   mc.innerHTML=`
     <div class="modal-header">
@@ -3558,7 +3635,22 @@ function openBulkStaffModal(){
           </div>
           <div class="form-group">
             <label class="form-lbl">Project</label>
-            <select class="form-input" id="bs-proj" onchange="bulkStaffPreview()">${projOpts}</select>
+            <div style="position:relative">
+              <input class="form-input" id="bs-proj-search" placeholder="🔍 Type to search..." autocomplete="off"
+                oninput="bsFilterProjects(this.value)"
+                onfocus="document.getElementById('bs-proj-drop').style.display='block'"
+                onblur="setTimeout(()=>{const el=document.getElementById('bs-proj-drop');if(el)el.style.display='none';},200)">
+              <div id="bs-proj-drop" style="display:none;position:absolute;z-index:300;width:100%;max-height:240px;overflow-y:auto;background:var(--bg);border:1px solid var(--bdr2);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);margin-top:2px"></div>
+              <input type="hidden" id="bs-proj" value="">
+            </div>
+            <div id="bs-proj-lbl" style="font-size:11px;color:var(--t3);margin-top:3px;min-height:14px"></div>
+            <div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap;align-items:center">
+              <span style="font-size:10px;color:var(--t3);font-weight:600">SORT:</span>
+              <button type="button" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px" onclick="bsSort('active')">Active first</button>
+              <button type="button" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px" onclick="bsSort('alpha')">A–Z</button>
+              <button type="button" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px" onclick="bsSort('date')">By start date</button>
+              <button type="button" class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 7px;color:var(--amber);border-color:var(--amber)" onclick="bsSort('draft')">Draft only</button>
+            </div>
           </div>
         </div>
         <div class="form-row">
@@ -3593,6 +3685,59 @@ function openBulkStaffModal(){
   const[wy,ww]=curWk.split('-W');
   document.getElementById('bs-start-wk').value=wy+'-W'+ww.padStart(2,'0');
 
+  setTimeout(bsInitDrop,60);
+}
+
+function bsInitDrop(){
+  bsRenderDrop(window._bsAllProjects||[]);
+}
+function bsSort(mode){
+  let list=[...(window._bsAllProjects||[])];
+  if(mode==='alpha') list.sort((a,b)=>(a.client_name+a.name).localeCompare(b.client_name+b.name));
+  else if(mode==='date') list.sort((a,b)=>(a.start_date||'').localeCompare(b.start_date||''));
+  else if(mode==='active') list.sort((a,b)=>a.status==='confirmed'&&b.status!=='confirmed'?-1:b.status==='confirmed'&&a.status!=='confirmed'?1:0);
+  else if(mode==='draft') list=list.filter(p=>p.status==='draft');
+  const q=(document.getElementById('bs-proj-search')?.value||'').toLowerCase();
+  bsRenderDrop(q?list.filter(p=>(p.client_name+' '+p.name).toLowerCase().includes(q)):list);
+  const drop=document.getElementById('bs-proj-drop');
+  if(drop) drop.style.display='block';
+}
+function bsFilterProjects(q){
+  const list=(window._bsAllProjects||[]).filter(p=>!q||(p.client_name+' '+p.name).toLowerCase().includes(q.toLowerCase()));
+  bsRenderDrop(list);
+  const drop=document.getElementById('bs-proj-drop');
+  if(drop) drop.style.display='block';
+}
+function bsRenderDrop(list){
+  const drop=document.getElementById('bs-proj-drop');
+  if(!drop) return;
+  drop.innerHTML='';
+  if(!list.length){
+    drop.innerHTML='<div style="padding:10px 14px;color:var(--t3);font-size:12px">No projects found</div>';
+    return;
+  }
+  list.forEach(p=>{
+    const div=document.createElement('div');
+    div.style.cssText='padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr)';
+    const badge=p.status==='confirmed'
+      ?'<span style="background:var(--blue-p);color:var(--blue);font-size:9px;border-radius:2px;padding:1px 4px;margin-right:5px">confirmed</span>'
+      :'<span style="background:var(--amber-p,#fef3c7);color:var(--amber);font-size:9px;border-radius:2px;padding:1px 4px;margin-right:5px">draft</span>';
+    div.innerHTML=badge
+      +'<span style="font-size:12px;font-weight:600">'+esc(p.client_name)+'</span>'
+      +' <span style="font-size:12px;color:var(--t2)">/ '+esc(p.name)+'</span>'
+      +'<div style="font-size:10px;color:var(--t3);margin-top:1px">'+(p.start_date||'')+(p.end_date?' → '+p.end_date:'')+'</div>';
+    div.addEventListener('mouseenter',function(){this.style.background='var(--bg2)';});
+    div.addEventListener('mouseleave',function(){this.style.background='';});
+    div.addEventListener('click',function(){bsPickProject(p.id,p.client_name+' / '+p.name);});
+    drop.appendChild(div);
+  });
+}
+function bsPickProject(id,label){
+  document.getElementById('bs-proj').value=id;
+  document.getElementById('bs-proj-search').value=label;
+  document.getElementById('bs-proj-lbl').innerHTML='<span style="color:var(--green)">✓ </span>'+label;
+  const drop=document.getElementById('bs-proj-drop');
+  if(drop) drop.style.display='none';
   bulkStaffPreview();
 }
 
@@ -8544,6 +8689,182 @@ function wkFmtLabel(mon,fri){
   }
   // else: overlay remains visible, init() called after auth
 })();
+
+// ══════════════════════════════════════════════════════════════════
+//  BANK POSITION PLANNER
+// ══════════════════════════════════════════════════════════════════
+window._bpFlows=[
+  {id:1,type:'in',label:'Project revenue',amount:0,monthly:true,auto:true},
+  {id:2,type:'out',label:'Fixed costs',amount:0,monthly:true,auto:true},
+  {id:3,type:'out',label:'Staffing costs',amount:0,monthly:true,auto:true}
+];
+window._bpOneOffs=[];
+window._bpFlowId=10;
+window._bpOneOffId=10;
+
+function bpAddFlow(type){
+  const id=++window._bpFlowId;
+  window._bpFlows.push({id,type,label:'',amount:0,monthly:true,auto:false});
+  bpRenderFlows();
+  runBankPlan();
+}
+function bpAddOneOff(){
+  const id=++window._bpOneOffId;
+  const now=new Date();
+  const mo=`${now.getFullYear()}-${String(now.getMonth()+2).padStart(2,'0')}`;
+  window._bpOneOffs.push({id,type:'in',label:'',amount:0,month:mo});
+  bpRenderOneOffs();
+  runBankPlan();
+}
+function bpRemoveFlow(id){
+  window._bpFlows=window._bpFlows.filter(f=>f.id!==id);
+  bpRenderFlows();
+  runBankPlan();
+}
+function bpRemoveOneOff(id){
+  window._bpOneOffs=window._bpOneOffs.filter(f=>f.id!==id);
+  bpRenderOneOffs();
+  runBankPlan();
+}
+function bpRenderFlows(){
+  const el=document.getElementById('bp-flows');
+  if(!el) return;
+  el.innerHTML=window._bpFlows.map(f=>`
+    <div style="display:grid;grid-template-columns:1fr 110px auto;gap:6px;align-items:center">
+      <input class="form-input" style="font-size:12px;padding:5px 8px" placeholder="${f.type==='in'?'Income label':'Expense label'}"
+        value="${f.label}" ${f.auto?'readonly style="font-size:12px;padding:5px 8px;background:var(--bg2);color:var(--t2)"':''} oninput="bpUpdateFlow(${f.id},'label',this.value)">
+      <input class="form-input" type="number" min="0" step="100" style="font-size:12px;padding:5px 8px;border-color:${f.type==='in'?'var(--green)':'var(--red)'};text-align:right"
+        placeholder="0" value="${f.amount||''}" ${f.auto?'readonly style="font-size:12px;padding:5px 8px;text-align:right;background:var(--bg2);border-color:var(--bdr)"':''} oninput="bpUpdateFlow(${f.id},'amount',parseFloat(this.value)||0)">
+      ${f.auto?'<div style="width:24px"></div>':'<button onclick="bpRemoveFlow('+f.id+')" style="background:none;border:none;cursor:pointer;color:var(--t3);font-size:16px;line-height:1;padding:2px">×</button>'}
+    </div>`).join('');
+}
+function bpRenderOneOffs(){
+  const el=document.getElementById('bp-oneoffs');
+  if(!el) return;
+  el.innerHTML=window._bpOneOffs.map(f=>`
+    <div style="display:grid;grid-template-columns:auto 1fr 100px auto;gap:6px;align-items:center">
+      <select class="form-input" style="font-size:11px;padding:4px 6px;width:70px" onchange="bpUpdateOneOff(${f.id},'type',this.value)">
+        <option value="in" ${f.type==='in'?'selected':''}>📥 In</option>
+        <option value="out" ${f.type==='out'?'selected':''}>📤 Out</option>
+      </select>
+      <input class="form-input" style="font-size:12px;padding:5px 8px" placeholder="Description"
+        value="${f.label}" oninput="bpUpdateOneOff(${f.id},'label',this.value)">
+      <input class="form-input" type="number" min="0" step="100" style="font-size:12px;padding:5px 8px;text-align:right;border-color:${f.type==='in'?'var(--green)':'var(--red)'}"
+        placeholder="0" value="${f.amount||''}" oninput="bpUpdateOneOff(${f.id},'amount',parseFloat(this.value)||0)">
+      <input class="form-input" type="month" style="font-size:11px;padding:4px 6px;width:130px"
+        value="${f.month}" oninput="bpUpdateOneOff(${f.id},'month',this.value)">
+      <button onclick="bpRemoveOneOff(${f.id})" style="background:none;border:none;cursor:pointer;color:var(--t3);font-size:16px;line-height:1;padding:2px">×</button>
+    </div>`).join('');
+}
+function bpUpdateFlow(id,field,val){
+  const f=window._bpFlows.find(f=>f.id===id);
+  if(f){f[field]=val;runBankPlan();}
+}
+function bpUpdateOneOff(id,field,val){
+  const f=window._bpOneOffs.find(f=>f.id===id);
+  if(f){f[field]=val;bpRenderOneOffs();runBankPlan();}
+}
+function bpAutoLoad(){
+  // Auto-populate from app data
+  const now=new Date();
+  const y=now.getFullYear(),mo=now.getMonth()+1;
+  const avgRev=(revForMonth(y,mo,'confirmed')+revForMonth(y,mo-1>0?mo-1:12,'confirmed'))/2||0;
+  const avgFixed=fixedMonthly(y,mo)||0;
+  const avgStaff=staffCostMonth(y,mo)||0;
+  window._bpFlows[0].amount=Math.round(avgRev/100)*100;
+  window._bpFlows[1].amount=Math.round(avgFixed/100)*100;
+  window._bpFlows[2].amount=Math.round(avgStaff/100)*100;
+  bpRenderFlows();
+}
+function runBankPlan(){
+  const balance=parseFloat(document.getElementById('bp-balance')?.value)||0;
+  const months=parseInt(document.getElementById('bp-months')?.value)||6;
+  const flows=window._bpFlows||[];
+  const oneoffs=window._bpOneOffs||[];
+
+  const now=new Date();
+  let bal=balance;
+  const rows=[];
+  let minBal=Infinity,maxBal=-Infinity,totalIn=0,totalOut=0;
+
+  for(let i=0;i<months;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()+i+1,1);
+    const moStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const lbl=d.toLocaleDateString('nl-NL',{month:'short',year:'2-digit'});
+    const openBal=bal;
+
+    let inflow=flows.filter(f=>f.type==='in').reduce((s,f)=>s+f.amount,0);
+    let outflow=flows.filter(f=>f.type==='out').reduce((s,f)=>s+f.amount,0);
+
+    // One-offs for this month
+    oneoffs.filter(f=>f.month===moStr).forEach(f=>{
+      if(f.type==='in') inflow+=f.amount;
+      else outflow+=f.amount;
+    });
+
+    const net=inflow-outflow;
+    bal=openBal+net;
+    totalIn+=inflow;totalOut+=outflow;
+    if(bal<minBal)minBal=bal;
+    if(bal>maxBal)maxBal=bal;
+    rows.push({lbl,moStr,openBal,inflow,outflow,net,closeBal:bal});
+  }
+
+  // Render table
+  const tbody=document.getElementById('bp-tbody');
+  if(tbody) tbody.innerHTML=rows.map((r,i)=>{
+    const isNeg=r.closeBal<0;
+    const isLow=r.closeBal<balance*0.2&&!isNeg;
+    const rowBg=isNeg?'background:var(--red-p)':isLow?'background:#fffbeb':'';
+    return`<tr style="${rowBg}${i%2&&!isNeg&&!isLow?';background:var(--bg2)':''}">
+      <td style="padding:9px 14px;border-bottom:1px solid var(--bdr);font-weight:600">${r.lbl}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);color:var(--green)">+${fmt(r.inflow)}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);color:var(--red)">-${fmt(r.outflow)}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);color:${r.net>=0?'var(--green)':'var(--red)'};font-weight:600">${r.net>=0?'+':''}${fmt(r.net)}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:700;color:${isNeg?'var(--red)':isLow?'var(--amber)':'var(--blue)'}">${fmt(r.closeBal)}</td>
+    </tr>`;
+  }).join('');
+
+  // Summary KPIs
+  const endBal=rows.length?rows[rows.length-1].closeBal:balance;
+  const sumEl=document.getElementById('bp-summary');
+  if(sumEl) sumEl.innerHTML=[
+    {label:'End Balance',val:fmt(endBal),color:endBal>=0?'var(--blue)':'var(--red)',sub:`After ${months} months`},
+    {label:'Lowest Point',val:fmt(minBal),color:minBal<0?'var(--red)':minBal<balance*0.2?'var(--amber)':'var(--green)',sub:'Minimum balance'},
+    {label:'Net Cash Flow',val:(totalIn-totalOut>=0?'+':'')+fmt(totalIn-totalOut),color:totalIn-totalOut>=0?'var(--green)':'var(--red)',sub:`In: ${fmt(totalIn)} / Out: ${fmt(totalOut)}`}
+  ].map(k=>`<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:14px 16px">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:4px">${k.label}</div>
+    <div style="font-size:22px;font-weight:700;color:${k.color}">${k.val}</div>
+    <div style="font-size:11px;color:var(--t3);margin-top:2px">${k.sub}</div>
+  </div>`).join('');
+
+  // Bar chart
+  const chart=document.getElementById('bp-chart');
+  const labels=document.getElementById('bp-chart-labels');
+  if(chart&&rows.length){
+    const allBals=[balance,...rows.map(r=>r.closeBal)];
+    const maxV=Math.max(...allBals,0);
+    const minV=Math.min(...allBals,0);
+    const range=maxV-minV||1;
+    const H=90;
+    const zeroY=Math.round((maxV/(range))*H);
+    const barW=`calc((100% - ${rows.length*6}px) / ${rows.length})`;
+    chart.innerHTML=rows.map(r=>{
+      const pct=Math.abs(r.closeBal-minV)/range;
+      const h=Math.max(4,Math.round(pct*H));
+      const isNeg=r.closeBal<0;
+      return`<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:${H}px">
+        <div title="${fmt(r.closeBal)}" style="width:100%;height:${h}px;background:${isNeg?'var(--red)':r.closeBal<balance*0.2?'var(--amber)':'var(--blue)'};border-radius:3px 3px 0 0;transition:height .3s"></div>
+      </div>`;
+    }).join('');
+    labels.innerHTML=rows.map(r=>`<div style="flex:1;text-align:center;font-size:9px;color:var(--t3)">${r.lbl}</div>`).join('');
+  }
+}
+
+function initBankPlanner(){
+  bpAutoLoad();
+  runBankPlan();
+}
 </script>
 </div><!-- close .app -->
 <!-- ═══════════════════════════════════════════════════════════
@@ -8573,6 +8894,84 @@ function wkFmtLabel(mon,fri){
   <!-- Content -->
   <div style="padding:20px 24px;flex:1" id="ev-content">
     <div style="text-align:center;color:var(--t3);padding:40px">Loading schedule…</div>
+  </div>
+</div>
+
+<div id="page-bankplanner" class="page">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Bank Position Planner</div>
+      <div class="page-sub">Liquidity forecast — estimate your bank balance over coming months</div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="runBankPlan()">▶ Calculate</button>
+  </div>
+
+  <!-- KPI Summary row -->
+  <div id="bp-summary" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px"></div>
+
+  <!-- 2-col layout: sticky left inputs, right output -->
+  <div style="display:grid;grid-template-columns:290px 1fr;gap:20px;align-items:start">
+
+    <!-- LEFT: compact inputs, sticky -->
+    <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:14px;position:sticky;top:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Bank balance (€)</label>
+          <input class="form-input bold" id="bp-balance" type="number" step="100" placeholder="180000" value="180000" oninput="runBankPlan()">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Horizon</label>
+          <select class="form-input" id="bp-months" onchange="runBankPlan()">
+            <option value="3">3 months</option>
+            <option value="6" selected>6 months</option>
+            <option value="9">9 months</option>
+            <option value="12">12 months</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Monthly Cash Flows</div>
+        <div id="bp-flows" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn btn-sm btn-ghost" style="flex:1;font-size:11px" onclick="bpAddFlow('in')">+ Income</button>
+          <button class="btn btn-sm btn-ghost" style="flex:1;font-size:11px;color:var(--red);border-color:var(--red)" onclick="bpAddFlow('out')">+ Expense</button>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">One-off Events</div>
+        <div id="bp-oneoffs" style="display:flex;flex-direction:column;gap:8px"></div>
+        <button class="btn btn-sm btn-ghost" style="width:100%;margin-top:6px;font-size:11px" onclick="bpAddOneOff()">+ Add One-off</button>
+      </div>
+
+      <div style="background:var(--blue-p);border-radius:var(--r);padding:10px;font-size:11px;color:var(--blue)">
+        💡 Revenue, fixed costs &amp; staffing auto-loaded from your data.
+      </div>
+    </div>
+
+    <!-- RIGHT: chart on top, table below -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:16px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:12px">Balance Trend</div>
+        <div id="bp-chart" style="display:flex;align-items:flex-end;gap:6px;height:90px"></div>
+        <div id="bp-chart-labels" style="display:flex;gap:6px;margin-top:5px"></div>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="background:var(--bg2)">
+              <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bdr)">Month</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--green);border-bottom:1px solid var(--bdr)">Inflow</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--red);border-bottom:1px solid var(--bdr)">Outflow</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bdr)">Net</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--blue);border-bottom:1px solid var(--bdr)">Closing Balance</th>
+            </tr>
+          </thead>
+          <tbody id="bp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 </body>
