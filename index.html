@@ -355,8 +355,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 .fin-mobile-cards { display: none; }
 @media (max-width: 768px) {
   .fin-mobile-cards { display: block; }
-  .fin-table-desktop { display: none !important; }
-  .fin-tab-bar { overflow-x: auto; white-space: nowrap; }
+  .fin-tab-bar, #fin-panel-summary, #fin-panel-trend, #fin-panel-clients, #fin-panel-bank { display: none !important; }
   .fin-month-card {
     background: var(--bg);
     border: 1.5px solid var(--bdr);
@@ -561,8 +560,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   <!-- Mobile card view (hidden on desktop via CSS) -->
   <div class="fin-mobile-cards" id="fin-mobile-cards"></div>
 
-  <!-- Desktop tab bar (hidden on mobile via CSS) -->
-  <div class="fin-table-desktop">
+  <!-- Desktop tab bar + panels (hidden on mobile via CSS) -->
   <!-- Tab bar -->
   <div class="fin-tab-bar" style="display:flex;border-bottom:2px solid var(--bdr);margin-bottom:16px;gap:0">
     <button id="ftab-summary" onclick="setFinTab('summary')" style="padding:7px 16px;font-size:11.5px;font-weight:600;cursor:pointer;color:var(--blue);background:none;border:none;border-bottom:2.5px solid var(--blue);margin-bottom:-2px;font-family:var(--font)">&#128200; Monthly P&amp;L</button>
@@ -660,7 +658,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
       </div>
     </div>
   
-  </div><!-- end fin-table-desktop --></div>
+  </div>
 </div>
 
 <div id="page-extcosts" class="page">
@@ -7043,44 +7041,43 @@ function renderFinancial(){
 function renderFinMobileCards(months, year) {
   const el = document.getElementById('fin-mobile-cards');
   if (!el) return;
-  const now = new Date();
 
-  el.innerHTML = months.map(({mo, moStr, revenue, fixedCosts, forecastCosts, extCosts, totalOpCosts, opResult, opMargin, staffingCosts, isCurrent, isPast}) => {
+  let html = '';
+  months.forEach(function(m) {
+    const mo = m.mo, revenue = m.revenue, fixedCosts = m.fixedCosts;
+    const forecastCosts = m.forecastCosts, extCosts = m.extCosts;
+    const opResult = m.opResult, opMargin = m.opMargin, isCurrent = m.isCurrent;
     const lbl = new Date(year, mo-1, 1).toLocaleDateString('nl-NL', {month:'long', year:'2-digit'});
     const isPos = opResult >= 0;
     const chipColor = isPos ? 'var(--green)' : 'var(--red)';
-    const chipBg = isPos ? 'var(--green-p)' : 'var(--red-p)';
+    const chipBg   = isPos ? 'var(--green-p)' : 'var(--red-p)';
+    const dot = isCurrent ? '<span style="display:inline-block;width:6px;height:6px;background:var(--blue);border-radius:50%;margin-right:5px;vertical-align:middle"></span>' : '';
 
-    const row = (label, val, color) => `
-      <div class="fin-row">
-        <span class="fin-row-lbl">${label}</span>
-        <span class="fin-row-val" style="color:${color||'var(--navy)'}">${val}</span>
-      </div>`;
+    function row(label, val, color) {
+      return '<div class="fin-row"><span class="fin-row-lbl">'+label+'</span><span class="fin-row-val" style="color:'+(color||'var(--navy)')+'">'+val+'</span></div>';
+    }
 
-    const hasExt = extCosts > 0;
-    const hasForecast = forecastCosts > 0;
-
-    return `<div class="fin-month-card${isCurrent?' current':''}">
-      <div class="fin-month-card-header">
-        <span class="month-lbl">${isCurrent?'<span style="display:inline-block;width:6px;height:6px;background:var(--blue);border-radius:50%;margin-right:5px;vertical-align:middle"></span>':''}${lbl}</span>
-        <span class="result-chip" style="background:${chipBg};color:${chipColor}">${isPos?'+':''}${fmt(opResult)}</span>
-      </div>
-      <div class="fin-month-card-body">
-        ${row('Revenue', fmt(revenue), 'var(--green)')}
-        ${row('Fixed Costs', revenue>0||fixedCosts>0 ? '-'+fmt(fixedCosts) : '—', 'var(--red)')}
-        ${hasForecast ? row('Forecast Costs', '-'+fmt(forecastCosts), 'var(--amber)') : ''}
-        ${hasExt ? row('Ext. Costs', '-'+fmt(extCosts), 'var(--orange,#f97316)') : ''}
-        <div class="fin-row" style="border-top:2px solid var(--bdr);margin-top:2px;font-weight:700">
-          <span class="fin-row-lbl" style="font-weight:700">Op. Result</span>
-          <span class="fin-row-val" style="color:${chipColor}">${isPos?'+':''}${fmt(opResult)}</span>
-        </div>
-        <div class="fin-row" style="opacity:.7">
-          <span class="fin-row-lbl">Margin</span>
-          <span class="fin-row-val">${opMargin.toFixed(1)}%</span>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
+    html += '<div class="fin-month-card' + (isCurrent ? ' current' : '') + '">';
+    html += '<div class="fin-month-card-header">';
+    html += '<span class="month-lbl">' + dot + lbl + '</span>';
+    html += '<span class="result-chip" style="background:' + chipBg + ';color:' + chipColor + '">' + (isPos?'+':'') + fmt(opResult) + '</span>';
+    html += '</div>';
+    html += '<div class="fin-month-card-body">';
+    html += row('Revenue', fmt(revenue), 'var(--green)');
+    html += row('Fixed Costs', fixedCosts > 0 ? '-'+fmt(fixedCosts) : '—', 'var(--red)');
+    if (forecastCosts > 0) html += row('Forecast Costs', '-'+fmt(forecastCosts), 'var(--amber)');
+    if (extCosts > 0)      html += row('Ext. Costs', '-'+fmt(extCosts), 'var(--orange,#f97316)');
+    html += '<div class="fin-row" style="border-top:2px solid var(--bdr);margin-top:2px">';
+    html += '<span class="fin-row-lbl" style="font-weight:700">Op. Result</span>';
+    html += '<span class="fin-row-val" style="font-weight:700;color:'+chipColor+'">'+(isPos?'+':'')+fmt(opResult)+'</span>';
+    html += '</div>';
+    html += '<div class="fin-row" style="opacity:.7">';
+    html += '<span class="fin-row-lbl">Margin</span>';
+    html += '<span class="fin-row-val">'+opMargin.toFixed(1)+'%</span>';
+    html += '</div>';
+    html += '</div></div>';
+  });
+  el.innerHTML = html;
 }
 function _renderFinancialActual(){
   const yearEl=document.getElementById('fin-year');
