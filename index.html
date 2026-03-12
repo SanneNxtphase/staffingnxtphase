@@ -1893,9 +1893,9 @@ function revForMonthDayPrecise(p,y,m){
   // Most accurate: daily_rev = revenue / totalDays (same result as rev/totalWeeks/7)
   // BUT per spec: daily = weekly/7, and weekly = revenue/projectWkCount
   // So: daily = (revenue / projectWkCount(p)) / 7
-  const wkCount = Math.max(1, projectWkCount(p));
-  const weeklyRev = p.revenue / wkCount;
-  const dailyRev = weeklyRev / 7;
+  // Daily rate = revenue spread evenly over all calendar days of project
+  // Correctly handles 1-day projects (no /7 penalty), partial weeks, multi-week
+  const dailyRev = p.revenue / totalDays;
   return dailyRev * activeDays;
 }
 
