@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v45 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v46 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -8741,6 +8741,22 @@ function renderEmployeeView(){
   const content=document.getElementById('ev-content');
   if(!content)return;
 
+  // Debug panel — shows raw Supabase data for troubleshooting
+  const _dbg=document.getElementById('ev-debug');
+  if(_dbg){
+    const _empIds=new Set(S.employees.map(e=>e.id));
+    const _wk0 = (()=>{const m=new Date(now);const dow=m.getDay()===0?6:m.getDay()-1;m.setDate(m.getDate()-dow);m.setHours(0,0,0,0);const d2=new Date(m);d2.setUTCDate?d2.setDate(d2.getDate()+3-((d2.getDay()+6)%7)):null;const ys=new Date(d2.getFullYear(),0,4);return d2.getFullYear()+'-W'+String(1+Math.round(((d2-ys)/86400000-3+((ys.getDay()+6)%7))/7)).padStart(2,'0');})();
+    const _wkStaff=S.staffing.filter(s=>s.week_key===_wk0);
+    const _orphans=[...new Set(_wkStaff.filter(s=>!_empIds.has(s.employee_id)).map(s=>s.employee_id))];
+    _dbg.innerHTML='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11px;margin-bottom:12px;color:#333">'
+      +'<strong>📊 Data check:</strong> '
+      +S.employees.length+' employees ('+S.employees.filter(e=>e.name!=='Vakantie'&&e.name!=='Koen').map(e=>e.name).join(', ')+')'
+      +' | '+S.staffing.length+' staffing rows total'
+      +' | '+_wkStaff.length+' rows for '+_wk0
+      +(_orphans.length?' | <span style="color:red">⚠ Orphaned employee_ids: '+_orphans.join(', ')+'</span>':'')
+      +'</div>';
+  }
+
   // Build 2 weeks to show
   const weeks=[];
   for(let i=0;i<2;i++){
@@ -8993,6 +9009,11 @@ function wkFmtLabel(mon,fri){
         S.employees = rawEmps;
         S.projects  = rawProjs;
         S.staffing  = rawStaff;
+        // Show data counts in status bar for debugging
+        const _ec=document.getElementById('ev-emp-count');
+        const _sc=document.getElementById('ev-staff-count');
+        if(_ec) _ec.textContent = rawEmps.length+' employees loaded';
+        if(_sc) _sc.textContent = rawStaff.length+' staffing rows';
         renderEmployeeView();
       })();
     };
@@ -9212,7 +9233,7 @@ function initBankPlanner(){
       <div style="width:36px;height:36px;background:linear-gradient(135deg,var(--blue),var(--pink));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px">📋</div>
       <div>
         <div style="font-size:15px;font-weight:700;color:#fff">NXTPhase — Team Staffing</div>
-        <div style="font-size:11px;color:rgba(255,255,255,.5)" id="ev-subtitle">Upcoming schedule</div>
+        <div style="font-size:11px;color:rgba(255,255,255,.5)" id="ev-subtitle">Upcoming schedule · <span style="color:rgba(100,200,255,.8)">v45</span></div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px">
@@ -9227,7 +9248,9 @@ function initBankPlanner(){
     <button onclick="evChangeWeek(1)" id="ev-btn-next" style="border:1px solid var(--bdr);background:var(--bg);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--t2)">→</button>
   </div>
   <!-- Content -->
-  <div style="padding:20px 24px;flex:1" id="ev-content">
+  <div id="ev-debug" style="padding:12px 24px 0"></div>
+  <div id="ev-status-bar" style="background:rgba(0,0,0,.2);padding:3px 24px;font-size:10px;color:rgba(255,255,255,.4);display:flex;gap:16px;border-bottom:1px solid rgba(255,255,255,.05)"><span style="color:rgba(100,200,255,.7)">v45</span><span id="ev-emp-count"></span><span id="ev-staff-count"></span></div>
+<div style="padding:20px 24px;flex:1" id="ev-content">
     <div style="text-align:center;color:var(--t3);padding:40px">Loading schedule…</div>
   </div>
 </div>
