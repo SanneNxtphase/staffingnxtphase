@@ -8727,11 +8727,13 @@ function renderEmployeeView(){
   // Summary cards per person
   // Summary cards use only the first (current) week
   const firstWkKey=weeks[0]?.wkKey;
-  const activeEmps=emps.filter(e=>S.staffing.some(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id)));
+  // All employees who have ANY staffing in these weeks (including via direct staffing lookup)
+  const staffedEmpIds=new Set(S.staffing.filter(s=>allWkKeys.includes(s.week_key)&&parseFloat(s.days||0)>0).map(s=>String(s.employee_id)));
+  const activeEmps=emps.filter(e=>staffedEmpIds.has(String(e.id)));
   if(activeEmps.length){
     html+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">';
     activeEmps.forEach(e=>{
-      const myStaff=S.staffing.filter(s=>s.week_key===firstWkKey&&(s.employee_id===e.id||s.employee_id==e.id)&&parseFloat(s.days||0)>0);
+      const myStaff=S.staffing.filter(s=>s.week_key===firstWkKey&&(String(s.employee_id)===String(e.id))&&parseFloat(s.days||0)>0);
       if(!myStaff.length)return; // skip if no hours this week
       const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
       const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(Boolean))];
@@ -8750,14 +8752,18 @@ function renderEmployeeView(){
     const isNow=_evWeekOffset===0&&wi===0;
     const wkStaff=S.staffing.filter(s=>s.week_key===wkKey);
 
-    // Build one row per assignment
+    // Build one row per assignment — iterate staffing directly, look up emp+proj
     const rows=[];
-    emps.forEach(function(emp){
-      wkStaff.filter(s=>s.employee_id===emp.id||s.employee_id==emp.id).forEach(function(r){
-        const proj=S.projects.find(p=>p.id===r.project_id||p.id==r.project_id);
-        if(proj) rows.push({emp:emp,proj:proj,days:parseFloat(r.days)||0,note:r.note||''});
-      });
+    wkStaff.forEach(function(s){
+      if(!parseFloat(s.days||0)) return; // skip 0-day entries
+      const emp=S.employees.find(e=>e.id===s.employee_id||e.id==s.employee_id);
+      if(!emp||emp.name==='Vakantie'||emp.name==='Koen') return;
+      const proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
+      if(!proj) return;
+      rows.push({emp:emp,proj:proj,days:parseFloat(s.days)||0,note:s.note||''});
     });
+    // Sort by employee name for consistent display
+    rows.sort((a,b)=>a.emp.name.localeCompare(b.emp.name));
 
     html+='<div style="background:var(--bg);border:1.5px solid '+(isNow?'var(--blue)':'var(--bdr)')+';border-radius:12px;margin-bottom:16px;overflow:hidden">';
 
