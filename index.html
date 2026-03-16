@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v52 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v53 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1328,6 +1328,17 @@ async function supaLoadAll() {
         store[tables[i]] = results[i];
       }
     }
+    // Preserve local category changes (user may have renamed before Supabase synced)
+    if(_oldStore && _oldStore.fixed_costs && store.fixed_costs){
+      store.fixed_costs.forEach(function(fc){
+        var loc=(_oldStore.fixed_costs||[]).find(function(l){return parseInt(l.id)===parseInt(fc.id);});
+        if(loc && loc.category !== undefined && loc.category !== fc.category){
+          // Local category wins - user renamed it
+          fc.category = loc.category;
+        }
+      });
+    }
+
     // Normalize all IDs to integers in the loaded store (prevents === type-mismatch)
     (store.employees||[]).forEach(function(e){e.id=parseInt(e.id)||e.id;});
     (store.projects||[]).forEach(function(p){p.id=parseInt(p.id)||p.id;});
@@ -5499,7 +5510,11 @@ async function fcDoRename(oldName){
   if(idx>=0)cats[idx]=newName;else cats.push(newName);
   saveFCCategories(cats);
   // Update all fixed_costs entries — local + Supabase
-  for(const c of S.fixedCosts.filter(x=>x.category===oldName)){
+  // Match both explicit 'Uncategorised' AND empty/null (both display as Uncategorised)
+  const _matchCat = x => oldName==='Uncategorised'
+    ? (!x.category||x.category===''||x.category==='Uncategorised')
+    : x.category===oldName;
+  for(const c of S.fixedCosts.filter(_matchCat)){
     await DB.update('fixed_costs',c.id,{category:newName});
     c.category=newName;
     try{ await _supaReq('PATCH','fixed_costs',{category:newName},'?id=eq.'+c.id); }catch(e){}
@@ -5513,7 +5528,10 @@ async function fcDeleteCat(catName){
   const count=S.fixedCosts.filter(c=>c.category===catName).length;
   if(count>0){
     if(!confirm(`Delete category "${catName}"? Its ${count} entr${count===1?'y':'ies'} will become Uncategorised.`))return;
-    for(const c of S.fixedCosts.filter(x=>x.category===catName)){
+    const _matchDel = x => catName==='Uncategorised'
+    ? (!x.category||x.category===''||x.category==='Uncategorised')
+    : x.category===catName;
+  for(const c of S.fixedCosts.filter(_matchDel)){
       await DB.update('fixed_costs',c.id,{category:''});c.category='';
       try{ await _supaReq('PATCH','fixed_costs',{category:''},'?id=eq.'+c.id); }catch(e){}
     }
@@ -7069,6 +7087,8 @@ function renderFinancial(){
             if(loc.frequency && loc.frequency!=='monthly') fc.frequency = loc.frequency;
             if(loc.frequency_month) fc.frequency_month = parseInt(loc.frequency_month)||1;
             if(loc.hasOwnProperty('active')) fc.active = loc.active;
+            // Category: local wins if it differs from Supabase (user may have renamed)
+            if(loc.hasOwnProperty('category') && loc.category !== fc.category) fc.category = loc.category;
           }
         });
       }catch(e){}
