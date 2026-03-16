@@ -1181,7 +1181,7 @@ const DB={
   _lq({action,table,data,id,sql,params}){
     const s=this._gs();
     if(action==='upsert-staffing'){
-      const idx=s.staffing.findIndex(x=>x.employee_id===data.employee_id&&x.project_id===data.project_id&&x.week_key===data.week_key);
+      const idx=s.staffing.findIndex(x=>parseInt(x.employee_id)===parseInt(data.employee_id)&&parseInt(x.project_id)===parseInt(data.project_id)&&x.week_key===data.week_key);
       if(idx>=0){
         if(data.days===0||data.days==='0') s.staffing.splice(idx,1);
         else { s.staffing[idx].days=parseFloat(data.days); if(data.note!==undefined) s.staffing[idx].note=data.note||''; }
@@ -1318,6 +1318,18 @@ async function supaLoadAll() {
         store[tables[i]] = results[i];
       }
     }
+    // Normalize all IDs to integers in the loaded store (prevents === type-mismatch)
+    (store.employees||[]).forEach(function(e){e.id=parseInt(e.id)||e.id;});
+    (store.projects||[]).forEach(function(p){p.id=parseInt(p.id)||p.id;});
+    (store.staffing||[]).forEach(function(s){
+      s.id=parseInt(s.id)||s.id;
+      s.employee_id=parseInt(s.employee_id)||s.employee_id;
+      s.project_id=parseInt(s.project_id)||s.project_id;
+    });
+    (store.invoices||[]).forEach(function(i){i.id=parseInt(i.id)||i.id;i.project_id=parseInt(i.project_id)||i.project_id;});
+    (store.vacations||[]).forEach(function(v){v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
+    (store.sick_leave||[]).forEach(function(v){v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
+    (store.external_costs||[]).forEach(function(e){e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
 
     // Build Supabase ID maps AFTER overwrite
     // Key = "client_name|project_name", value = Supabase numeric id
@@ -1434,7 +1446,31 @@ async function supaLoadAll() {
 
     // Only seed if Supabase returned empty tables (first-time setup only)
     if(!store.projects||store.projects.length===0) DB._ensureRealProjects();
-    if(!store.employees||store.employees.length===0) DB._ensureRealEmployees();
+    // Always ensure all team members exist — check by NAME not just count
+    // This fixes: Ralph missing if he was never seeded in Supabase employees
+    DB._ensureRealEmployees();
+    // Insert any newly added employees into Supabase
+    const _supaEmpNames=new Set((store.employees||[]).map(e=>e.name));
+    const _realMembers=[
+      {name:'Koen',role:'Project Owner',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
+      {name:'Siebeline',role:'Project Manager',daily_cost:365,available_days_per_week:5,vacation_days_per_year:25},
+      {name:'Marco',role:'Techlead',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
+      {name:'Kamiel',role:'Developer',daily_cost:185,available_days_per_week:5,vacation_days_per_year:25},
+      {name:'Paul',role:'Developer',daily_cost:535,available_days_per_week:4,vacation_days_per_year:20},
+      {name:'Mees',role:'Developer',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
+      {name:'Stein',role:'AI Delivery Manager',daily_cost:369,available_days_per_week:5,vacation_days_per_year:25},
+      {name:'Ralph',role:'Project Manager',daily_cost:427,available_days_per_week:4,vacation_days_per_year:25},
+      {name:'Sanne',role:'Operations',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25}
+    ];
+    for(const m of _realMembers){
+      if(!_supaEmpNames.has(m.name)){
+        try{
+          const res=await _supaReq('POST','employees',m);
+          const row=Array.isArray(res)?res[0]:res;
+          if(row&&row.id){store.employees.push(row);console.log('[supaLoadAll] Added missing employee:',m.name);}
+        }catch(e){}
+      }
+    }
     // Data integrity: for any project that has invoices entries,
     // remove partner_invoices entries to prevent double-counting.
     if(Array.isArray(store.invoices)&&Array.isArray(store.partner_invoices)){
@@ -1727,8 +1763,8 @@ async function pullFromSupabase(){
     if (_SUPA_ONLINE) {
       try {
         var days = parseFloat(data.days);
-        var qs = '?employee_id=eq.' + data.employee_id +
-                 '&project_id=eq.' + data.project_id +
+        var qs = '?employee_id=eq.' + parseInt(data.employee_id) +
+                 '&project_id=eq.' + parseInt(data.project_id) +
                  '&week_key=eq.' + encodeURIComponent(data.week_key);
         var ex = await _supaReq('GET', 'staffing', null, qs + '&select=id');
         if (days === 0) {
@@ -2213,6 +2249,14 @@ async function loadData(){
   S.projects=pr||[];S.employees=em||[];S.staffing=st||[];S.vacations=va||[];S.sickLeave=sl||[];
   S.fixedCosts=fc||[];S.transactions=tx||[];S.invoices=inv||[];S.futureCosts=fut||[];
   S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];S.externalCosts=ec||[];_parseCFNotes(S.cashflowMonths);
+  // Normalize all IDs to integers to prevent === type-mismatch bugs
+  S.employees.forEach(e=>{e.id=parseInt(e.id)||e.id;});
+  S.projects.forEach(p=>{p.id=parseInt(p.id)||p.id;});
+  S.staffing.forEach(s=>{s.id=parseInt(s.id)||s.id;s.employee_id=parseInt(s.employee_id)||s.employee_id;s.project_id=parseInt(s.project_id)||s.project_id;});
+  S.invoices.forEach(i=>{i.id=parseInt(i.id)||i.id;i.project_id=parseInt(i.project_id)||i.project_id;});
+  S.vacations.forEach(v=>{v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
+  S.sickLeave.forEach(v=>{v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
+  S.externalCosts.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
   try{const ov=localStorage.getItem('sp-vat-overrides');if(ov)Object.assign(S.vatOverrides,JSON.parse(ov));}catch(e){}
   // Merge staffing notes from localStorage into S.staffing rows
@@ -3911,7 +3955,7 @@ async function editCell(empId,projId,wk,cell){
     </div>`;
   setTimeout(()=>document.getElementById('sc-days')?.focus(),50);
 }
-async function editCellSave(empId,projId,wk,days,note){
+async function editCellSave(empId,projId,wk,days,note){empId=parseInt(empId)||empId;projId=parseInt(projId)||projId;
   closeModal();
   // Save days+note locally
   await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days,note});
@@ -8756,8 +8800,15 @@ function renderEmployeeView(){
     const rows=[];
     wkStaff.forEach(function(s){
       if(!parseFloat(s.days||0)) return; // skip 0-day entries
-      const emp=S.employees.find(e=>e.id===s.employee_id||e.id==s.employee_id);
-      if(!emp||emp.name==='Vakantie'||emp.name==='Koen') return;
+      // Look up employee — fallback to a synthetic record if not found (ID mismatch protection)
+      let emp=S.employees.find(e=>e.id===s.employee_id||e.id==s.employee_id);
+      if(!emp){
+        // Try by numeric match
+        emp=S.employees.find(e=>parseInt(e.id)===parseInt(s.employee_id));
+      }
+      // If still not found, create fallback so Ralph-type cases still show
+      if(!emp) emp={id:s.employee_id,name:'#'+s.employee_id,role:'',daily_cost:0};
+      if(emp.name==='Vakantie'||emp.name==='Koen') return;
       const proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
       if(!proj) return;
       rows.push({emp:emp,proj:proj,days:parseFloat(s.days)||0,note:s.note||''});
