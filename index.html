@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v53 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v54 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -2799,10 +2799,10 @@ function renderDashboard(){
   // Fixed Costs by Category — planning layer totals
   const moStr=y+'-'+String(m).padStart(2,'0');
   const fcCatMap={};
-  S.fixedCosts.filter(c=>fcActiveInMonth(c,y,m)).forEach(c=>{
+  S.fixedCosts.filter(c=>fcInDateRange(c,y,m)).forEach(c=>{
     const cat=c.category||'Uncategorised';
     if(!fcCatMap[cat])fcCatMap[cat]=0;
-    fcCatMap[cat]+=Math.round(fcEntryExcl(c)*100)/100; // excl. VAT to match dashboard KPI
+    fcCatMap[cat]+=fcMonthlyAmount(c); // monthly equivalent excl. VAT
   });
   const cats=Object.entries(fcCatMap).sort((a,b)=>b[1]-a[1]);
   const catColors=['var(--blue)','var(--pink)','var(--amber)','var(--green)','var(--purple)','var(--teal)'];
@@ -5090,19 +5090,18 @@ function fcVatTypeLabel(type){
 // fixedMonthly(y,m) — returns fixed costs active in a given month
 // If y/m omitted, returns all active costs (backward compat for contexts without month)
 function fcActiveInMonth(c,y,m){
-  // Returns true if this fixed cost applies in the given month
+  // Returns true if this fixed cost is due in this specific month
+  // (used for cashflow/actual payment tracking)
   if(!c.active)return false;
   const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
   if(moStr){
     if(c.start_month&&c.start_month>moStr)return false;
     if(c.end_month&&c.end_month<moStr)return false;
   }
-  // Check frequency: quarterly/yearly only apply in specific months
+  // Check frequency: quarterly/yearly only due in specific months
   const freq=c.frequency||'monthly';
   if(freq==='quarterly'){
     const baseMonth=parseInt(c.frequency_month)||1;
-    // Active in months: baseMonth, baseMonth+3, baseMonth+6, baseMonth+9 (mod 12)
-    // e.g. base=3 → active in Mar(3), Jun(6), Sep(9), Dec(12)
     if(((m-baseMonth+12)%3)!==0)return false;
   } else if(freq==='yearly'){
     const baseMonth=parseInt(c.frequency_month)||1;
@@ -5110,8 +5109,25 @@ function fcActiveInMonth(c,y,m){
   }
   return true;
 }
+
+function fcInDateRange(c,y,m){
+  // Returns true if this cost is ACTIVE in this month's date range
+  // Does NOT check frequency — used for monthly average budget calculation
+  if(!c.active)return false;
+  const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
+  if(moStr){
+    if(c.start_month&&c.start_month>moStr)return false;
+    if(c.end_month&&c.end_month<moStr)return false;
+  }
+  return true;
+}
 function fixedMonthly(y,m){
-  return Math.round(S.fixedCosts.filter(c=>fcActiveInMonth(c,y,m)).reduce((s,c)=>s+fcEntryExcl(c),0)*100)/100;
+  // Uses fcInDateRange (not fcActiveInMonth) so that:
+  // - Yearly costs contribute amount/12 every month (not full amount once + 0 rest)
+  // - Quarterly costs contribute amount/3 every month
+  // - Monthly costs contribute full amount every month
+  // This gives a consistent monthly budget view across all dashboards
+  return Math.round(S.fixedCosts.filter(c=>fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const planningItems=S.fixedCosts.filter(c=>c.active);
@@ -5136,7 +5152,7 @@ function renderFixedCosts(){
     // If month filter set, only show costs active that month
     if(monthFilter){
       const[mfy,mfm]=monthFilter.split('-').map(Number);
-      if(!fcActiveInMonth(c,mfy,mfm))return false;
+      if(!fcInDateRange(c,mfy,mfm))return false;
     }
     return true;
   });
@@ -5180,10 +5196,10 @@ function renderFixedCosts(){
   const _fcPageNow=new Date(),_fcPageY=_fcPageNow.getFullYear(),_fcPageM=_fcPageNow.getMonth()+1;
   const tNetThisMonth=fixedMonthly(_fcPageY,_fcPageM);
   // This-month totals (incl VAT) — based on active entries for current month
-  // Use fcActiveInMonth which also handles quarterly/yearly frequency
-  const thisMonthEntries=S.fixedCosts.filter(c=>fcActiveInMonth(c,_fcPageY,_fcPageM));
-  const tGrossThisMonth=thisMonthEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
-  const tVatThisMonth=thisMonthEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
+  // Use fcInDateRange so KPI matches fixedMonthly() used in dashboards
+  const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_fcPageY,_fcPageM));
+  const tGrossThisMonth=thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
+  const tVatThisMonth=thisMonthEntries.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
   const kpiEl=document.getElementById('fc-grand-kpis');
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
@@ -5319,10 +5335,10 @@ function renderFixedCosts(){
       const monthLabel=new Date(mfy2,mfm2-1,1).toLocaleDateString('en',{month:'long',year:'numeric'});
       const moTotal=fixedMonthly(mfy2,mfm2);
       // Group active entries for that month by category
-      const moEntries=S.fixedCosts.filter(c=>fcActiveInMonth(c,mfy2,mfm2));
+      const moEntries=S.fixedCosts.filter(c=>fcInDateRange(c,mfy2,mfm2));
       const moCats=[...new Set(moEntries.map(c=>c.category||'Uncategorised'))].sort();
-      const moGross=moEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
-      const moVat=moEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
+      const moGross=moEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
+      const moVat=moEntries.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
       mbEl.innerHTML=`<div class="card">
         <div class="card-header"><div class="card-title">&#128197; Monthly View — ${esc(monthLabel)}</div>
           <div style="display:flex;gap:16px;font-size:11px">
@@ -5338,7 +5354,7 @@ function renderFixedCosts(){
           </tr></thead><tbody>
           ${moCats.map(cat=>{
             const ces=moEntries.filter(c=>(c.category||'Uncategorised')===cat);
-            const catNet=ces.reduce((s,c)=>s+fcEntryExcl(c),0);
+            const catNet=ces.reduce((s,c)=>s+fcMonthlyAmount(c),0);
             let rows=ces.map(c=>{
               const freq=c.frequency||'monthly';
               const freqLabel=freq==='quarterly'?'Quarterly':freq==='yearly'?'Yearly':'Monthly';
