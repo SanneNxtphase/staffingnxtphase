@@ -8806,8 +8806,12 @@ function renderEmployeeView(){
         // Try by numeric match
         emp=S.employees.find(e=>parseInt(e.id)===parseInt(s.employee_id));
       }
-      // If still not found, create fallback so Ralph-type cases still show
-      if(!emp) emp={id:s.employee_id,name:'#'+s.employee_id,role:'',daily_cost:0};
+      // If still not found, try matching by known employee names list
+      if(!emp){
+        const _knownNames=['Koen','Siebeline','Marco','Kamiel','Paul','Mees','Stein','Ralph','Sanne'];
+        // Can't determine name from ID alone without DB - show as unknown but don't hide
+        emp={id:s.employee_id,name:'Team member #'+s.employee_id,role:'',daily_cost:0};
+      }
       if(emp.name==='Vakantie'||emp.name==='Koen') return;
       const proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
       if(!proj) return;
@@ -8909,6 +8913,8 @@ function wkFmtLabel(mon,fri){
       if(app)app.style.display='none';
       ev.classList.add('ev-visible');
       (async()=>{
+        // Force fresh load - clear cache so stale localStorage never causes issues
+        try{DB._store=null;}catch(e){}
         // Fetch all data fresh from Supabase
         try{await supaLoadAll();}catch(e){console.warn('supa failed',e);}
         await loadData();
@@ -8928,6 +8934,28 @@ function wkFmtLabel(mon,fri){
           if(freshEmps&&freshEmps.length>0){
             freshEmps.forEach(e=>{e.id=parseInt(e.id)||e.id;});
             S.employees=freshEmps;
+            // Auto-insert missing team members into Supabase if absent
+            const _empNames=new Set(freshEmps.map(e=>e.name));
+            const _needed=[
+              {name:'Ralph',role:'Project Manager',daily_cost:427,available_days_per_week:4,vacation_days_per_year:25},
+              {name:'Sanne',role:'Operations',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
+              {name:'Koen',role:'Project Owner',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
+              {name:'Siebeline',role:'Project Manager',daily_cost:365,available_days_per_week:5,vacation_days_per_year:25},
+              {name:'Marco',role:'Techlead',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
+              {name:'Kamiel',role:'Developer',daily_cost:185,available_days_per_week:5,vacation_days_per_year:25},
+              {name:'Paul',role:'Developer',daily_cost:535,available_days_per_week:4,vacation_days_per_year:20},
+              {name:'Mees',role:'Developer',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
+              {name:'Stein',role:'AI Delivery Manager',daily_cost:369,available_days_per_week:5,vacation_days_per_year:25},
+            ];
+            for(const m of _needed){
+              if(!_empNames.has(m.name)){
+                try{
+                  const res=await _supaReq('POST','employees',m);
+                  const row=Array.isArray(res)?res[0]:res;
+                  if(row&&row.id){row.id=parseInt(row.id);S.employees.push(row);}
+                }catch(e){}
+              }
+            }
           }
           if(freshProjs&&freshProjs.length>0){
             freshProjs.forEach(p=>{p.id=parseInt(p.id)||p.id;});
@@ -9169,7 +9197,7 @@ function initBankPlanner(){
     </div>
     <div style="display:flex;align-items:center;gap:10px">
       <div style="font-size:11px;color:rgba(255,255,255,.4)" id="ev-updated"></div>
-      <button onclick="document.getElementById('employee-view').classList.remove('ev-visible');document.querySelector('.app').style.display='';document.getElementById('auth-overlay').classList.remove('hidden');AUTH.role=null;AUTH.input='';authSelectRole('employee')" style="background:rgba(255,255,255,.1);border:none;color:rgba(255,255,255,.7);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:11px">Sign out</button>
+      
     </div>
   </div>
   <!-- Week navigation -->
