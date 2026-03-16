@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v43 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v44 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -8961,6 +8961,26 @@ function wkFmtLabel(mon,fri){
             freshProjs.forEach(p=>{p.id=parseInt(p.id)||p.id;});
             S.projects=freshProjs;
           }
+          // Remap orphaned staffing rows: if employee_id doesn't match any employee,
+          // try to match using known local seed order vs Supabase employee names
+          const _knownSeedOrder=['Koen','Siebeline','Marco','Kamiel','Paul','Mees','Stein','Ralph','Sanne'];
+          const _empByName={};
+          S.employees.forEach(e=>{if(e.name)_empByName[e.name]=e.id;});
+          const _empById=new Set(S.employees.map(e=>e.id));
+          S.staffing.forEach(s=>{
+            if(!_empById.has(s.employee_id)){
+              // Try: local seed index (1-based) → name → Supabase id
+              const seedName=_knownSeedOrder[s.employee_id-1];
+              if(seedName&&_empByName[seedName]){
+                s.employee_id=_empByName[seedName];
+              }
+            }
+          });
+          // Remap orphaned project_id in staffing too
+          const _projById=new Set(S.projects.map(p=>p.id));
+          // Build project name map for remap
+          const _projByClientName={};
+          S.projects.forEach(p=>{_projByClientName[(p.client_name||'')+'|'+(p.name||'')]=p.id;});
         }catch(e){console.warn('direct fetch failed',e);}
         // Apply staffing notes
         try{
