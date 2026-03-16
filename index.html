@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v51 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v52 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -5052,6 +5052,23 @@ function fcEntryVatAmt(entry){
   if(type==='none')return 0;
   return Math.round((fcEntryIncl(entry)-fcEntryExcl(entry))*100)/100;
 }
+// Monthly equivalent amount — adjusts for frequency
+// quarterly → divide by 3, yearly → divide by 12, monthly → full amount
+function fcMonthlyAmount(entry){
+  const net = fcEntryExcl(entry);
+  const freq = entry.frequency || 'monthly';
+  if(freq === 'quarterly') return Math.round(net / 3 * 100) / 100;
+  if(freq === 'yearly')    return Math.round(net / 12 * 100) / 100;
+  return net; // monthly
+}
+function fcMonthlyAmountIncl(entry){
+  const gross = fcEntryIncl(entry);
+  const freq = entry.frequency || 'monthly';
+  if(freq === 'quarterly') return Math.round(gross / 3 * 100) / 100;
+  if(freq === 'yearly')    return Math.round(gross / 12 * 100) / 100;
+  return gross;
+}
+
 // Helper: human label for vat_type
 function fcVatTypeLabel(type){
   if(type==='excl')return 'Excl. VAT';
@@ -5142,29 +5159,25 @@ function renderFixedCosts(){
 
   // Totals always reflect ACTIVE items only (inactive = €0 contribution)
   const activeEntries=entries.filter(c=>c.active);
-  const tGross=activeEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
-  const tVat  =activeEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
-  const tNet  =activeEntries.reduce((s,c)=>s+fcEntryExcl(c),0);
+  // Use monthly-equivalent amounts so totals match dashboard (quarterly÷3, yearly÷12)
+  const tGross=activeEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
+  const tVat  =activeEntries.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
+  const tNet  =activeEntries.reduce((s,c)=>s+fcMonthlyAmount(c),0);
 
   // KPI row
   // Current month fixed costs (matches dashboard)
   const _fcPageNow=new Date(),_fcPageY=_fcPageNow.getFullYear(),_fcPageM=_fcPageNow.getMonth()+1;
   const tNetThisMonth=fixedMonthly(_fcPageY,_fcPageM);
   // This-month totals (incl VAT) — based on active entries for current month
-  const thisMonthEntries=S.fixedCosts.filter(c=>{
-    if(!c.active)return false;
-    const moStr=_fcPageY+'-'+String(_fcPageM).padStart(2,'0');
-    if(c.start_month&&c.start_month>moStr)return false;
-    if(c.end_month&&c.end_month<moStr)return false;
-    return true;
-  });
+  // Use fcActiveInMonth which also handles quarterly/yearly frequency
+  const thisMonthEntries=S.fixedCosts.filter(c=>fcActiveInMonth(c,_fcPageY,_fcPageM));
   const tGrossThisMonth=thisMonthEntries.reduce((s,c)=>s+fcEntryIncl(c),0);
   const tVatThisMonth=thisMonthEntries.reduce((s,c)=>s+fcEntryVatAmt(c),0);
   const kpiEl=document.getElementById('fc-grand-kpis');
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
       <div class="kpi-lbl">This Month — Excl. VAT</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
-      <div class="kpi-sub">Active costs · used in all dashboards</div></div>
+      <div class="kpi-sub">Monthly equivalent · matches all dashboards</div></div>
     <div class="kpi aa">
       <div class="kpi-lbl">This Month — Incl. VAT</div><div class="kpi-val amber">${fmt(tGrossThisMonth)}</div>
       <div class="kpi-sub">What you actually pay out</div></div>
@@ -5201,9 +5214,10 @@ function renderFixedCosts(){
   cardsEl.innerHTML=cats.map(cat=>{
     const ces=grouped[cat]||[];
     const activeCes=ces.filter(c=>c.active);
-    const cg=activeCes.reduce((s,c)=>s+fcEntryIncl(c),0);
-    const cv=activeCes.reduce((s,c)=>s+fcEntryVatAmt(c),0);
-    const cn=activeCes.reduce((s,c)=>s+fcEntryExcl(c),0);
+    // Monthly-equivalent: quarterly÷3, yearly÷12
+    const cg=activeCes.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
+    const cv=activeCes.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
+    const cn=activeCes.reduce((s,c)=>s+fcMonthlyAmount(c),0);
     const pct=tNet>0?(cn/tNet*100).toFixed(0):0;
     const catSafe=esc(cat).replace(/'/g,"\\'");
     return`<div class="card mb-14">
@@ -5250,8 +5264,8 @@ function renderFixedCosts(){
                 ${(()=>{const fr=c.frequency||'monthly';return fr!=='monthly'?`<br><span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700">${fr==='quarterly'?'Q':'Y'}</span>`:'';})()} 
               </td>
               <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber);${!c.active?'opacity:.4':''}">${fmt(fcEntryVatAmt(c))}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'};font-size:13px">${fmt(fcEntryExcl(c))}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3);${!c.active?'opacity:.4':''}">${fmt(fcEntryExcl(c)*12)}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'};font-size:13px">${fmt(fcMonthlyAmount(c))}${(c.frequency||'monthly')!=='monthly'?`<span style="font-size:9px;color:var(--t3);margin-left:3px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:''}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyAmount(c)*12)}</td>
               <td style="padding:8px 10px;text-align:right">
                 ${!c.active?`<button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--green)" onclick="fcReactivate(${c.id})">Reactivate</button>`:''}
                 <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
@@ -5276,7 +5290,7 @@ function renderFixedCosts(){
   if(gtEl)gtEl.innerHTML=entries.length?`
     <div class="card" style="border:2px solid var(--navy);background:var(--navy);color:#fff">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;flex-wrap:wrap;gap:12px">
-        <div style="font-size:13px;font-weight:800;letter-spacing:-.2px">GRAND TOTAL — ${entries.length} entries</div>
+        <div><div style="font-size:13px;font-weight:800;letter-spacing:-.2px">GRAND TOTAL — ${entries.length} active entries</div><div style="font-size:10px;opacity:.6;margin-top:2px">Monthly equivalent · quarterly costs ÷3 · yearly ÷12</div></div>
         <div style="display:flex;gap:24px;flex-wrap:wrap">
           <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Monthly Gross</div><div style="font-size:17px;font-weight:700">${fmt(tGross)}</div></div>
           <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">VAT</div><div style="font-size:17px;font-weight:700;color:#f0c060">${fmt(tVat)}</div></div>
