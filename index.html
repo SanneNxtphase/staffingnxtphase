@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v25 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v42 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -2219,7 +2219,7 @@ async function loadData(){
   try{
     const _sn=JSON.parse(localStorage.getItem('sp-staff-notes')||'{}');
     S.staffing.forEach(s=>{
-      const k=s.employee_id+':'+s.project_id+':'+s.week_key;
+      const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;
       if(_sn[k]) s.note=_sn[k];
     });
   }catch(e){}
@@ -3932,7 +3932,7 @@ async function editCellSave(empId,projId,wk,days,note){
 }
 
 // Staffing notes stored in settings — survives Supabase sync without schema changes
-function _staffNoteKey(empId,projId,wk){return empId+':'+projId+':'+wk;}
+function _staffNoteKey(empId,projId,wk){return String(empId)+':'+String(projId)+':'+wk;}
 // Push ALL staffing notes from S.staffing to Supabase settings
 function _staffingNotesPush(){
   try{
@@ -3987,7 +3987,7 @@ function _staffNoteApply(){
   // Apply saved notes to S.staffing after any data load
   const notes=_staffNotesLoad();
   S.staffing.forEach(s=>{
-    const k=_staffNoteKey(s.employee_id,s.project_id,s.week_key);
+    const k=_staffNoteKey(String(s.employee_id),String(s.project_id),s.week_key);
     if(notes[k]) s.note=notes[k];
   });
 }
@@ -8861,7 +8861,7 @@ function wkFmtLabel(mon,fri){
             localStorage.setItem('sp-staff-notes',_snSet[0].value||'{}');
             const _sn=JSON.parse(_snSet[0].value||'{}');
             S.staffing.forEach(s=>{
-              const k=s.employee_id+':'+s.project_id+':'+s.week_key;
+              const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;
               if(_sn[k]) s.note=_sn[k];
             });
           }
