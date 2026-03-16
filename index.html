@@ -6184,8 +6184,17 @@ async function saveVacation(id){
 }
 
 function modalInvoiceBody(inv,preselectedProjectId){
-  const selProjId=preselectedProjectId||inv?.project_id;
-  const projOptions=S.projects.filter(p=>p.status!=='stopped').map(p=>`<option value="${p.id}"${p.id===selProjId?' selected':''}>${esc(p.client_name+' / '+p.name)}</option>`).join('');
+  const selProjId=parseInt(preselectedProjectId||inv?.project_id)||0;
+  // Include all non-stopped projects + always include the invoice's own project (even if stopped)
+  const ownProj=inv?.project_id?S.projects.find(p=>parseInt(p.id)===parseInt(inv.project_id)):null;
+  const projList=S.projects.filter(p=>p.status!=='stopped'||(ownProj&&parseInt(p.id)===parseInt(ownProj.id)));
+  // Sort: selected project first, then alphabetically
+  projList.sort((a,b)=>{
+    if(parseInt(a.id)===selProjId)return -1;
+    if(parseInt(b.id)===selProjId)return 1;
+    return(a.client_name+a.name).localeCompare(b.client_name+b.name);
+  });
+  const projOptions=projList.map(p=>`<option value="${p.id}"${parseInt(p.id)===selProjId?' selected':''}>${esc(p.client_name+' / '+p.name)}</option>`).join('');
   return`<div class="form-group"><label class="form-lbl">Project</label><select class="form-input" id="f-proj">${projOptions}</select></div>
     <div class="form-row">
       <div class="form-group"><label class="form-lbl">Amount (€)</label><input class="form-input" type="number" id="f-amount" value="${inv?.amount||''}"></div>
