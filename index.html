@@ -1465,7 +1465,7 @@ async function supaLoadAll() {
     }
     // Apply notes to freshly loaded staffing rows
     store.staffing.forEach(function(row){
-      var k=row.employee_id+':'+row.project_id+':'+row.week_key;
+      var k=String(row.employee_id)+':'+String(row.project_id)+':'+row.week_key;
       if(_staffNotes[k]) row.note=_staffNotes[k];
     });
     // Parse start_month/end_month from notes field (encoded as ||SM:YYYY-MM||)
@@ -8727,11 +8727,11 @@ function renderEmployeeView(){
   // Summary cards per person
   // Summary cards use only the first (current) week
   const firstWkKey=weeks[0]?.wkKey;
-  const activeEmps=emps.filter(e=>S.staffing.some(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id)&&(()=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p&&(p.status==='confirmed'||p.status==='draft');})()));
+  const activeEmps=emps.filter(e=>S.staffing.some(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id)));
   if(activeEmps.length){
     html+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">';
     activeEmps.forEach(e=>{
-      const myStaff=S.staffing.filter(s=>s.week_key===firstWkKey&&(s.employee_id===e.id||s.employee_id==e.id)&&(()=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p&&p.status==='confirmed'&&projectWkKeys(p).includes(firstWkKey);})());
+      const myStaff=S.staffing.filter(s=>s.week_key===firstWkKey&&(s.employee_id===e.id||s.employee_id==e.id)&&parseFloat(s.days||0)>0);
       if(!myStaff.length)return; // skip if no hours this week
       const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
       const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(Boolean))];
@@ -8755,7 +8755,7 @@ function renderEmployeeView(){
     emps.forEach(function(emp){
       wkStaff.filter(s=>s.employee_id===emp.id||s.employee_id==emp.id).forEach(function(r){
         const proj=S.projects.find(p=>p.id===r.project_id||p.id==r.project_id);
-        if(proj&&(proj.status==='confirmed'||proj.status==='draft')&&projectWkKeys(proj).includes(wkKey)) rows.push({emp:emp,proj:proj,days:parseFloat(r.days)||0,note:r.note||''});
+        if(proj) rows.push({emp:emp,proj:proj,days:parseFloat(r.days)||0,note:r.note||''});
       });
     });
 
