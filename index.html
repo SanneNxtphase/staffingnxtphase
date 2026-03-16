@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v44 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v45 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -8913,86 +8913,86 @@ function wkFmtLabel(mon,fri){
       if(app)app.style.display='none';
       ev.classList.add('ev-visible');
       (async()=>{
-        // Force fresh load - clear cache so stale localStorage never causes issues
-        try{DB._store=null;}catch(e){}
-        // Fetch all data fresh from Supabase
-        try{await supaLoadAll();}catch(e){console.warn('supa failed',e);}
-        await loadData();
-        // Fetch staffing + employees + projects DIRECTLY from Supabase as backup
-        // This ensures Ralph and all others show even if localStorage is stale
+        const _content=document.getElementById('ev-content');
+        if(_content) _content.innerHTML='<div style="text-align:center;padding:40px;color:#888;font-size:13px">⏳ Loading team data...</div>';
+
+        // Step 1: fetch everything directly from Supabase — no cache, no localStorage
+        let rawStaff=[], rawEmps=[], rawProjs=[], rawSettings=[];
         try{
-          const [freshStaff, freshEmps, freshProjs] = await Promise.all([
+          [rawStaff, rawEmps, rawProjs, rawSettings] = await Promise.all([
             _supaReq('GET','staffing',null,'?select=*'),
             _supaReq('GET','employees',null,'?select=*'),
-            _supaReq('GET','projects',null,'?select=*')
+            _supaReq('GET','projects',null,'?select=*'),
+            _supaReq('GET','settings',null,'?select=key,value')
           ]);
-          if(freshStaff&&freshStaff.length>0){
-            // Normalize IDs to integers
-            freshStaff.forEach(s=>{s.id=parseInt(s.id)||s.id;s.employee_id=parseInt(s.employee_id)||s.employee_id;s.project_id=parseInt(s.project_id)||s.project_id;});
-            S.staffing=freshStaff;
+        }catch(e){ console.error('Supabase fetch error',e); }
+
+        // Step 2: normalize all IDs to integers
+        const norm = arr => (arr||[]).map(r=>{
+          const n={...r};
+          if(n.id!==undefined) n.id=parseInt(n.id)||n.id;
+          if(n.employee_id!==undefined) n.employee_id=parseInt(n.employee_id)||n.employee_id;
+          if(n.project_id!==undefined) n.project_id=parseInt(n.project_id)||n.project_id;
+          return n;
+        });
+        rawEmps  = norm(rawEmps);
+        rawProjs = norm(rawProjs);
+        rawStaff = norm(rawStaff);
+
+        // Step 3: ensure all team members exist in employees
+        const _knownMembers=[
+          {name:'Koen',    role:'Project Owner',        daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
+          {name:'Siebeline',role:'Project Manager',      daily_cost:365,available_days_per_week:5,vacation_days_per_year:25},
+          {name:'Marco',   role:'Techlead',              daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
+          {name:'Kamiel',  role:'Developer',             daily_cost:185,available_days_per_week:5,vacation_days_per_year:25},
+          {name:'Paul',    role:'Developer',             daily_cost:535,available_days_per_week:4,vacation_days_per_year:20},
+          {name:'Mees',    role:'Developer',             daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
+          {name:'Stein',   role:'AI Delivery Manager',  daily_cost:369,available_days_per_week:5,vacation_days_per_year:25},
+          {name:'Ralph',   role:'Project Manager',       daily_cost:427,available_days_per_week:4,vacation_days_per_year:25},
+          {name:'Sanne',   role:'Operations',            daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
+        ];
+        const _empByName={};
+        rawEmps.forEach(e=>{ if(e.name) _empByName[e.name]=e; });
+        for(const m of _knownMembers){
+          if(!_empByName[m.name]){
+            try{
+              const res=await _supaReq('POST','employees',m);
+              const row=Array.isArray(res)?res[0]:res;
+              if(row&&row.id){ row.id=parseInt(row.id); rawEmps.push(row); _empByName[row.name]=row; }
+            }catch(e){}
           }
-          if(freshEmps&&freshEmps.length>0){
-            freshEmps.forEach(e=>{e.id=parseInt(e.id)||e.id;});
-            S.employees=freshEmps;
-            // Auto-insert missing team members into Supabase if absent
-            const _empNames=new Set(freshEmps.map(e=>e.name));
-            const _needed=[
-              {name:'Ralph',role:'Project Manager',daily_cost:427,available_days_per_week:4,vacation_days_per_year:25},
-              {name:'Sanne',role:'Operations',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
-              {name:'Koen',role:'Project Owner',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
-              {name:'Siebeline',role:'Project Manager',daily_cost:365,available_days_per_week:5,vacation_days_per_year:25},
-              {name:'Marco',role:'Techlead',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
-              {name:'Kamiel',role:'Developer',daily_cost:185,available_days_per_week:5,vacation_days_per_year:25},
-              {name:'Paul',role:'Developer',daily_cost:535,available_days_per_week:4,vacation_days_per_year:20},
-              {name:'Mees',role:'Developer',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
-              {name:'Stein',role:'AI Delivery Manager',daily_cost:369,available_days_per_week:5,vacation_days_per_year:25},
-            ];
-            for(const m of _needed){
-              if(!_empNames.has(m.name)){
-                try{
-                  const res=await _supaReq('POST','employees',m);
-                  const row=Array.isArray(res)?res[0]:res;
-                  if(row&&row.id){row.id=parseInt(row.id);S.employees.push(row);}
-                }catch(e){}
-              }
+        }
+
+        // Step 4: remap orphaned staffing rows (local seed ID → Supabase ID by name)
+        // Known seed order: index 1=Koen, 2=Siebeline, 3=Marco, 4=Kamiel, 5=Paul,
+        //                   6=Mees, 7=Stein, 8=Ralph, 9=Sanne
+        const _seedOrder=['Koen','Siebeline','Marco','Kamiel','Paul','Mees','Stein','Ralph','Sanne'];
+        const _empIdSet=new Set(rawEmps.map(e=>e.id));
+        rawStaff.forEach(s=>{
+          if(!_empIdSet.has(s.employee_id)){
+            const seedName=_seedOrder[s.employee_id-1];
+            if(seedName && _empByName[seedName]){
+              s.employee_id = _empByName[seedName].id;
             }
           }
-          if(freshProjs&&freshProjs.length>0){
-            freshProjs.forEach(p=>{p.id=parseInt(p.id)||p.id;});
-            S.projects=freshProjs;
-          }
-          // Remap orphaned staffing rows: if employee_id doesn't match any employee,
-          // try to match using known local seed order vs Supabase employee names
-          const _knownSeedOrder=['Koen','Siebeline','Marco','Kamiel','Paul','Mees','Stein','Ralph','Sanne'];
-          const _empByName={};
-          S.employees.forEach(e=>{if(e.name)_empByName[e.name]=e.id;});
-          const _empById=new Set(S.employees.map(e=>e.id));
-          S.staffing.forEach(s=>{
-            if(!_empById.has(s.employee_id)){
-              // Try: local seed index (1-based) → name → Supabase id
-              const seedName=_knownSeedOrder[s.employee_id-1];
-              if(seedName&&_empByName[seedName]){
-                s.employee_id=_empByName[seedName];
-              }
-            }
-          });
-          // Remap orphaned project_id in staffing too
-          const _projById=new Set(S.projects.map(p=>p.id));
-          // Build project name map for remap
-          const _projByClientName={};
-          S.projects.forEach(p=>{_projByClientName[(p.client_name||'')+'|'+(p.name||'')]=p.id;});
-        }catch(e){console.warn('direct fetch failed',e);}
-        // Apply staffing notes
+        });
+
+        // Step 5: apply staffing notes
         try{
-          const _snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key,value');
-          if(_snSet&&_snSet.length>0){
-            const _sn=JSON.parse(_snSet[0].value||'{}');
-            S.staffing.forEach(s=>{
+          const noteSetting=(rawSettings||[]).find(r=>r.key==='staffing_notes');
+          if(noteSetting){
+            const _sn=JSON.parse(noteSetting.value||'{}');
+            rawStaff.forEach(s=>{
               const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;
               if(_sn[k]) s.note=_sn[k];
             });
           }
         }catch(e){}
+
+        // Step 6: set S.* and render
+        S.employees = rawEmps;
+        S.projects  = rawProjs;
+        S.staffing  = rawStaff;
         renderEmployeeView();
       })();
     };
