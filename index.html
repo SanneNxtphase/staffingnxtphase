@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v42 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v43 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -8909,13 +8909,35 @@ function wkFmtLabel(mon,fri){
       if(app)app.style.display='none';
       ev.classList.add('ev-visible');
       (async()=>{
+        // Fetch all data fresh from Supabase
         try{await supaLoadAll();}catch(e){console.warn('supa failed',e);}
         await loadData();
-        // Always fetch staffing_notes fresh from Supabase and apply to S.staffing
+        // Fetch staffing + employees + projects DIRECTLY from Supabase as backup
+        // This ensures Ralph and all others show even if localStorage is stale
+        try{
+          const [freshStaff, freshEmps, freshProjs] = await Promise.all([
+            _supaReq('GET','staffing',null,'?select=*'),
+            _supaReq('GET','employees',null,'?select=*'),
+            _supaReq('GET','projects',null,'?select=*')
+          ]);
+          if(freshStaff&&freshStaff.length>0){
+            // Normalize IDs to integers
+            freshStaff.forEach(s=>{s.id=parseInt(s.id)||s.id;s.employee_id=parseInt(s.employee_id)||s.employee_id;s.project_id=parseInt(s.project_id)||s.project_id;});
+            S.staffing=freshStaff;
+          }
+          if(freshEmps&&freshEmps.length>0){
+            freshEmps.forEach(e=>{e.id=parseInt(e.id)||e.id;});
+            S.employees=freshEmps;
+          }
+          if(freshProjs&&freshProjs.length>0){
+            freshProjs.forEach(p=>{p.id=parseInt(p.id)||p.id;});
+            S.projects=freshProjs;
+          }
+        }catch(e){console.warn('direct fetch failed',e);}
+        // Apply staffing notes
         try{
           const _snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key,value');
           if(_snSet&&_snSet.length>0){
-            localStorage.setItem('sp-staff-notes',_snSet[0].value||'{}');
             const _sn=JSON.parse(_snSet[0].value||'{}');
             S.staffing.forEach(s=>{
               const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;
