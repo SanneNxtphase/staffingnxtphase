@@ -1458,7 +1458,7 @@ async function supaLoadAll() {
     if(_oldStore&&_oldStore.staffing){
       _oldStore.staffing.forEach(function(old){
         if(old.note){
-          var k=old.employee_id+':'+old.project_id+':'+old.week_key;
+          var k=String(old.employee_id)+':'+String(old.project_id)+':'+old.week_key;
           _staffNotes[k]=_staffNotes[k]||old.note;
         }
       });
@@ -8727,7 +8727,7 @@ function renderEmployeeView(){
   // Summary cards per person
   // Summary cards use only the first (current) week
   const firstWkKey=weeks[0]?.wkKey;
-  const activeEmps=emps.filter(e=>S.staffing.some(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id)&&(()=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p&&p.status==='confirmed';})()));
+  const activeEmps=emps.filter(e=>S.staffing.some(s=>allWkKeys.includes(s.week_key)&&(s.employee_id===e.id||s.employee_id==e.id)&&(()=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p&&(p.status==='confirmed'||p.status==='draft');})()));
   if(activeEmps.length){
     html+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">';
     activeEmps.forEach(e=>{
@@ -8755,7 +8755,7 @@ function renderEmployeeView(){
     emps.forEach(function(emp){
       wkStaff.filter(s=>s.employee_id===emp.id||s.employee_id==emp.id).forEach(function(r){
         const proj=S.projects.find(p=>p.id===r.project_id||p.id==r.project_id);
-        if(proj&&proj.status==='confirmed'&&projectWkKeys(proj).includes(wkKey)) rows.push({emp:emp,proj:proj,days:parseFloat(r.days)||0,note:r.note||''});
+        if(proj&&(proj.status==='confirmed'||proj.status==='draft')&&projectWkKeys(proj).includes(wkKey)) rows.push({emp:emp,proj:proj,days:parseFloat(r.days)||0,note:r.note||''});
       });
     });
 
