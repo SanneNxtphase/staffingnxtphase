@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v49 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v50 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -8754,7 +8754,7 @@ function renderEmployeeView(){
 
   // Debug panel — shows raw Supabase data for troubleshooting
   const _dbg=document.getElementById('ev-debug');
-  if(_dbg){
+  if(_dbg&&AUTH&&AUTH.role==='admin'){
     const _empIds=new Set(S.employees.map(e=>e.id));
     const _wk0 = (()=>{const m=new Date(now);const dow=m.getDay()===0?6:m.getDay()-1;m.setDate(m.getDate()-dow);m.setHours(0,0,0,0);const d2=new Date(m);d2.setUTCDate?d2.setDate(d2.getDate()+3-((d2.getDay()+6)%7)):null;const ys=new Date(d2.getFullYear(),0,4);return d2.getFullYear()+'-W'+String(1+Math.round(((d2-ys)/86400000-3+((ys.getDay()+6)%7))/7)).padStart(2,'0');})();
     const _wkStaff=S.staffing.filter(s=>s.week_key===_wk0);
@@ -8847,7 +8847,7 @@ function renderEmployeeView(){
       }
       if(!isTeamViewVisible(emp)) return;
       let proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
-      if(!proj) proj={id:s.project_id,name:'Project #'+s.project_id,client_name:'?'};
+      if(!proj) proj={id:s.project_id,name:'⚠ Onbekend project #'+s.project_id,client_name:'?',_unknown:true};
       rows.push({emp:emp,proj:proj,days:parseFloat(s.days)||0,note:s.note||''});
     });
     // Sort by employee name for consistent display
@@ -8878,7 +8878,7 @@ function renderEmployeeView(){
         +'</tr></thead><tbody>';
 
       rows.forEach(function(r,idx){
-        const pct=Math.round(r.days/5*100);
+        const avail=r.emp&&r.emp.available_days_per_week?parseFloat(r.emp.available_days_per_week):5;const pct=Math.round(r.days/avail*100);
         const daysColor=pct>=80?'var(--blue)':pct>=40?'var(--teal)':'var(--t2)';
         html+='<tr style="border-bottom:1px solid var(--bdr);'+(idx%2===1?'background:var(--bg2)':'')+'">'
           +'<td style="padding:7px 14px;font-weight:700;color:var(--navy);white-space:nowrap">'+esc(r.emp.name)+'</td>'
@@ -9017,6 +9017,31 @@ function wkFmtLabel(mon,fri){
               console.log('[team] Remapped orphaned employee_id',_oldId,'→',emp.name,'(id:'+emp.id+')');
             });
           }
+        }
+
+        // Step 4c: remap orphaned project_ids by matching project names
+        // Build lookup: project_name (normalized) → project id
+        const _projByNorm={};
+        rawProjs.forEach(p=>{
+          if(p.name) _projByNorm[p.name.toLowerCase().trim()] = p.id;
+          if(p.client_name&&p.name) _projByNorm[(p.client_name+'/'+p.name).toLowerCase().trim()] = p.id;
+        });
+        const _projIdSet2=new Set(rawProjs.map(p=>p.id));
+        // For orphaned project_ids, try to find match in rawProjs by scanning all rows
+        // We can't know the name from just an ID, but we can check if there are duplicate
+        // project entries (same project stored twice with different IDs due to remap issues)
+        // Group orphaned project_ids and check if any rawProj has same client+name combo
+        const _orphProjIds=new Set(rawStaff.filter(s=>!_projIdSet2.has(s.project_id)).map(s=>s.project_id));
+        // For each orphaned project_id, try to find it in the admin app's project list
+        // by checking supabase projects table directly (already in rawProjs)
+        // If a staffing row has project_id=X and X is not in rawProjs,
+        // it means the project was saved with local ID. Try to find by checking
+        // if rawProjs has exactly one project not referenced by any staffing row.
+        if(_orphProjIds.size>0){
+          const _projsInStaff=new Set(rawStaff.filter(s=>_projIdSet2.has(s.project_id)).map(s=>s.project_id));
+          // Projects that exist but no staffing references them (could be the real project)
+          // Don't remap automatically - too risky. Just leave as "Project #X" fallback.
+          console.log('[team] Orphaned project_ids:',_orphProjIds.size,':',_orphProjIds);
         }
 
         // Step 5: apply staffing notes
