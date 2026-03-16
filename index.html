@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v47 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v48 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -8758,17 +8758,20 @@ function renderEmployeeView(){
     const _empIds=new Set(S.employees.map(e=>e.id));
     const _wk0 = (()=>{const m=new Date(now);const dow=m.getDay()===0?6:m.getDay()-1;m.setDate(m.getDate()-dow);m.setHours(0,0,0,0);const d2=new Date(m);d2.setUTCDate?d2.setDate(d2.getDate()+3-((d2.getDay()+6)%7)):null;const ys=new Date(d2.getFullYear(),0,4);return d2.getFullYear()+'-W'+String(1+Math.round(((d2-ys)/86400000-3+((ys.getDay()+6)%7))/7)).padStart(2,'0');})();
     const _wkStaff=S.staffing.filter(s=>s.week_key===_wk0);
-    const _orphanEmps=[...new Set(_wkStaff.filter(s=>!_empIds.has(s.employee_id)).map(s=>s.employee_id))];
     const _projIds2=new Set(S.projects.map(p=>p.id));
+    const _orphanEmps=[...new Set(_wkStaff.filter(s=>!_empIds.has(s.employee_id)).map(s=>s.employee_id))];
     const _orphanProjs=[...new Set(_wkStaff.filter(s=>!_projIds2.has(s.project_id)).map(s=>s.project_id))];
-    _dbg.innerHTML='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11px;margin-bottom:12px;color:#333">'
-      +'<strong>📊 Data check:</strong> '
-      +S.employees.length+' employees ('+S.employees.filter(isTeamViewVisible).map(e=>e.name).join(', ')+')'
-      +' | '+S.staffing.length+' staffing rows total'
-      +' | '+_wkStaff.length+' rows for '+_wk0
-      +(_orphanEmps.length?' | <span style="color:red">⚠ Unknown employee_ids: '+_orphanEmps.join(', ')+'</span>':'')
-      +(_orphanProjs.length?' | <span style="color:orange">⚠ Unknown project_ids: '+_orphanProjs.join(', ')+'</span>':'')
-      +'</div>';
+    // Find Ralph specifically
+    const _ralph=S.employees.find(e=>e.name==='Ralph');
+    const _ralphStaff=_ralph?S.staffing.filter(s=>s.week_key===_wk0&&String(s.employee_id)===String(_ralph.id)):[];
+    const _debugLines=[
+      '<strong>📊 Data check:</strong> '+S.employees.length+' employees ('+S.employees.filter(isTeamViewVisible).map(e=>e.name+'#'+e.id).join(', ')+')',
+      S.staffing.length+' staffing rows | '+_wkStaff.length+' for '+_wk0,
+      _ralph?('Ralph id='+_ralph.id+' → '+(_ralphStaff.length?_ralphStaff.length+' rows this week':'NO ROWS THIS WEEK')):'Ralph NOT in employees!',
+      _orphanEmps.length?'⚠ Unknown emp_ids in W12: '+_orphanEmps.join(', '):'',
+      _orphanProjs.length?'⚠ Unknown proj_ids in W12: '+_orphanProjs.join(', '):''
+    ].filter(Boolean);
+    _dbg.innerHTML='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11px;margin-bottom:12px;color:#333">'+_debugLines.join(' | ')+'</div>';
   }
 
   // Build 2 weeks to show
@@ -8983,38 +8986,9 @@ function wkFmtLabel(mon,fri){
           }
         }
 
-        // Step 4: remap orphaned staffing rows (local seed ID → Supabase ID by name)
-        // Known seed order: index 1=Koen, 2=Siebeline, 3=Marco, 4=Kamiel, 5=Paul,
-        //                   6=Mees, 7=Stein, 8=Ralph, 9=Sanne
-        const _seedOrder=_SUPA_REAL_MEMBERS.map(m=>m.name); // matches seed insertion order
-        const _empIdSet=new Set(rawEmps.map(e=>e.id));
-        rawStaff.forEach(s=>{
-          if(!_empIdSet.has(s.employee_id)){
-            const seedName=_seedOrder[s.employee_id-1];
-            if(seedName && _empByName[seedName]){
-              s.employee_id = _empByName[seedName].id;
-            }
-          }
-        });
-
-        // Step 4b: remap orphaned project_ids in staffing
-        // Build project lookup by client_name+name
-        const _projById2=new Set(rawProjs.map(p=>p.id));
-        const _projByKey={};
-        rawProjs.forEach(p=>{ _projByKey[(p.client_name||'')+'|'+(p.name||'')] = p.id; });
-        // Known seed projects for remap (index 1-based)
-        // We can't know exact seed order for projects, but we CAN check by name match
-        // Build a fuzzy name map: project name (lowercase) → id
-        const _projByName={};
-        rawProjs.forEach(p=>{ _projByName[(p.name||'').toLowerCase()] = p.id; });
-        rawStaff.forEach(s=>{
-          if(s.project_id && !_projById2.has(s.project_id)){
-            // Try to find by checking if any project id matches when treated as local seed id
-            // Local project seed order doesn't matter - just find by name if possible
-            // For now: keep the row but mark project_id as unknown
-            // The row building will use a fallback project name
-          }
-        });
+        // Step 4: verify all staffing employee_ids match known employees
+        // No remapping needed - Supabase staffing already uses Supabase employee IDs
+        // Just log any mismatches for debugging
 
         // Step 5: apply staffing notes
         try{
