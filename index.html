@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v46 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v47 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1161,9 +1161,9 @@ const DB={
         available_days_per_week:av,vacation_days_per_year:vd,created_at:new Date().toISOString()
       }));
     } else {
-      // Always enforce correct daily_cost even if employees already exist
-      const costMap={Koen:462,Siebeline:365,Marco:462,Kamiel:185,Paul:535,Mees:222,Stein:369,Ralph:427};
-      s.employees.forEach(e=>{if(costMap.hasOwnProperty(e.name))e.daily_cost=costMap[e.name];});
+      // Only set daily_cost as fallback if missing - Supabase value takes priority
+      const costMap={Koen:462,Siebeline:365,Marco:462,Kamiel:185,Paul:535,Mees:222,Stein:369,Ralph:427,Sanne:222};
+      s.employees.forEach(e=>{if((!e.daily_cost||e.daily_cost===0)&&costMap.hasOwnProperty(e.name))e.daily_cost=costMap[e.name];});
     }
   },
   _sv(){localStorage.setItem('sp-v5',JSON.stringify(this._store));},
@@ -1276,6 +1276,16 @@ var _SUPA_REAL_MEMBERS = [
   {name:'Ralph',role:'Project Manager',daily_cost:427,available_days_per_week:4,vacation_days_per_year:25}
 ];
 
+// ── TEAM VIEW CONFIGURATION ──────────────────────────────────────────────────
+// Names excluded from the team view (?team= link).
+// Add names here to hide them. Never edit the rendering code directly.
+// 'Vakantie' = vacation placeholder row, never a real person.
+// 'Koen' = owner/admin, not in team view.
+// 'Sanne' = back-office, not in team view.
+var _TEAM_VIEW_EXCLUDE = new Set(['Vakantie','Koen','Sanne']);
+// Helper: is this employee visible in team view?
+function isTeamViewVisible(emp){ return emp && emp.name && !_TEAM_VIEW_EXCLUDE.has(emp.name); }
+
 async function supaLoadAll() {
   try {
     var online = await _supaCheckOnline();
@@ -1376,16 +1386,16 @@ async function supaLoadAll() {
     }
 
     // Schema migration + enforce canonical daily_cost values
-    var _canonicalCosts = {
+    var _defaultCosts = {
       'Koen':462,'Siebeline':365,'Marco':462,'Kamiel':185,
-      'Paul':535,'Mees':222,'Stein':369,'Ralph':427
+      'Paul':535,'Mees':222,'Stein':369,'Ralph':427,'Sanne':222
     };
     for (var ei = 0; ei < store.employees.length; ei++) {
       var emp = store.employees[ei];
       if (!emp.vacation_days_per_year) emp.vacation_days_per_year = 25;
       // Always enforce correct daily_cost for known team members
-      if (_canonicalCosts.hasOwnProperty(emp.name)) {
-        emp.daily_cost = _canonicalCosts[emp.name];
+      if (_defaultCosts.hasOwnProperty(emp.name)) {
+        if(!emp.daily_cost||emp.daily_cost===0) emp.daily_cost = _defaultCosts[emp.name];
       }
     }
     for (var pi = 0; pi < store.projects.length; pi++) {
@@ -2009,7 +2019,8 @@ function vacInWeek(empId,wk){
 function staffCostMonth(y,m){
   const weeks=getWeeksInMonth(y,m);let c=0;
   S.staffing.filter(s=>weeks.includes(s.week_key)).forEach(s=>{
-    const e=S.employees.find(e=>e.id===s.employee_id);if(e)c+=e.daily_cost*s.days;
+    const e=S.employees.find(e=>e.id==s.employee_id);// == handles string/int mismatch
+    if(e&&e.daily_cost)c+=parseFloat(e.daily_cost)*parseFloat(s.days||0);
   });return c;
 }
 // ── FIXED COST CALCULATION — Unified Bank + Manual ───────────────────────
@@ -8747,13 +8758,16 @@ function renderEmployeeView(){
     const _empIds=new Set(S.employees.map(e=>e.id));
     const _wk0 = (()=>{const m=new Date(now);const dow=m.getDay()===0?6:m.getDay()-1;m.setDate(m.getDate()-dow);m.setHours(0,0,0,0);const d2=new Date(m);d2.setUTCDate?d2.setDate(d2.getDate()+3-((d2.getDay()+6)%7)):null;const ys=new Date(d2.getFullYear(),0,4);return d2.getFullYear()+'-W'+String(1+Math.round(((d2-ys)/86400000-3+((ys.getDay()+6)%7))/7)).padStart(2,'0');})();
     const _wkStaff=S.staffing.filter(s=>s.week_key===_wk0);
-    const _orphans=[...new Set(_wkStaff.filter(s=>!_empIds.has(s.employee_id)).map(s=>s.employee_id))];
+    const _orphanEmps=[...new Set(_wkStaff.filter(s=>!_empIds.has(s.employee_id)).map(s=>s.employee_id))];
+    const _projIds2=new Set(S.projects.map(p=>p.id));
+    const _orphanProjs=[...new Set(_wkStaff.filter(s=>!_projIds2.has(s.project_id)).map(s=>s.project_id))];
     _dbg.innerHTML='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11px;margin-bottom:12px;color:#333">'
       +'<strong>📊 Data check:</strong> '
-      +S.employees.length+' employees ('+S.employees.filter(e=>e.name!=='Vakantie'&&e.name!=='Koen').map(e=>e.name).join(', ')+')'
+      +S.employees.length+' employees ('+S.employees.filter(isTeamViewVisible).map(e=>e.name).join(', ')+')'
       +' | '+S.staffing.length+' staffing rows total'
       +' | '+_wkStaff.length+' rows for '+_wk0
-      +(_orphans.length?' | <span style="color:red">⚠ Orphaned employee_ids: '+_orphans.join(', ')+'</span>':'')
+      +(_orphanEmps.length?' | <span style="color:red">⚠ Unknown employee_ids: '+_orphanEmps.join(', ')+'</span>':'')
+      +(_orphanProjs.length?' | <span style="color:orange">⚠ Unknown project_ids: '+_orphanProjs.join(', ')+'</span>':'')
       +'</div>';
   }
 
@@ -8780,7 +8794,7 @@ function renderEmployeeView(){
   const upd=document.getElementById('ev-updated');
   if(upd)upd.textContent='Updated '+now.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
 
-  const emps=S.employees.filter(e=>e.name&&e.name!=='Vakantie'&&e.name!=='Koen');
+  const emps=S.employees.filter(isTeamViewVisible);
 
   let html='';
 
@@ -8828,9 +8842,9 @@ function renderEmployeeView(){
         // Can't determine name from ID alone without DB - show as unknown but don't hide
         emp={id:s.employee_id,name:'Team member #'+s.employee_id,role:'',daily_cost:0};
       }
-      if(emp.name==='Vakantie'||emp.name==='Koen') return;
-      const proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
-      if(!proj) return;
+      if(!isTeamViewVisible(emp)) return;
+      let proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
+      if(!proj) proj={id:s.project_id,name:'Project #'+s.project_id,client_name:'?'};
       rows.push({emp:emp,proj:proj,days:parseFloat(s.days)||0,note:s.note||''});
     });
     // Sort by employee name for consistent display
@@ -8956,17 +8970,7 @@ function wkFmtLabel(mon,fri){
         rawStaff = norm(rawStaff);
 
         // Step 3: ensure all team members exist in employees
-        const _knownMembers=[
-          {name:'Koen',    role:'Project Owner',        daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
-          {name:'Siebeline',role:'Project Manager',      daily_cost:365,available_days_per_week:5,vacation_days_per_year:25},
-          {name:'Marco',   role:'Techlead',              daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
-          {name:'Kamiel',  role:'Developer',             daily_cost:185,available_days_per_week:5,vacation_days_per_year:25},
-          {name:'Paul',    role:'Developer',             daily_cost:535,available_days_per_week:4,vacation_days_per_year:20},
-          {name:'Mees',    role:'Developer',             daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
-          {name:'Stein',   role:'AI Delivery Manager',  daily_cost:369,available_days_per_week:5,vacation_days_per_year:25},
-          {name:'Ralph',   role:'Project Manager',       daily_cost:427,available_days_per_week:4,vacation_days_per_year:25},
-          {name:'Sanne',   role:'Operations',            daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
-        ];
+        const _knownMembers=_SUPA_REAL_MEMBERS; // single source of truth
         const _empByName={};
         rawEmps.forEach(e=>{ if(e.name) _empByName[e.name]=e; });
         for(const m of _knownMembers){
@@ -8982,7 +8986,7 @@ function wkFmtLabel(mon,fri){
         // Step 4: remap orphaned staffing rows (local seed ID → Supabase ID by name)
         // Known seed order: index 1=Koen, 2=Siebeline, 3=Marco, 4=Kamiel, 5=Paul,
         //                   6=Mees, 7=Stein, 8=Ralph, 9=Sanne
-        const _seedOrder=['Koen','Siebeline','Marco','Kamiel','Paul','Mees','Stein','Ralph','Sanne'];
+        const _seedOrder=_SUPA_REAL_MEMBERS.map(m=>m.name); // matches seed insertion order
         const _empIdSet=new Set(rawEmps.map(e=>e.id));
         rawStaff.forEach(s=>{
           if(!_empIdSet.has(s.employee_id)){
@@ -8990,6 +8994,25 @@ function wkFmtLabel(mon,fri){
             if(seedName && _empByName[seedName]){
               s.employee_id = _empByName[seedName].id;
             }
+          }
+        });
+
+        // Step 4b: remap orphaned project_ids in staffing
+        // Build project lookup by client_name+name
+        const _projById2=new Set(rawProjs.map(p=>p.id));
+        const _projByKey={};
+        rawProjs.forEach(p=>{ _projByKey[(p.client_name||'')+'|'+(p.name||'')] = p.id; });
+        // Known seed projects for remap (index 1-based)
+        // We can't know exact seed order for projects, but we CAN check by name match
+        // Build a fuzzy name map: project name (lowercase) → id
+        const _projByName={};
+        rawProjs.forEach(p=>{ _projByName[(p.name||'').toLowerCase()] = p.id; });
+        rawStaff.forEach(s=>{
+          if(s.project_id && !_projById2.has(s.project_id)){
+            // Try to find by checking if any project id matches when treated as local seed id
+            // Local project seed order doesn't matter - just find by name if possible
+            // For now: keep the row but mark project_id as unknown
+            // The row building will use a fallback project name
           }
         });
 
