@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v48 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v49 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -8767,9 +8767,9 @@ function renderEmployeeView(){
     const _debugLines=[
       '<strong>📊 Data check:</strong> '+S.employees.length+' employees ('+S.employees.filter(isTeamViewVisible).map(e=>e.name+'#'+e.id).join(', ')+')',
       S.staffing.length+' staffing rows | '+_wkStaff.length+' for '+_wk0,
-      _ralph?('Ralph id='+_ralph.id+' → '+(_ralphStaff.length?_ralphStaff.length+' rows this week':'NO ROWS THIS WEEK')):'Ralph NOT in employees!',
-      _orphanEmps.length?'⚠ Unknown emp_ids in W12: '+_orphanEmps.join(', '):'',
-      _orphanProjs.length?'⚠ Unknown proj_ids in W12: '+_orphanProjs.join(', '):''
+      _ralph?('Ralph id='+_ralph.id+' → '+(_ralphStaff.length?_ralphStaff.length+' rows this week':'<span style="color:red;font-weight:bold">NO ROWS — re-enter Ralph staffing in admin app</span>')):'<span style="color:red">Ralph NOT in employees!</span>',
+      _orphanEmps.length?'<span style="color:orange">⚠ Unmatched emp_ids in W12: '+_orphanEmps.join(', ')+' (these rows are hidden)</span>':'✓ All employees matched',
+      _orphanProjs.length?'<span style="color:orange">⚠ Unknown proj_ids: '+_orphanProjs.join(', ')+'</span>':''
     ].filter(Boolean);
     _dbg.innerHTML='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11px;margin-bottom:12px;color:#333">'+_debugLines.join(' | ')+'</div>';
   }
@@ -8986,9 +8986,38 @@ function wkFmtLabel(mon,fri){
           }
         }
 
-        // Step 4: verify all staffing employee_ids match known employees
-        // No remapping needed - Supabase staffing already uses Supabase employee IDs
-        // Just log any mismatches for debugging
+        // Step 4: smart remap of orphaned staffing rows
+        // Find employee_ids in staffing that don't match any known employee
+        // Match them to employees who have NO staffing this period
+        const _allWkKeys2=[];
+        const _now2=new Date();
+        for(let _wi=0;_wi<4;_wi++){
+          const _m=new Date(_now2);
+          const _dow=_m.getDay()===0?6:_m.getDay()-1;
+          _m.setDate(_m.getDate()-_dow+_wi*7);
+          _m.setHours(0,0,0,0);
+          // get week key
+          const _d2=new Date(_m);_d2.setDate(_d2.getDate()+3-((_d2.getDay()+6)%7));
+          const _ys=new Date(_d2.getFullYear(),0,4);
+          const _wk=''+_d2.getFullYear()+'-W'+String(1+Math.round(((_d2-_ys)/86400000-3+((_ys.getDay()+6)%7))/7)).padStart(2,'0');
+          _allWkKeys2.push(_wk);
+        }
+        const _empIdSet2=new Set(rawEmps.map(e=>e.id));
+        const _orphanedIds=new Set(rawStaff.filter(s=>_allWkKeys2.includes(s.week_key)&&!_empIdSet2.has(s.employee_id)).map(s=>s.employee_id));
+        if(_orphanedIds.size>0){
+          // Find employees who have NO staffing rows in recent weeks (likely their rows are orphaned)
+          const _empsWithStaff=new Set(rawStaff.filter(s=>_allWkKeys2.includes(s.week_key)&&_empIdSet2.has(s.employee_id)).map(s=>s.employee_id));
+          const _empsWithoutStaff=rawEmps.filter(e=>isTeamViewVisible(e)&&!_empsWithStaff.has(e.id));
+          // If exactly one orphaned ID and one unmatched employee → safe to remap
+          if(_orphanedIds.size===_empsWithoutStaff.length&&_empsWithoutStaff.length>0){
+            const _orphanArr=[..._orphanedIds];
+            _empsWithoutStaff.forEach((emp,i)=>{
+              const _oldId=_orphanArr[i];
+              rawStaff.forEach(s=>{if(s.employee_id===_oldId)s.employee_id=emp.id;});
+              console.log('[team] Remapped orphaned employee_id',_oldId,'→',emp.name,'(id:'+emp.id+')');
+            });
+          }
+        }
 
         // Step 5: apply staffing notes
         try{
