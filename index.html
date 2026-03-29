@@ -682,6 +682,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
           <th class="right">Hours</th>
           <th class="right">Rate/h</th>
           <th class="right">Amount</th>
+          <th>Week</th>
           <th>Date</th>
           <th>Actions</th>
         </tr></thead>
@@ -690,6 +691,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
       </table></div>
     </div>
   </div>
+  <div id="ext-weekly-summary" style="margin-top:16px"></div>
 </div>
 
 <div id="page-forecast" class="page">
@@ -972,8 +974,10 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="btn-group">
       <button class="btn btn-primary" onclick="fcAddEntryModal()">+ Add Cost Entry</button>
       <button class="btn" onclick="fcAddCategoryModal()">+ Add Category</button>
+      <button class="btn btn-sm" style="background:var(--amber-p);color:var(--amber);border-color:var(--amber);font-size:10px" onclick="fcDebugRaw()">🔍 Debug data</button>
     </div>
   </div>
+  <div id="fc-debug-panel" style="display:none;background:#1a1a2e;color:#00ff88;font-family:monospace;font-size:11px;padding:12px 16px;border-radius:var(--r);margin-bottom:12px;max-height:300px;overflow-y:auto;white-space:pre-wrap"></div>
   <div class="kpi-row mb-14" id="fc-grand-kpis" style="position:sticky;top:0;z-index:50;background:var(--bg);padding:10px 0 6px;margin:0 0 8px;border-bottom:2px solid var(--bdr);box-shadow:0 2px 8px rgba(0,0,0,.07)"></div>
   <div class="filter-bar mb-14" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 18px;background:var(--bg2);border:1px solid var(--bdr);border-radius:var(--r);position:sticky;top:88px;z-index:49;box-shadow:0 2px 6px rgba(0,0,0,.06)">
     <span style="font-size:11px;color:var(--t3);font-weight:600">Category:</span>
@@ -1062,7 +1066,74 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   <div id="hist-content"></div>
 </div>
 
-</div></div>
+<div id="page-bankplanner" class="page">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Bank Position Planner</div>
+      <div class="page-sub">Liquidity forecast — estimate your bank balance over coming months</div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="runBankPlan()">▶ Calculate</button>
+  </div>
+  <div id="bp-summary" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px"></div>
+  <div style="display:grid;grid-template-columns:290px 1fr;gap:20px;align-items:start">
+    <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:14px;position:sticky;top:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Bank balance (€)</label>
+          <input class="form-input bold" id="bp-balance" type="number" step="100" placeholder="180000" value="180000" oninput="runBankPlan()">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Horizon</label>
+          <select class="form-input" id="bp-months" onchange="runBankPlan()">
+            <option value="3">3 months</option>
+            <option value="6" selected>6 months</option>
+            <option value="9">9 months</option>
+            <option value="12">12 months</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Monthly Cash Flows</div>
+        <div id="bp-flows" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn btn-sm btn-ghost" style="flex:1;font-size:11px" onclick="bpAddFlow('in')">+ Income</button>
+          <button class="btn btn-sm btn-ghost" style="flex:1;font-size:11px;color:var(--red);border-color:var(--red)" onclick="bpAddFlow('out')">+ Expense</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">One-off Events</div>
+        <div id="bp-oneoffs" style="display:flex;flex-direction:column;gap:8px"></div>
+        <button class="btn btn-sm btn-ghost" style="width:100%;margin-top:6px;font-size:11px" onclick="bpAddOneOff()">+ Add One-off</button>
+      </div>
+      <div style="background:var(--blue-p);border-radius:var(--r);padding:10px;font-size:11px;color:var(--blue)">
+        💡 Revenue, fixed costs &amp; staffing auto-loaded from your data.
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:16px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:12px">Balance Trend</div>
+        <div id="bp-chart" style="display:flex;align-items:flex-end;gap:6px;height:90px"></div>
+        <div id="bp-chart-labels" style="display:flex;gap:6px;margin-top:5px"></div>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="background:var(--bg2)">
+              <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bdr)">Month</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--green);border-bottom:1px solid var(--bdr)">Inflow</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--red);border-bottom:1px solid var(--bdr)">Outflow</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bdr)">Net</th>
+              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--blue);border-bottom:1px solid var(--bdr)">Closing Balance</th>
+            </tr>
+          </thead>
+          <tbody id="bp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div></div><!-- close .main and .app -->
 <div class="modal-overlay" id="modal-overlay"><div class="modal" id="modal-content"></div></div>
 <script>
 // ══ DATABASE ADAPTER ══
@@ -1283,6 +1354,8 @@ var _SUPA_REAL_MEMBERS = [
 // 'Koen' = owner/admin, not in team view.
 // 'Sanne' = back-office, not in team view.
 var _TEAM_VIEW_EXCLUDE = new Set(['Vakantie','Koen','Sanne']);
+// Employees hidden from Staffing grid but still visible in Vacation page
+var _STAFFING_GRID_EXCLUDE = new Set(['Jan','Sanne']);
 // Helper: is this employee visible in team view?
 function isTeamViewVisible(emp){ return emp && emp.name && !_TEAM_VIEW_EXCLUDE.has(emp.name); }
 
@@ -1330,15 +1403,14 @@ async function supaLoadAll() {
     }
     // Supabase is the single source of truth. No local overrides.
 
-    // Preserve local category changes (user may have renamed via UI)
-    if(_oldStore && _oldStore.fixed_costs && store.fixed_costs){
-      store.fixed_costs.forEach(function(fc){
-        var loc=(_oldStore.fixed_costs||[]).find(function(l){return parseInt(l.id)===parseInt(fc.id);});
-        if(loc && loc.category !== undefined && loc.category !== (fc.category||'')){
-          fc.category = loc.category; // local category wins over Supabase
-        }
-      });
-    }
+    // Supabase is the single source of truth for all fields including category.
+    // No local overrides — changes saved via PATCH to Supabase are authoritative.
+
+    // Normalize fixed_costs active field — Supabase returns boolean true/false, not integer
+    (store.fixed_costs||[]).forEach(function(c){
+      c.id=parseInt(c.id)||c.id;
+      c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;
+    });
 
     // Normalize all IDs to integers in the loaded store (prevents === type-mismatch)
     (store.employees||[]).forEach(function(e){e.id=parseInt(e.id)||e.id;});
@@ -2253,20 +2325,26 @@ function navigate(page,el){
       renderPage(page);
     })();
   } else if(page==='fixedcosts'){
-    // Always fetch fresh from Supabase so edits from other devices/sessions show immediately
     (async()=>{
-      try{
-        DB._store=null; // clear cache
-        const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
-        if(fcFresh&&fcFresh.length>0){
-          // Normalize IDs
-          fcFresh.forEach(fc=>{fc.id=parseInt(fc.id)||fc.id;});
-          S.fixedCosts=fcFresh;
-          // Also update localStorage so loadData() sees fresh data
-          const st=DB._gs();st.fixed_costs=fcFresh;localStorage.setItem('sp-v5',JSON.stringify(st));DB._store=null;
-        }
-      }catch(e){}
+      const _normActive=c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;};
+      // Fetch fixed_costs fresh from Supabase
+      const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc').catch(()=>null);
+      if(fcFresh&&fcFresh.length>0){
+        fcFresh.forEach(_normActive);
+        S.fixedCosts=fcFresh;
+      } else {
+        // Fallback: use whatever is already in S.fixedCosts (from prior loadData)
+        S.fixedCosts.forEach(_normActive);
+      }
+      // Load all other data without touching fixedCosts
       await loadData();
+      // Restore the fresh fixedCosts after loadData overwrites it
+      if(fcFresh&&fcFresh.length>0){
+        fcFresh.forEach(_normActive);
+        S.fixedCosts=fcFresh;
+      } else {
+        S.fixedCosts.forEach(_normActive);
+      }
       renderPage(page);
     })();
   } else if(page==='extcosts'){
@@ -2294,6 +2372,8 @@ async function loadData(){
     DB.select('partner_invoices'),DB.select('cashflow_months'),DB.select('sick_leave'),DB.select('external_costs')]);
   S.projects=pr||[];S.employees=em||[];S.staffing=st||[];S.vacations=va||[];S.sickLeave=sl||[];
   S.fixedCosts=fc||[];S.transactions=tx||[];S.invoices=inv||[];S.futureCosts=fut||[];
+  // Normalize active field — Supabase returns boolean true/false, not integer 1/0
+  S.fixedCosts.forEach(c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;});
   S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];S.externalCosts=ec||[];_parseCFNotes(S.cashflowMonths);
   // Normalize all IDs to integers to prevent === type-mismatch bugs
   S.employees.forEach(e=>{e.id=parseInt(e.id)||e.id;});
@@ -2436,6 +2516,7 @@ function renderExtCosts(){
     const proj=S.projects.find(p=>p.id==e.project_id);
     const projLbl=proj?`${esc(proj.client_name)} — ${esc(proj.name)}`:`<span style="color:var(--t3)">Unknown</span>`;
     const hoursLbl=e.hours&&e.rate?`${e.hours}h × ${fmt(e.rate)}`:(e.hours?`${e.hours}h`:'—');
+    const weekLbl=e.week_key?`<span style="background:var(--blue-p);color:var(--blue);border-radius:3px;padding:1px 6px;font-size:10px;font-weight:700">W${e.week_key.split('-W')[1]||e.week_key}</span>`:'<span style="color:var(--t4)">—</span>';
     return`<tr>
       <td>${projLbl}</td>
       <td class="bold">${esc(e.vendor||'—')}</td>
@@ -2443,6 +2524,7 @@ function renderExtCosts(){
       <td class="right text-muted">${hoursLbl}</td>
       <td class="right text-muted">${e.rate?fmt(e.rate):'—'}</td>
       <td class="right bold" style="color:var(--orange,#f97316)">${fmt(parseFloat(e.amount||0))}${e.usd_amount?`<div style="font-size:9px;color:var(--t3);font-weight:400">$${parseFloat(e.usd_amount).toFixed(0)} @ ${parseFloat(e.usd_rate||0.92).toFixed(4)}</div>`:''}</td>
+      <td>${weekLbl}</td>
       <td class="text-muted" style="font-size:11px">${e.date||'—'}</td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('extcost',${e.id})">Edit</button>
@@ -2451,11 +2533,51 @@ function renderExtCosts(){
     </tr>`;
   }).join('');
 
+  // Per-project weekly breakdown
+  if(!filterProj){
+    const projGroups={};
+    rows.forEach(e=>{
+      const proj=S.projects.find(p=>p.id==e.project_id);
+      const key=e.project_id;
+      if(!projGroups[key]){projGroups[key]={proj,entries:[],total:0};}
+      projGroups[key].entries.push(e);
+      projGroups[key].total+=parseFloat(e.amount||0);
+    });
+    // Render per-project weekly summary below main table
+    const wkSummEl=document.getElementById('ext-weekly-summary');
+    if(wkSummEl){
+      wkSummEl.innerHTML=Object.values(projGroups).sort((a,b)=>b.total-a.total).map(({proj,entries,total})=>{
+        const projName=proj?`${esc(proj.client_name)} / ${esc(proj.name)}`:'Unknown project';
+        const byWeek={};
+        entries.forEach(e=>{
+          const wk=e.week_key||'No week';
+          if(!byWeek[wk])byWeek[wk]=0;
+          byWeek[wk]+=parseFloat(e.amount||0);
+        });
+        const wkRows=Object.entries(byWeek).sort((a,b)=>a[0].localeCompare(b[0])).map(([wk,amt])=>`
+          <div class="flex-between" style="padding:3px 0;border-bottom:1px solid var(--bdr)">
+            <span style="font-size:11px;color:var(--t2)">${wk!=='No week'?`<span style="background:var(--blue-p);color:var(--blue);border-radius:3px;padding:1px 6px;font-size:10px;font-weight:700">W${wk.split('-W')[1]||wk}</span>`:wk}</span>
+            <span style="font-size:11px;font-weight:700;color:var(--orange,#f97316)">${fmt(amt)}</span>
+          </div>`).join('');
+        return`<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:12px 14px;margin-bottom:8px">
+          <div class="flex-between" style="margin-bottom:8px">
+            <span style="font-size:12px;font-weight:700;color:var(--navy)">${projName}</span>
+            <span style="font-size:13px;font-weight:800;color:var(--orange,#f97316)">${fmt(total)}</span>
+          </div>
+          ${wkRows}
+        </div>`;
+      }).join('');
+    }
+  } else {
+    const wkSummEl=document.getElementById('ext-weekly-summary');
+    if(wkSummEl) wkSummEl.innerHTML='';
+  }
+
   // Footer total
   document.getElementById('extcosts-tfoot').innerHTML=`<tr style="font-weight:700;background:var(--bg2)">
     <td colspan="5" style="text-align:right;padding:8px 10px">Total${filterProj?' (filtered)':''}</td>
     <td class="right" style="color:var(--orange,#f97316);padding:8px 10px">${fmt(total)}</td>
-    <td colspan="2"></td>
+    <td colspan="3"></td>
   </tr>`;
 }
 
@@ -2474,14 +2596,45 @@ function modalExtCost(id, prefillProjectId){
         <input class="form-input" id="ec-vendor" placeholder="e.g. Freelancer, Agency" value="${esc(e?.vendor||'')}">
       </div>
       <div class="form-group">
-        <label class="form-lbl">Date (YYYY-MM or YYYY-MM-DD)</label>
+        <label class="form-lbl">Date (YYYY-MM)</label>
         <input class="form-input" id="ec-date" type="month" value="${e?.date?.substring(0,7)||new Date().toISOString().substring(0,7)}">
       </div>
     </div>
-    <div class="form-group">
-      <label class="form-lbl">Description</label>
-      <input class="form-input" id="ec-desc" placeholder="What was outsourced?" value="${esc(e?.description||'')}">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-lbl">Start Week <span style="color:var(--t3);font-size:9px">first week of work</span></label>
+        <select class="form-input" id="ec-week-key">
+          <option value="">No week assigned</option>
+          ${(()=>{
+            const now=new Date();
+            const opts=[];
+            for(let w=-4;w<=16;w++){
+              const d=new Date(now);d.setDate(d.getDate()+w*7);
+              const wk=typeof toWeekKey==='function'?toWeekKey(d):'';
+              if(wk&&!opts.find(o=>o===wk))opts.push(wk);
+            }
+            return opts.map(wk=>`<option value="${wk}"${(e?.week_key===wk)?' selected':''}>${wk}</option>`).join('');
+          })()}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-lbl">Number of weeks <span style="color:var(--t3);font-size:9px">spread cost evenly</span></label>
+        <select class="form-input" id="ec-week-count" onchange="ecUpdateWeekPreview()">
+          <option value="1" ${(!e?.week_count||e?.week_count==1)?'selected':''}>1 week</option>
+          <option value="2" ${e?.week_count==2?'selected':''}>2 weeks</option>
+          <option value="3" ${e?.week_count==3?'selected':''}>3 weeks</option>
+          <option value="4" ${e?.week_count==4?'selected':''}>4 weeks</option>
+          <option value="6" ${e?.week_count==6?'selected':''}>6 weeks</option>
+          <option value="8" ${e?.week_count==8?'selected':''}>8 weeks</option>
+          <option value="12" ${e?.week_count==12?'selected':''}>12 weeks</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-lbl">Description</label>
+        <input class="form-input" id="ec-desc" placeholder="What was outsourced?" value="${esc(e?.description||'')}">
+      </div>
     </div>
+    <div id="ec-week-preview" style="font-size:11px;color:var(--blue);background:var(--blue-p);padding:6px 10px;border-radius:var(--rsm);display:none;margin-bottom:4px"></div>
     <div style="background:var(--bg2);border-radius:var(--r);padding:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
       <div class="form-group" style="margin:0">
         <label class="form-lbl">Hours (optional)</label>
@@ -2493,7 +2646,7 @@ function modalExtCost(id, prefillProjectId){
       </div>
       <div class="form-group" style="margin:0">
         <label class="form-lbl">Total Amount (€) <span style="color:var(--red)">*</span></label>
-        <input class="form-input bold" id="ec-amount" type="number" min="0" step="0.01" placeholder="0" value="${e?.amount||''}" style="border-color:var(--orange,#f97316)">
+        <input class="form-input bold" id="ec-amount" type="number" min="0" step="0.01" placeholder="0" value="${e?.amount||''}" style="border-color:var(--orange,#f97316)" oninput="ecCalcAmount();ecUpdateWeekPreview()">
       </div>
     </div>
     <div style="background:var(--bg2);border-radius:var(--r);padding:12px;border:1px dashed var(--bdr2)">
@@ -2517,6 +2670,27 @@ function modalExtCost(id, prefillProjectId){
     <div id="ec-calc-hint" style="font-size:11px;color:var(--t3);display:none"></div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveExtCost(${e?.id||''})">Save</button></div>`;
+}
+
+function ecUpdateWeekPreview(){
+  const startWk=document.getElementById('ec-week-key')?.value;
+  const count=parseInt(document.getElementById('ec-week-count')?.value)||1;
+  const amt=parseFloat(document.getElementById('ec-amount')?.value)||0;
+  const prev=document.getElementById('ec-week-preview');
+  if(!prev)return;
+  if(!startWk||count<=1){prev.style.display='none';return;}
+  // Build week list
+  const weeks=[];
+  if(typeof toWeekKey==='function'&&typeof wkMonday==='function'){
+    let d=new Date(wkMonday(startWk));
+    for(let i=0;i<count;i++){
+      weeks.push(toWeekKey(new Date(d)));
+      d.setDate(d.getDate()+7);
+    }
+  }
+  const perWk=amt>0?` · ${fmt(amt/count)}/wk`:'';
+  prev.style.display='block';
+  prev.textContent=`Will create ${count} entries: ${weeks.join(', ')}${perWk}`;
 }
 
 async function ecFetchRate(){
@@ -2578,34 +2752,48 @@ async function saveExtCost(id){
   if(!projId)return alert('Please select a project.');
   if(!vendor)return alert('Vendor / partner name is required.');
   if(amount<=0)return alert('Amount must be greater than 0.');
-  const data={
-    project_id:projId,
-    vendor,
+  const startWk=document.getElementById('ec-week-key')?.value||null;
+  const weekCount=parseInt(document.getElementById('ec-week-count')?.value)||1;
+  const baseData={
+    project_id:projId,vendor,
     description:(document.getElementById('ec-desc')?.value||'').trim(),
     hours:parseFloat(document.getElementById('ec-hours')?.value)||null,
     rate:parseFloat(document.getElementById('ec-rate')?.value)||null,
-    amount,
     date:document.getElementById('ec-date')?.value||null,
     usd_amount:parseFloat(document.getElementById('ec-usd')?.value)||null,
     usd_rate:parseFloat(document.getElementById('ec-usd-rate')?.value)||null
   };
+
   if(id){
+    // Edit: just update single entry
+    const data={...baseData,amount,week_key:startWk,week_count:weekCount};
     await DB.update('external_costs',id,data);
     try{await _supaReq('PATCH','external_costs',data,'?id=eq.'+id);}catch(e){}
+    showToast('External cost updated');
+  } else if(startWk&&weekCount>1){
+    // Multi-week: create one entry per week with amount/weekCount each
+    const perWk=Math.round(amount/weekCount*100)/100;
+    const weeks=[];
+    let d=new Date(wkMonday(startWk));
+    for(let i=0;i<weekCount;i++){weeks.push(toWeekKey(new Date(d)));d.setDate(d.getDate()+7);}
+    for(const wk of weeks){
+      const data={...baseData,amount:perWk,week_key:wk,week_count:weekCount};
+      await DB.insert('external_costs',data);
+      try{await _supaReq('POST','external_costs',data);}catch(e){}
+    }
+    showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk`);
   } else {
-    const res=await DB.insert('external_costs',data);
-    try{
-      const nr=await _supaReq('GET','external_costs',null,'?project_id=eq.'+projId+'&vendor=eq.'+encodeURIComponent(vendor)+'&order=id.desc&limit=1');
-      if(nr&&nr[0])await _supaReq('PATCH','external_costs',data,'?id=eq.'+nr[0].id);
-      else await _supaReq('POST','external_costs',data);
-    }catch(e){}
+    // Single entry
+    const data={...baseData,amount,week_key:startWk,week_count:1};
+    await DB.insert('external_costs',data);
+    try{await _supaReq('POST','external_costs',data);}catch(e){}
+    showToast('External cost added');
   }
   closeModal();
   await loadData();
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
   renderDashboard&&renderDashboard();
-  showToast(id?'External cost updated':'External cost added');
 }
 
 async function deleteExtCost(id){
@@ -2686,13 +2874,16 @@ function projExtCost(pid){
     .reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function projExtCostWeek(pid, wk){
-  // wk = "YYYY-Wnn" — get the month string for this week
-  // Use _wkBounds to find the week's start date, derive month
+  // wk = "YYYY-Wnn" — match on week_key field first, then fall back to date month
   try{
+    const direct=(S.externalCosts||[]).filter(e=>(e.project_id===pid||e.project_id==pid)&&e.week_key===wk)
+      .reduce((s,e)=>s+parseFloat(e.amount||0),0);
+    if(direct>0)return direct;
+    // Fallback: use month of week start date
     const{start}=_wkBounds(wk);
     const d=new Date(start*86400000);
     const mo=`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
-    return (S.externalCosts||[]).filter(e=>(e.project_id===pid||e.project_id==pid)&&e.date&&e.date.substring(0,7)===mo)
+    return (S.externalCosts||[]).filter(e=>(e.project_id===pid||e.project_id==pid)&&!e.week_key&&e.date&&e.date.substring(0,7)===mo)
       .reduce((s,e)=>s+parseFloat(e.amount||0),0);
   }catch(e){return 0;}
 }
@@ -2851,11 +3042,11 @@ function renderDashboard(){
 
   // Staffing capacity
   const wks2=getWeeksInMonth(y,m);
-  document.getElementById('dash-staffing').innerHTML=S.employees.map(emp=>{
-    let assigned=0,vac=0,cap=0;
+  document.getElementById('dash-staffing').innerHTML=S.employees.filter(e=>e.name!=='Jan'&&e.name!=='Sanne').map(emp=>{
+    let assigned=0,vac=0,cap=0,sick=0;
     wks2.forEach(wk=>{
       assigned+=assignedInWeek(emp.id,wk);
-      const v=vacInWeek(emp.id,wk);const sk=sickInWeek(emp.id,wk);vac+=v;cap+=Math.max(0,(emp.available_days_per_week||5)-v-sk);
+      const v=vacInWeek(emp.id,wk);const sk=sickInWeek(emp.id,wk);vac+=v;sick+=sk;cap+=Math.max(0,(emp.available_days_per_week||5)-v-sk);
     });
     const pct=cap>0?(assigned/cap*100):0;
     const cls=pct>100?'over':pct<80?'under':'ok';
@@ -3406,7 +3597,7 @@ function renderStaffing(){
   const filterProjId=parseInt(document.getElementById('sf-proj')?.value)||null;
   const view=S.staffingView;
 
-  let emps=S.employees.filter(e=>!filterEmpId||e.id===filterEmpId);
+  let emps=S.employees.filter(e=>(!filterEmpId||e.id===filterEmpId)&&!_STAFFING_GRID_EXCLUDE.has(e.name));
   const confProjs=S.projects.filter(p=>p.status==='confirmed'&&(!filterProjId||p.id===filterProjId));
   const draftProjs=S.projects.filter(p=>p.status==='draft'&&(!filterProjId||p.id===filterProjId));
 
@@ -3433,6 +3624,12 @@ function renderStaffing(){
         td+=`<td class="center" style="${isDraft?'color:var(--amber)':''}">${dayTotal||''}</td>`;
       });
       const cost=S.staffing.filter(s=>s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
+      // External costs per week for this project
+      const extCostTotal=weeks.reduce((s,wk)=>s+projExtCostWeek(p.id,wk),0);
+      const extCells=weeks.map(wk=>{
+        const ec=projExtCostWeek(p.id,wk);
+        return ec>0?`<td class="center" style="color:var(--orange,#f97316);font-size:11px;font-weight:600">${fmtS(ec)}</td>`:`<td class="center cell-zero text-muted">—</td>`;
+      }).join('');
       tbody+=`<tr class="row-emp${isDraft?' row-draft-proj':''}">
         <td style="${isDraft?'color:var(--amber)':'color:var(--navy);font-weight:700'}">
           ${isDraft?'<span class="badge badge-draft" style="margin-right:4px;font-size:8px">draft</span>':'<span style="display:inline-block;width:3px;height:14px;background:#1d4ed8;border-radius:2px;margin-right:6px;vertical-align:middle;opacity:.7"></span>'}
@@ -3441,6 +3638,15 @@ function renderStaffing(){
         ${td}<td class="right bold" style="${isDraft?'color:var(--amber)':'color:var(--navy)'}">${totalDays}d</td>
         <td class="right" style="color:var(--pink)">${fmt(cost)}</td>
       </tr>`;
+      // External costs sub-row (only if there are any)
+      if(extCostTotal>0){
+        tbody+=`<tr style="background:rgba(249,115,22,.04)">
+          <td style="padding-left:22px;color:var(--orange,#f97316);font-size:11px;font-style:italic">↳ Ext. costs</td>
+          ${extCells}
+          <td class="right" style="color:var(--orange,#f97316);font-size:11px;font-weight:700">${fmt(extCostTotal)}</td>
+          <td></td>
+        </tr>`;
+      }
     };
     const confVis=confProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
     const draftVis=draftProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
@@ -3529,11 +3735,16 @@ function renderStaffing(){
               return`<td class="center editable${_note?' has-note':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_note?esc(_note):'Click to edit'}">${d||''}${_note?`<span style="font-size:7px;color:var(--blue);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_note)}</span>`:''}</td>`;
             }).join('');
             const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
+            const pExtTotal=weeks.reduce((s,wk)=>s+projExtCostWeek(p.id,wk),0);
             tbody+=`<tr class="row-proj">
               <td>${esc(p.client_name+' / '+p.name)}</td>${pCells}
               <td class="right">${pTotalDays?pTotalDays+'d':''}</td>
               <td class="right text-muted">${pCost?fmt(pCost):''}</td>
             </tr>`;
+            if(pExtTotal>0){
+              const pExtCells=weeks.map(wk=>{const ec=projExtCostWeek(p.id,wk);return ec>0?`<td class="center" style="color:var(--orange,#f97316);font-size:10px">${fmtS(ec)}</td>`:`<td></td>`;}).join('');
+              tbody+=`<tr style="background:rgba(249,115,22,.04)"><td style="padding-left:28px;color:var(--orange,#f97316);font-size:10px;font-style:italic">↳ ext. costs</td>${pExtCells}<td class="right" style="color:var(--orange,#f97316);font-size:10px">${fmt(pExtTotal)}</td><td></td></tr>`;
+            }
           });
         }
         // Draft section divider + draft projects
@@ -4581,7 +4792,8 @@ function fcFreqPreview(){
 // Reactivate an inactive fixed cost
 async function fcReactivate(id){
   await DB.update('fixed_costs',id,{active:1});
-  await loadData();renderFixedCosts();renderDashboard();
+  try{await _supaReq('PATCH','fixed_costs',{active:1},'?id=eq.'+id);}catch(e){}
+  await _fcReloadAndRender();
   showToast('Cost item reactivated');
 }
 
@@ -5151,8 +5363,9 @@ function fcActiveInMonth(c,y,m){
 
 function fcInDateRange(c,y,m){
   // Returns true if this cost is ACTIVE in this month's date range
-  // Does NOT check frequency — used for monthly average budget calculation
-  if(!c.active)return false;
+  // Robust active check — handles boolean true/false, integer 1/0, string, null
+  const isActive=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined);
+  if(!isActive)return false;
   const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
   if(moStr){
     if(c.start_month&&c.start_month>moStr)return false;
@@ -5161,15 +5374,11 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  // Uses fcInDateRange (not fcActiveInMonth) so that:
-  // - Yearly costs contribute amount/12 every month (not full amount once + 0 rest)
-  // - Quarterly costs contribute amount/3 every month
-  // - Monthly costs contribute full amount every month
-  // This gives a consistent monthly budget view across all dashboards
   return Math.round(S.fixedCosts.filter(c=>fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
-  const planningItems=S.fixedCosts.filter(c=>c.active);
+  const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
+  const planningItems=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
   const planningTotal=Math.round(planningItems.reduce((s,c)=>s+fcEntryExcl(c),0)*100)/100;
   const catMap={};
   planningItems.forEach(c=>{
@@ -5180,14 +5389,43 @@ function fixedMonthlySplit(){
   return{planningItems,planningTotal,catMap,bankPayees:[],bankTotal:0,total:planningTotal};
 }
 
+async function fcDebugRaw(){
+  const panel=document.getElementById('fc-debug-panel');
+  if(!panel)return;
+  panel.style.display='block';
+  panel.textContent='Loading from Supabase…';
+  // 1. Raw Supabase fetch
+  const raw=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc&limit=5');
+  // 2. Current S.fixedCosts
+  const inMem=S.fixedCosts.slice(0,5);
+  panel.textContent=
+    '=== RAW SUPABASE (first 5) ===\n'+
+    (raw?raw.map(r=>`id:${r.id} active:${JSON.stringify(r.active)} (type:${typeof r.active}) cat:"${r.category}" name:"${r.name}"`).join('\n'):'NULL — fetch failed')+
+    '\n\n=== S.fixedCosts after normalize (first 5) ===\n'+
+    inMem.map(r=>`id:${r.id} active:${JSON.stringify(r.active)} (type:${typeof r.active}) cat:"${r.category}" name:"${r.name}"`).join('\n')+
+    '\n\nTotal in S.fixedCosts: '+S.fixedCosts.length+
+    '\nActive count: '+S.fixedCosts.filter(c=>c.active===1).length+
+    '\nInactive count: '+S.fixedCosts.filter(c=>c.active===0).length+
+    '\nOther active values: '+[...new Set(S.fixedCosts.map(c=>JSON.stringify(c.active)+' ('+typeof c.active+')'))].join(', ');
+}
+
 function renderFixedCosts(){
+  // Exhaustive active normalization — Supabase returns true/false/1/0/"1"/"0"/null
+  (S.fixedCosts||[]).forEach(c=>{
+    // Treat anything truthy EXCEPT explicit false/0/"0"/"false"/null/undefined as active
+    if(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined){
+      c.active=0;
+    } else {
+      c.active=1;
+    }
+  });
   const fActiveEl=document.getElementById('fc-filter-active');
   const fMonthEl=document.getElementById('fc-filter-month');
   const activeFilter=fActiveEl?.value||'active';
   const monthFilter=fMonthEl?.value||''; // 'YYYY-MM' or ''
   let allEntries=S.fixedCosts.filter(c=>{
-    if(activeFilter==='active'&&!c.active)return false;
-    if(activeFilter==='inactive'&&c.active)return false;
+    if(activeFilter==='active'&&c.active!==1)return false;
+    if(activeFilter==='inactive'&&c.active===1)return false;
     // If month filter set, only show costs active that month
     if(monthFilter){
       const[mfy,mfm]=monthFilter.split('-').map(Number);
@@ -5540,8 +5778,7 @@ async function fcaDoAssign(){
   // Clear cache so reload gets fresh Supabase data
   try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
   closeModal();
-  await loadData();
-  renderFixedCosts();
+  await _fcReloadAndRender();
   showToast(`✓ ${done} entr${done===1?'y':'ies'} assigned to "${cat}"`);
 }
 function fcRenameCatModal(oldName){
@@ -5580,7 +5817,8 @@ async function fcDoRename(oldName){
   _fcSaveDateOverrides();
   // Clear cache so reload gets fresh Supabase data
   try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
-  closeModal();await loadData();renderFixedCosts();
+  closeModal();
+  await _fcReloadAndRender();
   showToast(`Category renamed to "${newName}"`);
 }
 async function fcDeleteCat(catName){
@@ -5596,7 +5834,7 @@ async function fcDeleteCat(catName){
     }
   }
   const cats=getFCCategories().filter(c=>c!==catName);saveFCCategories(cats);
-  await loadData();renderFixedCosts();
+  await _fcReloadAndRender();
   showToast(`Category "${catName}" deleted`);
 }
 
@@ -5706,22 +5944,41 @@ async function fcSaveEntry(){
     if(!cats.includes(cat)){cats.push(cat);saveFCCategories(cats);}
   }
   await DB.insert('fixed_costs',{name,amount,category:cat==='Uncategorised'?'':cat,vat_pct:vatPct,vat_type:vatType,active:1});
-  closeModal();await loadData();renderFixedCosts();renderDashboard();
+  closeModal();
+  await _fcReloadAndRender();
   showToast(`"${name}" added`);
 }
 async function deleteFCEntry(id){
   if(!confirm('Delete this fixed cost entry?'))return;
   await DB.delete('fixed_costs',id);
-  await loadData();_finData=null;renderFixedCosts();renderDashboard();
+  try{await _supaReq('DELETE','fixed_costs',null,'?id=eq.'+id);}catch(e){}
+  await _fcReloadAndRender();
   if(typeof _renderFinancialActual==='function')_renderFinancialActual();
   showToast('Entry deleted');
+}
+
+// Central helper: normalize, render immediately, then refresh from Supabase
+async function _fcReloadAndRender(){
+  const _norm=c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;};
+  // Render immediately from current S.fixedCosts
+  S.fixedCosts.forEach(_norm);
+  _finData=null;
+  renderFixedCosts();
+  renderDashboard();
+  // Then fetch fresh from Supabase in background
+  setTimeout(async()=>{
+    try{
+      const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
+      if(fcFresh&&fcFresh.length>0){fcFresh.forEach(_norm);S.fixedCosts=fcFresh;renderFixedCosts();renderDashboard();}
+    }catch(e){}
+  },600);
 }
 
 // Add a bank payee to the planning layer (creates a fixed cost entry)
 async function addBankPayeeToPlanning(payeeName,avgAmount,category){
   if(!confirm(`Add "${payeeName}" to your Fixed Cost planning at ${fmt(avgAmount)}/mo?`))return;
   await DB.insert('fixed_costs',{name:payeeName,amount:avgAmount,category:category||'',active:1,from_bank:1});
-  await loadData();renderFixedCosts();renderDashboard();
+  await _fcReloadAndRender();
   showToast(`"${payeeName}" added to Fixed Cost planning`);
 }
 
@@ -6616,13 +6873,20 @@ async function saveFixedCost(id){
       active:data.active, notes:notesEncoded,
       start_month:data.start_month||null, end_month:data.end_month||null
     };
+    showToast(`Saving category: "${data.category}" for id ${id}…`,'info');
+    let patchOk=false;
     try{
-      // Try with frequency columns first
-      await _supaReq('PATCH','fixed_costs',{..._coreFields,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+id);
+      const pr=await _supaReq('PATCH','fixed_costs',{..._coreFields,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+id);
+      patchOk=true;
     }catch(e){
-      // Frequency columns don't exist — save core fields only (notes has FREQ encoded)
-      try{await _supaReq('PATCH','fixed_costs',_coreFields,'?id=eq.'+id);}catch(e2){}
+      try{
+        const pr2=await _supaReq('PATCH','fixed_costs',_coreFields,'?id=eq.'+id);
+        patchOk=true;
+      }catch(e2){showToast('⚠ Supabase PATCH failed: '+e2,'error');}
     }
+    // Also directly update S.fixedCosts in memory immediately
+    const memEntry=S.fixedCosts.find(c=>c.id===id||c.id==id);
+    if(memEntry)memEntry.category=data.category;
   } else {
     await DB.insert('fixed_costs',{...data,from_bank:0});
     try{
@@ -6636,14 +6900,36 @@ async function saveFixedCost(id){
   }
   // Clear fixed_costs from localStorage cache so next load gets fresh Supabase data
   try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
-  closeModal();await loadData();
-  // Persist start/end month overrides in settings as backup
+  closeModal();
+  // Update S.fixedCosts in memory immediately so UI shows the change right away
+  const _normActive2=c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;};
+  if(id){
+    // Update existing entry in memory
+    const idx=S.fixedCosts.findIndex(c=>c.id===id||c.id==id);
+    if(idx>=0)Object.assign(S.fixedCosts[idx],data);
+  } else {
+    // Add new entry to memory
+    S.fixedCosts.push({...data,id:Date.now()});
+  }
+  S.fixedCosts.forEach(_normActive2);
   _fcSaveDateOverrides();
   _finData=null;
   renderFixedCosts();
   renderDashboard();
   if(typeof _renderFinancialActual==='function')_renderFinancialActual();
   showToast(id?`"${name}" updated`:`"${name}" added`);
+  // Then re-fetch from Supabase in background to confirm
+  setTimeout(async()=>{
+    try{
+      const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
+      if(fcFresh&&fcFresh.length>0){
+        fcFresh.forEach(_normActive2);
+        S.fixedCosts=fcFresh;
+        renderFixedCosts();
+        renderDashboard();
+      }
+    }catch(e){}
+  },800);
 }
 
 async function deleteItem(table,id){
@@ -7113,7 +7399,17 @@ function setFinTab(t){
   });
   if(t==='trend'&&_finData)_renderFinTrend(_finData);
   else if(t==='clients')renderFinClients();
-  else if(t==='bank')renderFinBank();
+  else if(t==='bank'){
+    // If no transactions loaded yet, fetch fresh from Supabase first
+    if(!S.transactions||S.transactions.length===0){
+      _supaReq('GET','bank_transactions',null,'?select=*&order=date.asc').then(tx=>{
+        if(tx&&tx.length>0)S.transactions=tx;
+        renderFinBank();
+      }).catch(()=>renderFinBank());
+    } else {
+      renderFinBank();
+    }
+  }
 }
 
 function renderFinancial(){
@@ -8798,6 +9094,16 @@ async function init(){
     }
   }
   await loadData();
+  // Always ensure fixed_costs are fresh from Supabase and normalized
+  // loadData() reads localStorage which may have stale/boolean active values
+  try{
+    const _fcInit=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
+    if(_fcInit&&_fcInit.length>0){
+      const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
+      _fcInit.forEach(_n);
+      S.fixedCosts=_fcInit;
+    }
+  }catch(e){}
   // Silently remove staffing rows for deleted projects on startup
   await cleanOrphanedStaffing(false);
   // Ensure cashflow_months is populated
@@ -9292,11 +9598,11 @@ function bpRenderFlows(){
   if(!el) return;
   el.innerHTML=window._bpFlows.map(f=>`
     <div style="display:grid;grid-template-columns:1fr 110px auto;gap:6px;align-items:center">
-      <input class="form-input" style="font-size:12px;padding:5px 8px" placeholder="${f.type==='in'?'Income label':'Expense label'}"
-        value="${f.label}" ${f.auto?'readonly style="font-size:12px;padding:5px 8px;background:var(--bg2);color:var(--t2)"':''} oninput="bpUpdateFlow(${f.id},'label',this.value)">
+      <input class="form-input" style="font-size:12px;padding:5px 8px;${f.auto?'background:var(--bg2);color:var(--t2)':''}" placeholder="${f.type==='in'?'Income label':'Expense label'}"
+        value="${f.label}" oninput="bpUpdateFlow(${f.id},'label',this.value)">
       <input class="form-input" type="number" min="0" step="100" style="font-size:12px;padding:5px 8px;border-color:${f.type==='in'?'var(--green)':'var(--red)'};text-align:right"
-        placeholder="0" value="${f.amount||''}" ${f.auto?'readonly style="font-size:12px;padding:5px 8px;text-align:right;background:var(--bg2);border-color:var(--bdr)"':''} oninput="bpUpdateFlow(${f.id},'amount',parseFloat(this.value)||0)">
-      ${f.auto?'<div style="width:24px"></div>':'<button onclick="bpRemoveFlow('+f.id+')" style="background:none;border:none;cursor:pointer;color:var(--t3);font-size:16px;line-height:1;padding:2px">×</button>'}
+        placeholder="0" value="${f.amount||''}" oninput="bpUpdateFlow(${f.id},'amount',parseFloat(this.value)||0)">
+      ${f.auto?`<span title="Auto-loaded from your data" style="font-size:10px;color:var(--t3);padding:2px 4px">auto</span>`:'<button onclick="bpRemoveFlow('+f.id+')" style="background:none;border:none;cursor:pointer;color:var(--t3);font-size:16px;line-height:1;padding:2px">×</button>'}
     </div>`).join('');
 }
 function bpRenderOneOffs(){
@@ -9427,7 +9733,6 @@ function initBankPlanner(){
   runBankPlan();
 }
 </script>
-</div><!-- close .app -->
 <!-- ═══════════════════════════════════════════════════════════
      EMPLOYEE STAFFING VIEW — shown instead of main app for 'employee' role
      ═══════════════════════════════════════════════════════════ -->
@@ -9460,82 +9765,5 @@ function initBankPlanner(){
   </div>
 </div>
 
-<div id="page-bankplanner" class="page">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Bank Position Planner</div>
-      <div class="page-sub">Liquidity forecast — estimate your bank balance over coming months</div>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="runBankPlan()">▶ Calculate</button>
-  </div>
-
-  <!-- KPI Summary row -->
-  <div id="bp-summary" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px"></div>
-
-  <!-- 2-col layout: sticky left inputs, right output -->
-  <div style="display:grid;grid-template-columns:290px 1fr;gap:20px;align-items:start">
-
-    <!-- LEFT: compact inputs, sticky -->
-    <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:14px;position:sticky;top:16px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div class="form-group" style="margin:0">
-          <label class="form-lbl">Bank balance (€)</label>
-          <input class="form-input bold" id="bp-balance" type="number" step="100" placeholder="180000" value="180000" oninput="runBankPlan()">
-        </div>
-        <div class="form-group" style="margin:0">
-          <label class="form-lbl">Horizon</label>
-          <select class="form-input" id="bp-months" onchange="runBankPlan()">
-            <option value="3">3 months</option>
-            <option value="6" selected>6 months</option>
-            <option value="9">9 months</option>
-            <option value="12">12 months</option>
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Monthly Cash Flows</div>
-        <div id="bp-flows" style="display:flex;flex-direction:column;gap:8px"></div>
-        <div style="display:flex;gap:6px;margin-top:8px">
-          <button class="btn btn-sm btn-ghost" style="flex:1;font-size:11px" onclick="bpAddFlow('in')">+ Income</button>
-          <button class="btn btn-sm btn-ghost" style="flex:1;font-size:11px;color:var(--red);border-color:var(--red)" onclick="bpAddFlow('out')">+ Expense</button>
-        </div>
-      </div>
-
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">One-off Events</div>
-        <div id="bp-oneoffs" style="display:flex;flex-direction:column;gap:8px"></div>
-        <button class="btn btn-sm btn-ghost" style="width:100%;margin-top:6px;font-size:11px" onclick="bpAddOneOff()">+ Add One-off</button>
-      </div>
-
-      <div style="background:var(--blue-p);border-radius:var(--r);padding:10px;font-size:11px;color:var(--blue)">
-        💡 Revenue, fixed costs &amp; staffing auto-loaded from your data.
-      </div>
-    </div>
-
-    <!-- RIGHT: chart on top, table below -->
-    <div style="display:flex;flex-direction:column;gap:16px">
-      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:16px">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:12px">Balance Trend</div>
-        <div id="bp-chart" style="display:flex;align-items:flex-end;gap:6px;height:90px"></div>
-        <div id="bp-chart-labels" style="display:flex;gap:6px;margin-top:5px"></div>
-      </div>
-      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="background:var(--bg2)">
-              <th style="padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bdr)">Month</th>
-              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--green);border-bottom:1px solid var(--bdr)">Inflow</th>
-              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--red);border-bottom:1px solid var(--bdr)">Outflow</th>
-              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bdr)">Net</th>
-              <th style="padding:10px 14px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--blue);border-bottom:1px solid var(--bdr)">Closing Balance</th>
-            </tr>
-          </thead>
-          <tbody id="bp-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
 </body>
 </html>
