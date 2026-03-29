@@ -448,7 +448,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v54 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v58 · Live</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1328,13 +1328,14 @@ async function supaLoadAll() {
         store[tables[i]] = results[i];
       }
     }
-    // Preserve local category changes (user may have renamed before Supabase synced)
+    // Supabase is the single source of truth. No local overrides.
+
+    // Preserve local category changes (user may have renamed via UI)
     if(_oldStore && _oldStore.fixed_costs && store.fixed_costs){
       store.fixed_costs.forEach(function(fc){
         var loc=(_oldStore.fixed_costs||[]).find(function(l){return parseInt(l.id)===parseInt(fc.id);});
-        if(loc && loc.category !== undefined && loc.category !== fc.category){
-          // Local category wins - user renamed it
-          fc.category = loc.category;
+        if(loc && loc.category !== undefined && loc.category !== (fc.category||'')){
+          fc.category = loc.category; // local category wins over Supabase
         }
       });
     }
@@ -1535,8 +1536,13 @@ async function supaLoadAll() {
         if(em) fc.end_month=em[1];
         var freq=_fcNotes.match(/\|\|FREQ:([^|]+)\|\|/);
         var freqm=_fcNotes.match(/\|\|FREQM:(\d+)\|\|/);
+        var vt=_fcNotes.match(/\|\|VT:(none|incl|excl)\|\|/);
+        var vp=_fcNotes.match(/\|\|VP:(\d+(?:\.\d+)?)\|\|/);
         if(freq&&!fc.frequency) fc.frequency=freq[1];
         if(freqm&&!fc.frequency_month) fc.frequency_month=parseInt(freqm[1]);
+        // VAT from notes overrides null from Supabase (ensures No VAT stays No VAT)
+        if(vt&&(!fc.vat_type||fc.vat_type===null)) fc.vat_type=vt[1];
+        if(vp&&(fc.vat_pct===null||fc.vat_pct===undefined)) fc.vat_pct=parseFloat(vp[1]);
       }
     });
     // Merge start_month/end_month back — priority: Supabase settings > old local store
@@ -1587,8 +1593,8 @@ async function supaLoadAll() {
         var repair = {};
         // Repair amount if old local has higher/different value (user set it locally)
         if(old.amount && old.amount !== fc.amount){ repair.amount=old.amount; needsRepair=true; }
-        if(old.vat_type && old.vat_type !== fc.vat_type){ repair.vat_type=old.vat_type; needsRepair=true; }
-        if(old.vat_pct && old.vat_pct !== fc.vat_pct){ repair.vat_pct=old.vat_pct; needsRepair=true; }
+        // Repair vat_type if Supabase has null but local/notes has a value
+        if(old.vat_type && old.vat_type!==fc.vat_type){ repair.vat_type=old.vat_type; repair.vat_pct=old.vat_pct||0; needsRepair=true; }
         if(old.frequency && old.frequency!=='monthly' && old.frequency!==fc.frequency){ repair.frequency=old.frequency; repair.frequency_month=parseInt(old.frequency_month)||1; needsRepair=true; }
         if(old.notes && old.notes !== fc.notes){ repair.notes=old.notes; needsRepair=true; }
         if(needsRepair){
@@ -1598,6 +1604,7 @@ async function supaLoadAll() {
         }
       });
     }
+    _SUPA_ONLINE = true; // enable real-time Supabase writes for all DB operations
     console.log('[Supabase] Loaded from cloud');
     return true;
   } catch(e) {
@@ -1769,13 +1776,13 @@ async function pullFromSupabase(){
 
   DB.update = async function(table, id, data) {
     var result = await origUpdate(table, id, data);
-    if (_SUPA_ONLINE) { try { _supaReq('PATCH', table, data, '?id=eq.' + id); } catch(e) {} }
+    if (_SUPA_ONLINE) { try { await _supaReq('PATCH', table, data, '?id=eq.' + id); } catch(e) { console.warn('[DB.update] Supabase PATCH failed:', table, id, e); } }
     return result;
   };
 
   DB.delete = async function(table, id) {
     var result = await origDelete(table, id);
-    if (_SUPA_ONLINE) { try { _supaReq('DELETE', table, null, '?id=eq.' + id); } catch(e) {} }
+    if (_SUPA_ONLINE) { try { await _supaReq('DELETE', table, null, '?id=eq.' + id); } catch(e) { console.warn('[DB.delete] Supabase DELETE failed:', table, id, e); } }
     return result;
   };
 
@@ -2243,6 +2250,23 @@ function navigate(page,el){
           if(rows2&&rows2.length>0){S.cashflowMonths=rows2;_parseCFNotes(S.cashflowMonths);}
         }catch(e){}
       }
+      renderPage(page);
+    })();
+  } else if(page==='fixedcosts'){
+    // Always fetch fresh from Supabase so edits from other devices/sessions show immediately
+    (async()=>{
+      try{
+        DB._store=null; // clear cache
+        const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
+        if(fcFresh&&fcFresh.length>0){
+          // Normalize IDs
+          fcFresh.forEach(fc=>{fc.id=parseInt(fc.id)||fc.id;});
+          S.fixedCosts=fcFresh;
+          // Also update localStorage so loadData() sees fresh data
+          const st=DB._gs();st.fixed_costs=fcFresh;localStorage.setItem('sp-v5',JSON.stringify(st));DB._store=null;
+        }
+      }catch(e){}
+      await loadData();
       renderPage(page);
     })();
   } else if(page==='extcosts'){
@@ -3451,21 +3475,34 @@ function renderStaffing(){
       const allocPct=totalAvail>0?Math.round(empTotalDays/totalAvail*100):0;
       const empCls=allocPct>100?'over':allocPct>=80?'ok':allocPct>=40?'under':'under';
 
+      // Contract days = available_days_per_week * number of weeks (full contract benchmark)
+      const contractDaysPerWeek=emp.available_days_per_week||5;
+      const contractTotal=contractDaysPerWeek*weeks.length;
+      // An employee is "under contract" if total assigned days < contract days (ignoring vacation/sick weeks)
+      const totalContractBillable=wkData.reduce((s,d)=>s+(contractDaysPerWeek-d.vac-Math.max(0,0)),0); // contract minus vacation
+      const isUnderContract=empTotalDays<totalContractBillable&&totalContractBillable>0;
+      const totalRowColor=isUnderContract?'color:var(--red)':'color:var(--navy)';
+
       // Employee summary row - use proper color logic
       let empCells=wkData.map(d=>{
         if(d.assigned===0&&d.vac===0)return`<td class="center cell-zero">—</td>`;
         if(d.vac&&d.assigned===0)return`<td class="center cell-vac">${d.vac}d vac</td>`;
         const pct=d.avail>0?d.assigned/d.avail*100:0;
         const cls=pct>100?'cell-over':pct>=80?'cell-full':pct>=1?'cell-partial':'cell-zero';
-        return`<td class="center ${cls}"><div>${d.assigned||''}</div>${d.vac?`<div style="font-size:9px;color:var(--purple)">-${d.vac}v</div>`:''}</td>`;
+        // Per-week: red if assigned < contract days (minus vacation) for that week
+        const weekContractAvail=Math.max(0,contractDaysPerWeek-d.vac);
+        const weekUnder=d.assigned<weekContractAvail&&d.assigned>=0;
+        const weekCellStyle=weekUnder&&cls==='cell-partial'?'':'';
+        return`<td class="center ${cls}"><div style="${d.assigned>0&&d.assigned<weekContractAvail?'color:var(--red);font-weight:700':''}">${d.assigned||''}</div>${d.vac?`<div style="font-size:9px;color:var(--purple)">-${d.vac}v</div>`:''}</td>`;
       }).join('');
       tbody+=`<tr class="row-emp">
-        <td><span class="bold">${esc(emp.name)}</span><span class="text-muted" style="margin-left:5px;font-size:10.5px">${esc(emp.role||'')}</span>
+        <td><span class="bold" style="${totalRowColor}">${esc(emp.name)}</span><span class="text-muted" style="margin-left:5px;font-size:10.5px">${esc(emp.role||'')}</span>
           ${empTotalVac>0?`<span class="badge badge-vacation" style="margin-left:4px;font-size:8px">${empTotalVac}d vac</span>`:''}
           <span class="badge badge-${empCls}" style="margin-left:4px;font-size:8px">${allocPct}%</span>
+          ${isUnderContract?`<span class="badge" style="margin-left:4px;font-size:8px;background:var(--red-p);color:var(--red);border:1px solid var(--red)">⚠ ${empTotalDays}/${totalContractBillable}d</span>`:''}
         </td>
         ${empCells}
-        <td class="right bold">${empTotalDays}d</td>
+        <td class="right bold" style="${totalRowColor}">${empTotalDays}d</td>
         <td class="right" style="color:var(--pink)">${fmt(empTotalCost)}</td>
       </tr>`;
 
@@ -5036,6 +5073,8 @@ function getFCCategories(){
 }
 function saveFCCategories(cats){localStorage.setItem('nxp-fc-categories',JSON.stringify(cats));}
 function getFCVat(entry){
+  // If vat_type is 'none', no VAT regardless of vat_pct value
+  if((entry.vat_type||'incl')==='none') return 0;
   return entry.vat_pct!=null&&entry.vat_pct!==''?parseFloat(entry.vat_pct)||0:21;
 }
 // vat_type: 'excl' = amount is excl VAT, 'incl' = amount is incl VAT, 'none' = no VAT
@@ -5498,6 +5537,8 @@ async function fcaDoAssign(){
     fc.category=cat;
     done++;
   }
+  // Clear cache so reload gets fresh Supabase data
+  try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
   closeModal();
   await loadData();
   renderFixedCosts();
@@ -5537,6 +5578,8 @@ async function fcDoRename(oldName){
   }
   // Also save new name in localStorage categories list to Supabase settings
   _fcSaveDateOverrides();
+  // Clear cache so reload gets fresh Supabase data
+  try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
   closeModal();await loadData();renderFixedCosts();
   showToast(`Category renamed to "${newName}"`);
 }
@@ -6354,8 +6397,8 @@ async function saveTransaction(id){
 function modalFixedCost(c){
   const cats=getFCCategories();
   const allCats=[...cats,'Uncategorised'];
-  const vatVal=c?.vat_pct!=null?c.vat_pct:21;
   const vatType=c?.vat_type||'incl';
+  const vatVal=vatType==='none'?0:(c?.vat_pct!=null?c.vat_pct:21);
   const amt=c?.amount!=null?parseFloat(c.amount||0):0;
   // Compute initial preview
   let prevGross=0,prevVat=0,prevNet=0;
@@ -6505,15 +6548,19 @@ async function repairFixedCostsSupabase(){
   const items = S.fixedCosts || [];
   let patched = 0;
   for(const fc of items){
-    const hasOverride = fc.start_month || fc.end_month || 
-      (fc.frequency && fc.frequency !== 'monthly');
-    if(!hasOverride) continue;
+    const needsSync =
+      fc.start_month || fc.end_month ||
+      (fc.frequency && fc.frequency !== 'monthly') ||
+      fc.vat_type === 'none' || fc.vat_type === 'excl'; // push non-default VAT settings
+    if(!needsSync) continue;
     try{
       await _supaReq('PATCH','fixed_costs',{
         start_month: fc.start_month||null,
         end_month: fc.end_month||null,
         frequency: fc.frequency||'monthly',
-        frequency_month: parseInt(fc.frequency_month)||1
+        frequency_month: parseInt(fc.frequency_month)||1,
+        vat_type: fc.vat_type||'incl',
+        vat_pct: parseFloat(fc.vat_pct)||0
       },'?id=eq.'+fc.id);
       patched++;
     }catch(e){}
@@ -6556,6 +6603,9 @@ async function saveFixedCost(id){
   if(data.end_month) notesEncoded+='||EM:'+data.end_month+'||';
   if(data.frequency&&data.frequency!=='monthly') notesEncoded+='||FREQ:'+data.frequency+'||';
   if(data.frequency&&data.frequency!=='monthly') notesEncoded+='||FREQM:'+data.frequency_month+'||';
+  // Always encode VAT settings in notes as backup (survives schema changes)
+  notesEncoded+='||VT:'+data.vat_type+'||';
+  notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
   if(id){
     await DB.update('fixed_costs',id,data);
@@ -6584,8 +6634,10 @@ async function saveFixedCost(id){
       }
     }catch(e){}
   }
+  // Clear fixed_costs from localStorage cache so next load gets fresh Supabase data
+  try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
   closeModal();await loadData();
-  // Persist start/end month overrides in settings as backup (Supabase schema may lack these columns)
+  // Persist start/end month overrides in settings as backup
   _fcSaveDateOverrides();
   _finData=null;
   renderFixedCosts();
@@ -7066,10 +7118,9 @@ function setFinTab(t){
 
 function renderFinancial(){
   // One-time repair: ensure all fixed cost overrides are in Supabase
-  if(!window._fcRepairDone){
-    window._fcRepairDone=true;
-    setTimeout(()=>repairFixedCostsSupabase(),2000);
-  }
+  // Run repair on every Financial page open (not just first time)
+  // This keeps Supabase in sync with any local changes
+  setTimeout(()=>repairFixedCostsSupabase(),2000);
   // Show spinner immediately
   const _spin=document.getElementById('fin-pl-tbody');
   if(_spin)_spin.innerHTML='<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--t3);font-size:12px">⏳ Loading…</td></tr>';
@@ -7084,30 +7135,15 @@ function renderFinancial(){
     _supaReq('GET','staffing',null,'?select=*&order=id.asc'),
     _supaReq('GET','future_costs',null,'?select=*&order=id.asc'),
     _supaReq('GET','settings',null,'?select=*'),
+    _supaReq('GET','bank_transactions',null,'?select=*&order=date.asc'),
+    _supaReq('GET','external_costs',null,'?select=*&order=id.asc'),
   ];
-  Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows])=>{
+  Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows,txRows,ecRows])=>{
     // Apply fetched data into S (only override if we got real data)
     if(cfRows&&cfRows.length>0){S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);}
     if(fcRows&&fcRows.length>0){
-      // Merge localStorage values into Supabase rows (localStorage is always up-to-date)
-      // This ensures amount/vat_type/frequency are correct even if Supabase PATCH failed
-      try{
-        const _localFC = DB._gs().fixed_costs || [];
-        fcRows.forEach(fc=>{
-          const loc = _localFC.find(l=>l.id===fc.id||l.id===parseInt(fc.id));
-          if(loc){
-            // Local store wins for these financial fields
-            if(loc.amount) fc.amount = loc.amount;
-            if(loc.vat_pct) fc.vat_pct = loc.vat_pct;
-            if(loc.vat_type) fc.vat_type = loc.vat_type;
-            if(loc.frequency && loc.frequency!=='monthly') fc.frequency = loc.frequency;
-            if(loc.frequency_month) fc.frequency_month = parseInt(loc.frequency_month)||1;
-            if(loc.hasOwnProperty('active')) fc.active = loc.active;
-            // Category: local wins if it differs from Supabase (user may have renamed)
-            if(loc.hasOwnProperty('category') && loc.category !== fc.category) fc.category = loc.category;
-          }
-        });
-      }catch(e){}
+      // Supabase is the single source of truth for all fields.
+      // No localStorage override - stale cache must never corrupt live data.
       // Parse start/end month from notes field
       fcRows.forEach(fc=>{
         const _n=fc.notes||'';
@@ -7116,10 +7152,15 @@ function renderFinancial(){
           const em=_n.match(/\|\|EM:(\d{4}-\d{2})\|\|/);
           const freq=_n.match(/\|\|FREQ:([^|]+)\|\|/);
           const freqm=_n.match(/\|\|FREQM:(\d+)\|\|/);
+          const vt=_n.match(/\|\|VT:(none|incl|excl)\|\|/);
+          const vp=_n.match(/\|\|VP:(\d+(?:\.\d+)?)\|\|/);
           if(sm&&!fc.start_month)fc.start_month=sm[1];
           if(em&&!fc.end_month)fc.end_month=em[1];
           if(freq&&(!fc.frequency||fc.frequency==='monthly'))fc.frequency=freq[1];
           if(freqm&&!fc.frequency_month)fc.frequency_month=parseInt(freqm[1]);
+          // VAT from notes takes precedence over null/undefined from Supabase
+          if(vt&&(!fc.vat_type||fc.vat_type===null))fc.vat_type=vt[1];
+          if(vp&&(fc.vat_pct===null||fc.vat_pct===undefined))fc.vat_pct=parseFloat(vp[1]);
         }
       });
       // Apply fc_date_overrides from settings (includes frequency overrides)
@@ -7148,6 +7189,11 @@ function renderFinancial(){
       S.staffing=stRows;
     }
     if(futRows&&futRows.length>0) S.futureCosts=futRows;
+    if(txRows&&txRows.length>0) S.transactions=txRows;
+    if(ecRows&&ecRows.length>0){
+      ecRows.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
+      S.externalCosts=ecRows;
+    }
     _renderFinancialActual();
   }).catch(()=>_renderFinancialActual());
 }
@@ -7437,18 +7483,20 @@ function renderFinClients(){
   let projs=status?S.projects.filter(p=>p.status===status):S.projects;
   const rows=projs.map(p=>{
     const sc=projStaffCost(p.id);
+    const ec=projExtCost(p.id);
     const wks=projectWkCount(p);
     const fixedAlloc=fc*(wks/allWks)*12;
-    const profit=p.revenue-sc-fixedAlloc;
+    const profit=p.revenue-sc-ec-fixedAlloc;
     const margin=p.revenue>0?profit/p.revenue*100:0;
-    return{p,sc,fixedAlloc,profit,margin};
+    return{p,sc,ec,fixedAlloc,profit,margin};
   });
   rows.sort((a,b)=>sortBy==='margin'?b.margin-a.margin:sortBy==='profit'?b.profit-a.profit:b.p.revenue-a.p.revenue);
   const totRev=rows.reduce((s,r)=>s+r.p.revenue,0);
   const totSc=rows.reduce((s,r)=>s+r.sc,0);
+  const totEc=rows.reduce((s,r)=>s+r.ec,0);
   const totPr=rows.reduce((s,r)=>s+r.profit,0);
   const totMg=totRev>0?totPr/totRev*100:0;
-  document.getElementById('fin-cl-tbody').innerHTML=rows.map(({p,sc,fixedAlloc,profit,margin})=>`<tr>
+  document.getElementById('fin-cl-tbody').innerHTML=rows.map(({p,sc,ec,fixedAlloc,profit,margin})=>`<tr>
     <td><strong>${esc(p.client_name)}</strong></td>
     <td style="color:var(--t2)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.status}">${p.status}</span></td>
@@ -8234,10 +8282,11 @@ function showRevenueDrilldown(year,mo){
   const lbl=new Date(year,mo-1,1).toLocaleDateString('en',{month:'long',year:'numeric'});
   
   // ── Day-accurate revenue per project (same formula as P&L / revForMonth) ──
+  // Check if "incl. draft" is ticked on the financial dashboard
+  const _modalInclDraft=document.getElementById('fin-incl-draft')?.checked||false;
   const projRev=S.projects.filter(p=>p.status==='confirmed').map(p=>{
     const rev=revForMonthDayPrecise(p,year,mo);
     if(rev<=0)return null;
-    // Active days in month for display
     const pS=_dateToUTCDays(p.start_date);
     const pE=_dateToUTCDays(p.end_date);
     const mS=Math.floor(Date.UTC(year,mo-1,1)/86400000);
@@ -8246,11 +8295,27 @@ function showRevenueDrilldown(year,mo){
     const wkCount=Math.max(1,projectWkCount(p));
     const rpw=p.revenue/wkCount;
     const dailyRate=rpw/7;
-    return{p,rev,activeDays,rpw,dailyRate};
+    return{p,rev,activeDays,rpw,dailyRate,isDraft:false};
   }).filter(Boolean);
+
+  // Draft projects — only when incl. draft is checked
+  const draftProjRev=_modalInclDraft?S.projects.filter(p=>p.status==='draft').map(p=>{
+    const rev=revForMonthDayPrecise(p,year,mo);
+    if(rev<=0)return null;
+    const pS=_dateToUTCDays(p.start_date);
+    const pE=_dateToUTCDays(p.end_date);
+    const mS=Math.floor(Date.UTC(year,mo-1,1)/86400000);
+    const mE=Math.floor(Date.UTC(year,mo,0)/86400000);
+    const activeDays=Math.min(pE,mE)-Math.max(pS,mS)+1;
+    const wkCount=Math.max(1,projectWkCount(p));
+    const rpw=p.revenue/wkCount;
+    const dailyRate=rpw/7;
+    return{p,rev,activeDays,rpw,dailyRate,isDraft:true};
+  }).filter(Boolean):[];
   
   // Financial summary using same revForMonth as P&L
   const totalProjRev=projRev.reduce((s,r)=>s+r.rev,0);
+  const totalDraftRev=draftProjRev.reduce((s,r)=>s+r.rev,0);
   const fixedCosts=fixedMonthly(year,mo);
   let forecastCosts=0;
   S.futureCosts.forEach(fc=>{
@@ -8270,20 +8335,32 @@ function showRevenueDrilldown(year,mo){
   
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
+  const totalRevInclDraft=totalProjRev+totalDraftRev;
+  const opResultInclDraft=totalRevInclDraft-totalOpCosts;
+  const opMarginInclDraft=totalRevInclDraft>0?(opResultInclDraft/totalRevInclDraft*100):0;
+
   m.innerHTML=`<div class="modal-header"><div class="modal-title">Company Dashboard — ${lbl}</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
   <div class="modal-body">
     <div style="background:var(--blue-bg);border:1px solid var(--bdr2);border-radius:var(--r);padding:13px;margin-bottom:14px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--blue);margin-bottom:10px">📊 Operational Result (P&amp;L)</div>
-      ${projRev.length?projRev.map(({p,rev,activeDays,rpw,dailyRate})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid var(--bdr)">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--blue);margin-bottom:10px">📊 Operational Result (P&amp;L)${_modalInclDraft?' <span style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber);border-radius:10px;padding:1px 7px;font-size:9px;font-weight:700;margin-left:6px">incl. draft</span>':''}</div>
+      ${projRev.length?projRev.map(({p,rev,activeDays,dailyRate})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid var(--bdr)">
         <div><span class="bold">${esc(p.client_name)}</span> / <span style="color:var(--t2)">${esc(p.name)}</span>
         <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} days × ${fmt(dailyRate)}/day</span></div>
         <span class="bold text-blue">${fmt(rev)}</span></div>`).join(''):'<div class="text-muted" style="font-size:11px;padding:4px 0">No confirmed project revenue</div>'}
-      <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px"><span>Total Revenue</span><span style="color:var(--blue)">${fmt(totalProjRev)}</span></div>
+      ${draftProjRev.length?`
+        <div style="margin:6px 0 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--amber);padding:4px 0;border-top:1px dashed #f0d090">&#9675; Draft Projects (indicative)</div>
+        ${draftProjRev.map(({p,rev,activeDays,dailyRate})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid #f0d090">
+          <div><span class="bold" style="color:var(--amber)">${esc(p.client_name)}</span> / <span style="color:var(--t2)">${esc(p.name)}</span>
+          <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} days × ${fmt(dailyRate)}/day</span></div>
+          <span class="bold" style="color:var(--amber)">${fmt(rev)}</span></div>`).join('')}
+        <div class="flex-between" style="padding:5px 0;font-size:11px;color:var(--amber)"><span>Draft subtotal</span><span>${fmt(totalDraftRev)}</span></div>
+      `:''}
+      <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px"><span>Total Revenue${_modalInclDraft&&totalDraftRev>0?' (conf + draft)':''}</span><span style="color:var(--blue)">${fmt(_modalInclDraft?totalRevInclDraft:totalProjRev)}</span></div>
       <div class="flex-between" style="padding:4px 0;color:var(--red)"><span>− Fixed Costs</span><span>${fmt(fixedCosts)}</span></div>
       ${forecastCosts>0?`<div class="flex-between" style="padding:4px 0;color:var(--amber)"><span>− Forecast Costs</span><span>${fmt(forecastCosts)}</span></div>`:''}
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px">
         <span>= Monthly Result</span>
-        <span style="color:${opResult>=0?'var(--green)':'var(--red)'}"><strong>${fmt(opResult)}</strong> <span style="font-size:10px;font-weight:400">(${opMargin.toFixed(1)}%)</span></span>
+        <span style="color:${(_modalInclDraft?opResultInclDraft:opResult)>=0?'var(--green)':'var(--red)'}"><strong>${fmt(_modalInclDraft?opResultInclDraft:opResult)}</strong> <span style="font-size:10px;font-weight:400">(${(_modalInclDraft?opMarginInclDraft:opMargin).toFixed(1)}%)</span></span>
       </div>
     </div>
     <div style="background:var(--green-p);border:1px solid #7fd4a8;border-radius:var(--r);padding:13px">
@@ -8710,6 +8787,7 @@ async function init(){
   DB._store = null; // clear cache so supaLoadAll fetches fresh data
   var _supaOk = false;
   try { _supaOk = await supaLoadAll(); } catch(e) { console.warn('supaLoadAll failed:', e); }
+  if(_supaOk) _SUPA_ONLINE = true; // ensure writes go to Supabase
   // Update data source indicator
   var _dsEl = document.getElementById('nav-data-source');
   if(_dsEl) {
