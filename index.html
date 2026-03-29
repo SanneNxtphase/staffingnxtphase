@@ -975,6 +975,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
       <button class="btn btn-primary" onclick="fcAddEntryModal()">+ Add Cost Entry</button>
       <button class="btn" onclick="fcAddCategoryModal()">+ Add Category</button>
       <button class="btn btn-sm" style="background:var(--amber-p);color:var(--amber);border-color:var(--amber);font-size:10px" onclick="fcDebugRaw()">🔍 Debug data</button>
+      <button class="btn btn-sm" style="background:var(--red-p);color:var(--red);border-color:var(--red);font-size:10px" onclick="fcFixUncategorised()">🔧 Fix Uncategorised</button>
     </div>
   </div>
   <div id="fc-debug-panel" style="display:none;background:#1a1a2e;color:#00ff88;font-family:monospace;font-size:11px;padding:12px 16px;border-radius:var(--r);margin-bottom:12px;max-height:300px;overflow-y:auto;white-space:pre-wrap"></div>
@@ -1315,6 +1316,11 @@ function _supaUrl(table, qs) {
 async function _supaReq(method, table, body, qs) {
   try {
     var hdrs = _supaHdr();
+    // PATCH should use return=minimal — Supabase returns 204 (success, no body)
+    // return=representation on PATCH causes issues with some RLS policies
+    if (method === 'PATCH') {
+      hdrs['Prefer'] = 'return=minimal';
+    }
     // For POST with ?select=, add Prefer: return=representation so Supabase returns the new row
     if (method === 'POST' && qs && qs.indexOf('select') >= 0) {
       hdrs['Prefer'] = 'return=representation';
@@ -1322,10 +1328,17 @@ async function _supaReq(method, table, body, qs) {
     var opts = { method: method, headers: hdrs };
     if (body) opts.body = JSON.stringify(body);
     var r = await fetch(_supaUrl(table, qs), opts);
-    if (!r.ok) return null;
-    if (r.status === 204) return null;
+    if (!r.ok) {
+      // Log error details for debugging
+      var errText = '';
+      try { errText = await r.text(); } catch(e2) {}
+      console.warn('[Supabase] '+method+' '+table+' failed: HTTP '+r.status, errText);
+      return null;
+    }
+    if (r.status === 204) return {}; // PATCH success with no body
     return await r.json().catch(function() { return null; });
   } catch(e) {
+    console.warn('[Supabase] '+method+' '+table+' exception:', e);
     return null;
   }
 }
@@ -5407,6 +5420,30 @@ async function fcDebugRaw(){
     '\nActive count: '+S.fixedCosts.filter(c=>c.active===1).length+
     '\nInactive count: '+S.fixedCosts.filter(c=>c.active===0).length+
     '\nOther active values: '+[...new Set(S.fixedCosts.map(c=>JSON.stringify(c.active)+' ('+typeof c.active+')'))].join(', ');
+}
+
+async function fcFixUncategorised(){
+  const panel=document.getElementById('fc-debug-panel');
+  if(panel){panel.style.display='block';panel.textContent='Fetching from Supabase…';}
+  // Fetch all fresh from Supabase
+  const all=await _supaReq('GET','fixed_costs',null,'?select=id,name,category&order=id.asc');
+  if(!all){if(panel)panel.textContent='ERROR: Could not reach Supabase';return;}
+  const toFix=all.filter(r=>!r.category||r.category===''||r.category==='Uncategorised');
+  if(!toFix.length){if(panel)panel.textContent='✓ No uncategorised entries found!';return;}
+  if(panel)panel.textContent=`Found ${toFix.length} uncategorised entries:\n${toFix.map(r=>`  id:${r.id} "${r.name}"`).join('\n')}\n\nPatching to "Loonkosten"…`;
+  let done=0,failed=0;
+  for(const r of toFix){
+    const res=await _supaReq('PATCH','fixed_costs',{category:'Loonkosten'},'?id=eq.'+r.id);
+    if(res!==null){done++;if(panel)panel.textContent+=`\n✓ id:${r.id} "${r.name}" → Loonkosten`;}
+    else{failed++;if(panel)panel.textContent+=`\n✗ id:${r.id} FAILED (check console for HTTP error)`;}
+  }
+  if(panel)panel.textContent+=`\n\nDone: ${done} updated, ${failed} failed.`;
+  // Refresh in memory
+  const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
+  const fresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
+  if(fresh&&fresh.length>0){fresh.forEach(_n);S.fixedCosts=fresh;}
+  renderFixedCosts();renderDashboard();
+  showToast(`✓ ${done} entries → Loonkosten`);
 }
 
 function renderFixedCosts(){
