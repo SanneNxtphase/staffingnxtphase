@@ -1800,6 +1800,31 @@ async function pullFromSupabase(){
   }
 }
 
+// Schema whitelist: only send columns that actually exist in Supabase
+// Prevents PGRST204 "column not found" errors for every table
+var _SUPA_SCHEMA = {
+  fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes','start_month','end_month'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
+  employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
+  staffing: ['employee_id','project_id','week_key','days','note'],
+  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
+  vacations: ['employee_id','start_date','end_date','days','notes'],
+  sick_leave: ['employee_id','start_date','end_date','days','notes'],
+  future_costs: ['description','month','amount','category','recurring'],
+  external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_count','usd_amount','usd_rate'],
+  cashflow_months: ['month','opening','closing','notes'],
+  bank_transactions: ['date','description','amount','category','type','amount_excl_vat','vat_pct','counterparty','is_fixed'],
+  partner_invoices: ['project_id','amount','month','paid','notes'],
+  settings: ['key','value']
+};
+function _supaFilter(table, data) {
+  var allowed = _SUPA_SCHEMA[table];
+  if (!allowed) return data;
+  var out = {};
+  allowed.forEach(function(k) { if (k in data) out[k] = data[k]; });
+  return out;
+}
+
 // Wrap DB write methods to also write to Supabase when online
 // Using traditional function syntax — safe in all browsers, no strict mode issues
 (function _supaWrapDB() {
@@ -1859,32 +1884,6 @@ async function pullFromSupabase(){
     }
     return result;
   };
-
-  // Schema whitelist: only send columns that actually exist in Supabase
-  // Prevents PGRST204 "column not found" errors for every table
-  var _SUPA_SCHEMA = {
-    fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes','start_month','end_month'],
-    projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
-    employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
-    staffing: ['employee_id','project_id','week_key','days','note'],
-    invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
-    vacations: ['employee_id','start_date','end_date','days','notes'],
-    sick_leave: ['employee_id','start_date','end_date','days','notes'],
-    future_costs: ['description','month','amount','category','recurring'],
-    external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_count','usd_amount','usd_rate'],
-    cashflow_months: ['month','opening','closing','notes'],
-    bank_transactions: ['date','description','amount','category','type','amount_excl_vat','vat_pct','counterparty','is_fixed'],
-    partner_invoices: ['project_id','amount','month','paid','notes'],
-    settings: ['key','value']
-  };
-
-  function _supaFilter(table, data) {
-    var allowed = _SUPA_SCHEMA[table];
-    if (!allowed) return data; // unknown table — pass through as-is
-    var out = {};
-    allowed.forEach(function(k) { if (k in data) out[k] = data[k]; });
-    return out;
-  }
 
   DB.update = async function(table, id, data) {
     var result = await origUpdate(table, id, data);
