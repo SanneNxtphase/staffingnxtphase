@@ -1316,12 +1316,9 @@ function _supaUrl(table, qs) {
 async function _supaReq(method, table, body, qs) {
   try {
     var hdrs = _supaHdr();
-    // PATCH should use return=minimal — Supabase returns 204 (success, no body)
-    // return=representation on PATCH causes issues with some RLS policies
     if (method === 'PATCH') {
       hdrs['Prefer'] = 'return=minimal';
     }
-    // For POST with ?select=, add Prefer: return=representation so Supabase returns the new row
     if (method === 'POST' && qs && qs.indexOf('select') >= 0) {
       hdrs['Prefer'] = 'return=representation';
     }
@@ -1329,16 +1326,17 @@ async function _supaReq(method, table, body, qs) {
     if (body) opts.body = JSON.stringify(body);
     var r = await fetch(_supaUrl(table, qs), opts);
     if (!r.ok) {
-      // Log error details for debugging
       var errText = '';
       try { errText = await r.text(); } catch(e2) {}
-      console.warn('[Supabase] '+method+' '+table+' failed: HTTP '+r.status, errText);
+      console.error('[Supabase FAIL] '+method+' '+table+qs+' → HTTP '+r.status+': '+errText);
+      // Show visible error for PATCH so user knows save failed
+      if(method==='PATCH'||method==='POST') showToast('⚠ Supabase save failed ('+r.status+'): '+errText.substring(0,80),'error');
       return null;
     }
-    if (r.status === 204) return {}; // PATCH success with no body
+    if (r.status === 204) return {};
     return await r.json().catch(function() { return null; });
   } catch(e) {
-    console.warn('[Supabase] '+method+' '+table+' exception:', e);
+    console.error('[Supabase EXCEPTION] '+method+' '+table+':', e);
     return null;
   }
 }
@@ -5803,20 +5801,23 @@ async function fcaDoAssign(){
   if(!cat){ showToast('Select a category first','error'); return; }
   const selected=[...document.querySelectorAll('.fca-chk:checked')].map(cb=>parseInt(cb.value));
   if(!selected.length){ showToast('Select at least one entry','error'); return; }
-  let done=0;
+  let done=0,failed=0;
   for(const id of selected){
-    const fc=S.fixedCosts.find(c=>c.id===id);
+    const fc=S.fixedCosts.find(c=>parseInt(c.id)===id);
     if(!fc) continue;
-    await DB.update('fixed_costs',id,{category:cat});
-    try{ await _supaReq('PATCH','fixed_costs',{category:cat},'?id=eq.'+id); }catch(e){}
-    fc.category=cat;
-    done++;
+    const res=await _supaReq('PATCH','fixed_costs',{category:cat},'?id=eq.'+id);
+    if(res!==null){
+      await DB.update('fixed_costs',id,{category:cat});
+      fc.category=cat;
+      done++;
+    } else {
+      failed++;
+    }
   }
-  // Clear cache so reload gets fresh Supabase data
-  try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
   closeModal();
   await _fcReloadAndRender();
-  showToast(`✓ ${done} entr${done===1?'y':'ies'} assigned to "${cat}"`);
+  if(failed>0) showToast(`⚠ ${done} updated, ${failed} failed — check console`,'error');
+  else showToast(`✓ ${done} entr${done===1?'y':'ies'} assigned to "${cat}"`);
 }
 function fcRenameCatModal(oldName){
   const m=document.getElementById('modal-content');
@@ -6902,28 +6903,32 @@ async function saveFixedCost(id){
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
   if(id){
-    await DB.update('fixed_costs',id,data);
-    // Always send core financial fields to Supabase (these columns always exist)
-    const _coreFields = {
-      name:data.name, category:data.category,
-      amount:data.amount, vat_pct:data.vat_pct, vat_type:data.vat_type,
-      active:data.active, notes:notesEncoded,
-      start_month:data.start_month||null, end_month:data.end_month||null
+    // Supabase PATCH — single clean call with only the fields that exist in the schema
+    const _patchData = {
+      name: data.name,
+      category: data.category,
+      amount: data.amount,
+      vat_pct: data.vat_pct,
+      vat_type: data.vat_type,
+      active: data.active,
+      notes: notesEncoded,
+      start_month: data.start_month||null,
+      end_month: data.end_month||null,
+      frequency: data.frequency||'monthly',
+      frequency_month: data.frequency_month||1
     };
-    showToast(`Saving category: "${data.category}" for id ${id}…`,'info');
-    let patchOk=false;
-    try{
-      const pr=await _supaReq('PATCH','fixed_costs',{..._coreFields,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+id);
-      patchOk=true;
-    }catch(e){
-      try{
-        const pr2=await _supaReq('PATCH','fixed_costs',_coreFields,'?id=eq.'+id);
-        patchOk=true;
-      }catch(e2){showToast('⚠ Supabase PATCH failed: '+e2,'error');}
+    const patchResult = await _supaReq('PATCH','fixed_costs',_patchData,'?id=eq.'+parseInt(id));
+    if(patchResult===null){
+      // PATCH failed — shown via toast in _supaReq, but also try minimal fallback
+      const fallback = await _supaReq('PATCH','fixed_costs',{category:data.category,name:data.name,amount:data.amount},'?id=eq.'+parseInt(id));
+      if(fallback===null){
+        showToast('⚠ Could not save to Supabase. Check browser console (F12) for error.','error');
+      }
     }
-    // Also directly update S.fixedCosts in memory immediately
-    const memEntry=S.fixedCosts.find(c=>c.id===id||c.id==id);
-    if(memEntry)memEntry.category=data.category;
+    // Update in memory regardless
+    const memEntry=S.fixedCosts.find(c=>parseInt(c.id)===parseInt(id));
+    if(memEntry)Object.assign(memEntry,{...data,active:data.active});
+    await DB.update('fixed_costs',id,data);
   } else {
     await DB.insert('fixed_costs',{...data,from_bank:0});
     try{
