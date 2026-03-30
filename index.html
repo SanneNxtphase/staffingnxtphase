@@ -1329,10 +1329,6 @@ async function _supaReq(method, table, body, qs) {
       var errText = '';
       try { errText = await r.text(); } catch(e2) {}
       console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status+': '+errText);
-      // Only show visible error toast for user-initiated writes (not background GETs)
-      if((method==='PATCH'||method==='POST'||method==='DELETE') && errText.indexOf('PGRST204')===-1){
-        showToast('⚠ Save failed ('+r.status+'): '+errText.substring(0,60),'error');
-      }
       return null;
     }
     if (r.status === 204) return {};
@@ -2815,28 +2811,20 @@ async function saveExtCost(id){
   };
 
   if(id){
-    // Edit: just update single entry
     const data={...baseData,amount,week_key:startWk,week_count:weekCount};
     await DB.update('external_costs',id,data);
-    try{await _supaReq('PATCH','external_costs',data,'?id=eq.'+id);}catch(e){}
     showToast('External cost updated');
   } else if(startWk&&weekCount>1){
-    // Multi-week: create one entry per week with amount/weekCount each
     const perWk=Math.round(amount/weekCount*100)/100;
     const weeks=[];
     let d=new Date(wkMonday(startWk));
     for(let i=0;i<weekCount;i++){weeks.push(toWeekKey(new Date(d)));d.setDate(d.getDate()+7);}
     for(const wk of weeks){
-      const data={...baseData,amount:perWk,week_key:wk,week_count:weekCount};
-      await DB.insert('external_costs',data);
-      try{await _supaReq('POST','external_costs',data);}catch(e){}
+      await DB.insert('external_costs',{...baseData,amount:perWk,week_key:wk,week_count:weekCount});
     }
     showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk`);
   } else {
-    // Single entry
-    const data={...baseData,amount,week_key:startWk,week_count:1};
-    await DB.insert('external_costs',data);
-    try{await _supaReq('POST','external_costs',data);}catch(e){}
+    await DB.insert('external_costs',{...baseData,amount,week_key:startWk,week_count:1});
     showToast('External cost added');
   }
   closeModal();
@@ -2849,7 +2837,6 @@ async function saveExtCost(id){
 async function deleteExtCost(id){
   if(!confirm('Delete this external cost entry?'))return;
   await DB.delete('external_costs',id);
-  try{await _supaReq('DELETE','external_costs',null,'?id=eq.'+id);}catch(e){}
   await loadData();
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
@@ -6028,7 +6015,6 @@ async function fcSaveEntry(){
 async function deleteFCEntry(id){
   if(!confirm('Delete this fixed cost entry?'))return;
   await DB.delete('fixed_costs',id);
-  try{await _supaReq('DELETE','fixed_costs',null,'?id=eq.'+id);}catch(e){}
   await _fcReloadAndRender();
   if(typeof _renderFinancialActual==='function')_renderFinancialActual();
   showToast('Entry deleted');
@@ -6934,47 +6920,34 @@ async function saveFixedCost(id){
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
   if(id){
-    // Only send fields that are guaranteed to exist in the Supabase schema
-    // PGRST204 = column not found — frequency/frequency_month may not exist
-    const _patchData = {
+    // DB.update handles both localStorage + filtered Supabase PATCH via schema whitelist
+    await DB.update('fixed_costs', id, {
       name: data.name,
       category: data.category,
       amount: data.amount,
       vat_pct: data.vat_pct,
       vat_type: data.vat_type,
       active: data.active,
-      notes: notesEncoded
-    };
-    // Try with start/end month columns first (they exist in Supabase)
-    let patchResult = await _supaReq('PATCH','fixed_costs',{
-      ..._patchData,
+      notes: notesEncoded,
       start_month: data.start_month||null,
       end_month: data.end_month||null
-    },'?id=eq.'+parseInt(id));
-
-    if(patchResult===null){
-      // Minimal fallback — guaranteed columns only
-      patchResult = await _supaReq('PATCH','fixed_costs',_patchData,'?id=eq.'+parseInt(id));
-    }
-    if(patchResult===null){
-      showToast('⚠ Could not save to Supabase — check console (F12)','error');
-    }
-    // Update in memory regardless
+    });
+    // Update in memory
     const memEntry=S.fixedCosts.find(c=>parseInt(c.id)===parseInt(id));
-    if(memEntry)Object.assign(memEntry,data);
-    await DB.update('fixed_costs',id,data);
+    if(memEntry)Object.assign(memEntry,{...data,notes:notesEncoded});
   } else {
-    // New entry — POST to Supabase directly
-    const _newData = {
+    // DB.insert handles both localStorage + filtered Supabase POST via schema whitelist
+    await DB.insert('fixed_costs', {
       name: data.name,
       category: data.category,
       amount: data.amount,
       vat_pct: data.vat_pct,
       vat_type: data.vat_type,
       active: data.active,
-      notes: notesEncoded
-    };
-    await _supaReq('POST','fixed_costs',_newData,'?select=id');
+      notes: notesEncoded,
+      start_month: data.start_month||null,
+      end_month: data.end_month||null
+    });
   }
   // Clear fixed_costs from localStorage cache so next load gets fresh Supabase data
   try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
