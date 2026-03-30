@@ -1811,7 +1811,7 @@ var _SUPA_SCHEMA = {
   vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
-  external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_count','usd_amount','usd_rate'],
+  external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_key_end','week_count','total_amount','usd_amount','usd_rate'],
   cashflow_months: ['month','opening','closing','notes'],
   bank_transactions: ['date','description','amount','category','type','amount_excl_vat','vat_pct','counterparty','is_fixed'],
   partner_invoices: ['project_id','amount','month','paid','notes'],
@@ -1986,9 +1986,20 @@ const monthLbl=(y,m)=>new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'long'
 const icoInfo='<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>';
 
 function getWeeksInMonth(y,m){
-  const weeks=[],last=new Date(y,m,0),d=new Date(y,m-1,1);
+  // Only include weeks whose Monday falls within the month
+  // This prevents week W14 (Mon 30/3) from appearing in both March AND April
+  const weeks=[];
+  const firstDay=new Date(y,m-1,1);
+  const lastDay=new Date(y,m,0); // last day of month
+  // Start from Monday of the week containing the 1st
+  const d=new Date(firstDay);
   const dow=d.getDay()||7;if(dow>1)d.setDate(d.getDate()-(dow-1));
-  while(d<=last){const wk=toWeekKey(d);if(!weeks.includes(wk))weeks.push(wk);d.setDate(d.getDate()+7);}
+  while(d<=lastDay){
+    const wk=toWeekKey(d);
+    // Only add if Monday of this week is within the month
+    if(d>=firstDay&&d<=lastDay&&!weeks.includes(wk))weeks.push(wk);
+    d.setDate(d.getDate()+7);
+  }
   return weeks;
 }
 function toWeekKey(date){
@@ -2629,85 +2640,92 @@ function renderExtCosts(){
 function modalExtCost(id, prefillProjectId){
   const e=id?(S.externalCosts||[]).find(x=>x.id===id||x.id==id):null;
   const projOptions=S.projects.filter(p=>p.status==='confirmed'||p.status==='draft').sort((a,b)=>(a.client_name||'').localeCompare(b.client_name||'')).map(p=>`<option value="${p.id}"${(e?.project_id==p.id||(prefillProjectId&&p.id==prefillProjectId))?' selected':''}>${esc(p.client_name)} — ${esc(p.name)}</option>`).join('');
+  // Build week options
+  const now=new Date();
+  const weekOpts=[];
+  for(let w=-4;w<=26;w++){
+    const d=new Date(now);d.setDate(d.getDate()+w*7);
+    const wk=toWeekKey(d);
+    if(wk&&!weekOpts.find(o=>o===wk))weekOpts.push(wk);
+  }
+  const wkSelOpts=wk=>`<option value="${wk}"${e?.week_key===wk?' selected':''}>${wk} (${wkRange(wk)})</option>`;
+  const wkEndOpts=wk=>`<option value="${wk}"${e?.week_key_end===wk?' selected':''}>${wk} (${wkRange(wk)})</option>`;
+
   return`<div class="modal-header"><div class="modal-title">${e?'Edit':'Add'} External Project Cost</div><button class="modal-close" onclick="closeModal()">×</button></div>
   <div class="modal-body" style="display:grid;gap:14px">
-    <div class="form-group">
-      <label class="form-lbl">Project <span style="color:var(--red)">*</span></label>
-      <select class="form-input" id="ec-project"><option value="">Select project…</option>${projOptions}</select>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-lbl">Project <span style="color:var(--red)">*</span></label>
+        <select class="form-input" id="ec-project"><option value="">Select project…</option>${projOptions}</select>
+      </div>
       <div class="form-group">
         <label class="form-lbl">Vendor / External Partner <span style="color:var(--red)">*</span></label>
-        <input class="form-input" id="ec-vendor" placeholder="e.g. Freelancer, Agency" value="${esc(e?.vendor||'')}">
-      </div>
-      <div class="form-group">
-        <label class="form-lbl">Date (YYYY-MM)</label>
-        <input class="form-input" id="ec-date" type="month" value="${e?.date?.substring(0,7)||new Date().toISOString().substring(0,7)}">
+        <input class="form-input" id="ec-vendor" placeholder="e.g. Trivial Group, Agora LLC" value="${esc(e?.vendor||'')}">
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-      <div class="form-group">
-        <label class="form-lbl">Start Week <span style="color:var(--t3);font-size:9px">first week of work</span></label>
-        <select class="form-input" id="ec-week-key">
-          <option value="">No week assigned</option>
-          ${(()=>{
-            const now=new Date();
-            const opts=[];
-            for(let w=-4;w<=16;w++){
-              const d=new Date(now);d.setDate(d.getDate()+w*7);
-              const wk=typeof toWeekKey==='function'?toWeekKey(d):'';
-              if(wk&&!opts.find(o=>o===wk))opts.push(wk);
-            }
-            return opts.map(wk=>`<option value="${wk}"${(e?.week_key===wk)?' selected':''}>${wk}</option>`).join('');
-          })()}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-lbl">Number of weeks <span style="color:var(--t3);font-size:9px">spread cost evenly</span></label>
-        <select class="form-input" id="ec-week-count" onchange="ecUpdateWeekPreview()">
-          <option value="1" ${(!e?.week_count||e?.week_count==1)?'selected':''}>1 week</option>
-          <option value="2" ${e?.week_count==2?'selected':''}>2 weeks</option>
-          <option value="3" ${e?.week_count==3?'selected':''}>3 weeks</option>
-          <option value="4" ${e?.week_count==4?'selected':''}>4 weeks</option>
-          <option value="6" ${e?.week_count==6?'selected':''}>6 weeks</option>
-          <option value="8" ${e?.week_count==8?'selected':''}>8 weeks</option>
-          <option value="12" ${e?.week_count==12?'selected':''}>12 weeks</option>
-        </select>
-      </div>
+    <div class="form-row">
       <div class="form-group">
         <label class="form-lbl">Description</label>
         <input class="form-input" id="ec-desc" placeholder="What was outsourced?" value="${esc(e?.description||'')}">
       </div>
+      <div class="form-group">
+        <label class="form-lbl">Total Contract Amount (€) <span style="color:var(--red)">*</span></label>
+        <input class="form-input bold" id="ec-amount" type="number" min="0" step="0.01" placeholder="0"
+          value="${e?.total_amount||e?.amount||''}" style="border-color:var(--orange,#f97316)"
+          oninput="ecCalcHourly();ecUpdateWeekPreview()">
+      </div>
     </div>
-    <div id="ec-week-preview" style="font-size:11px;color:var(--blue);background:var(--blue-p);padding:6px 10px;border-radius:var(--rsm);display:none;margin-bottom:4px"></div>
-    <div style="background:var(--bg2);border-radius:var(--r);padding:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-      <div class="form-group" style="margin:0">
-        <label class="form-lbl">Hours (optional)</label>
-        <input class="form-input" id="ec-hours" type="number" min="0" step="0.5" placeholder="0" value="${e?.hours||''}" oninput="ecCalcAmount()">
+    <div style="background:var(--bg2);border-radius:var(--r);padding:12px">
+      <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📅 Period — spread cost evenly over weeks</div>
+      <div class="form-row">
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Start Week</label>
+          <select class="form-input" id="ec-week-key" onchange="ecUpdateWeekPreview()">
+            <option value="">No week</option>
+            ${weekOpts.map(wkSelOpts).join('')}
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">End Week</label>
+          <select class="form-input" id="ec-week-key-end" onchange="ecUpdateWeekPreview()">
+            <option value="">Same as start</option>
+            ${weekOpts.map(wkEndOpts).join('')}
+          </select>
+        </div>
       </div>
-      <div class="form-group" style="margin:0">
-        <label class="form-lbl">Rate per hour (optional)</label>
-        <input class="form-input" id="ec-rate" type="number" min="0" step="1" placeholder="0" value="${e?.rate||''}" oninput="ecCalcAmount()">
-      </div>
-      <div class="form-group" style="margin:0">
-        <label class="form-lbl">Total Amount (€) <span style="color:var(--red)">*</span></label>
-        <input class="form-input bold" id="ec-amount" type="number" min="0" step="0.01" placeholder="0" value="${e?.amount||''}" style="border-color:var(--orange,#f97316)" oninput="ecCalcAmount();ecUpdateWeekPreview()">
+      <div id="ec-week-preview" style="font-size:11px;color:var(--blue);background:var(--blue-p);padding:6px 10px;border-radius:var(--rsm);display:none;margin-top:8px"></div>
+    </div>
+    <div style="background:var(--bg2);border-radius:var(--r);padding:12px">
+      <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">⏱ Hours / Rate (optional)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Hours</label>
+          <input class="form-input" id="ec-hours" type="number" min="0" step="0.5" placeholder="0" value="${e?.hours||''}" oninput="ecCalcHourly()">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Rate/hour</label>
+          <input class="form-input" id="ec-rate" type="number" min="0" step="1" placeholder="0" value="${e?.rate||''}" oninput="ecCalcHourly()">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-lbl">Month</label>
+          <input class="form-input" id="ec-date" type="month" value="${e?.date?.substring(0,7)||new Date().toISOString().substring(0,7)}">
+        </div>
       </div>
     </div>
     <div style="background:var(--bg2);border-radius:var(--r);padding:12px;border:1px dashed var(--bdr2)">
-      <div style="font-size:10px;font-weight:600;color:var(--t3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">💵 USD → EUR Converter (optional)</div>
+      <div style="font-size:10px;font-weight:600;color:var(--t3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">💵 USD → EUR (optional)</div>
       <div style="display:grid;grid-template-columns:1fr auto 1fr auto;gap:8px;align-items:flex-end">
         <div class="form-group" style="margin:0">
-          <label class="form-lbl">Amount in USD $</label>
+          <label class="form-lbl">Amount USD $</label>
           <input class="form-input" id="ec-usd" type="number" min="0" step="0.01" placeholder="0.00" value="${e?.usd_amount||''}" oninput="ecConvertUSD()">
         </div>
         <div style="padding-bottom:8px;color:var(--t3);font-size:13px">×</div>
         <div class="form-group" style="margin:0">
-          <label class="form-lbl">Rate: 1 USD = ? EUR <span style="font-size:9px;color:var(--t3)" id="ec-rate-hint"></span></label>
+          <label class="form-lbl">Rate USD→EUR <span style="font-size:9px;color:var(--t3)" id="ec-rate-hint"></span></label>
           <input class="form-input" id="ec-usd-rate" type="number" min="0" step="0.0001" placeholder="0.92" value="${e?.usd_rate||S._usdEurRate||0.92}" oninput="ecConvertUSD()">
         </div>
         <div style="padding-bottom:8px">
-          <button type="button" class="btn btn-sm" onclick="ecFetchRate()" style="font-size:10px;padding:4px 8px" title="Fetch live rate">↻ Live rate</button>
+          <button type="button" class="btn btn-sm" onclick="ecFetchRate()" style="font-size:10px;padding:4px 8px">↻ Live rate</button>
         </div>
       </div>
       <div id="ec-usd-result" style="margin-top:6px;font-size:11px;color:var(--t3);display:none"></div>
@@ -2719,23 +2737,34 @@ function modalExtCost(id, prefillProjectId){
 
 function ecUpdateWeekPreview(){
   const startWk=document.getElementById('ec-week-key')?.value;
-  const count=parseInt(document.getElementById('ec-week-count')?.value)||1;
+  const endWk=document.getElementById('ec-week-key-end')?.value||startWk;
   const amt=parseFloat(document.getElementById('ec-amount')?.value)||0;
   const prev=document.getElementById('ec-week-preview');
   if(!prev)return;
-  if(!startWk||count<=1){prev.style.display='none';return;}
-  // Build week list
+  if(!startWk){prev.style.display='none';return;}
+  // Build week list between start and end
   const weeks=[];
   if(typeof toWeekKey==='function'&&typeof wkMonday==='function'){
     let d=new Date(wkMonday(startWk));
-    for(let i=0;i<count;i++){
-      weeks.push(toWeekKey(new Date(d)));
-      d.setDate(d.getDate()+7);
-    }
+    const endD=endWk?new Date(wkMonday(endWk)):d;
+    endD.setDate(endD.getDate()+6); // end of that week
+    while(d<=endD){weeks.push(toWeekKey(new Date(d)));d.setDate(d.getDate()+7);}
   }
-  const perWk=amt>0?` · ${fmt(amt/count)}/wk`:'';
+  const count=weeks.length;
+  const perWk=count>0&&amt>0?` · ${fmt(Math.round(amt/count*100)/100)}/wk`:'';
   prev.style.display='block';
-  prev.textContent=`Will create ${count} entries: ${weeks.join(', ')}${perWk}`;
+  prev.textContent=count<=1?`Week: ${startWk}`:`${count} weeks: ${weeks[0]} → ${weeks[weeks.length-1]}${perWk}`;
+}
+function ecCalcHourly(){
+  const h=parseFloat(document.getElementById('ec-hours')?.value)||0;
+  const r=parseFloat(document.getElementById('ec-rate')?.value)||0;
+  if(h>0&&r>0){
+    const total=h*r;
+    document.getElementById('ec-amount').value=total.toFixed(2);
+    const hint=document.getElementById('ec-calc-hint');
+    if(hint){hint.textContent=`${h}h × €${r}/h = €${total.toFixed(2)}`;hint.style.display='block';}
+    ecUpdateWeekPreview();
+  }
 }
 
 async function ecFetchRate(){
@@ -2793,37 +2822,50 @@ function ecCalcAmount(){
 async function saveExtCost(id){
   const projId=parseInt(document.getElementById('ec-project')?.value)||0;
   const vendor=(document.getElementById('ec-vendor')?.value||'').trim();
-  const amount=parseFloat(document.getElementById('ec-amount')?.value)||0;
+  const totalAmount=parseFloat(document.getElementById('ec-amount')?.value)||0;
   if(!projId)return alert('Please select a project.');
   if(!vendor)return alert('Vendor / partner name is required.');
-  if(amount<=0)return alert('Amount must be greater than 0.');
+  if(totalAmount<=0)return alert('Amount must be greater than 0.');
   const startWk=document.getElementById('ec-week-key')?.value||null;
-  const weekCount=parseInt(document.getElementById('ec-week-count')?.value)||1;
+  const endWk=document.getElementById('ec-week-key-end')?.value||startWk;
+
+  // Build list of weeks between start and end
+  const weeks=[];
+  if(startWk&&typeof wkMonday==='function'){
+    let d=new Date(wkMonday(startWk));
+    const endD=endWk?new Date(wkMonday(endWk)):new Date(d);
+    endD.setDate(endD.getDate()+6);
+    while(d<=endD){weeks.push(toWeekKey(new Date(d)));d.setDate(d.getDate()+7);}
+  }
+  const weekCount=Math.max(1,weeks.length);
+  const perWk=Math.round(totalAmount/weekCount*100)/100;
+
   const baseData={
     project_id:projId,vendor,
     description:(document.getElementById('ec-desc')?.value||'').trim(),
     hours:parseFloat(document.getElementById('ec-hours')?.value)||null,
     rate:parseFloat(document.getElementById('ec-rate')?.value)||null,
     date:document.getElementById('ec-date')?.value||null,
+    total_amount:totalAmount,
+    week_key_end:endWk||startWk||null,
     usd_amount:parseFloat(document.getElementById('ec-usd')?.value)||null,
     usd_rate:parseFloat(document.getElementById('ec-usd-rate')?.value)||null
   };
 
   if(id){
-    const data={...baseData,amount,week_key:startWk,week_count:weekCount};
+    // Edit: update single entry with new total and week range
+    const data={...baseData,amount:totalAmount,week_key:startWk,week_count:weekCount};
     await DB.update('external_costs',id,data);
     showToast('External cost updated');
-  } else if(startWk&&weekCount>1){
-    const perWk=Math.round(amount/weekCount*100)/100;
-    const weeks=[];
-    let d=new Date(wkMonday(startWk));
-    for(let i=0;i<weekCount;i++){weeks.push(toWeekKey(new Date(d)));d.setDate(d.getDate()+7);}
+  } else if(weeks.length>1){
+    // Multi-week: one entry per week, amount spread evenly
     for(const wk of weeks){
       await DB.insert('external_costs',{...baseData,amount:perWk,week_key:wk,week_count:weekCount});
     }
-    showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk`);
+    showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk — total ${fmt(totalAmount)}`);
   } else {
-    await DB.insert('external_costs',{...baseData,amount,week_key:startWk,week_count:1});
+    // Single week or no week
+    await DB.insert('external_costs',{...baseData,amount:totalAmount,week_key:startWk||null,week_count:1});
     showToast('External cost added');
   }
   closeModal();
@@ -2910,17 +2952,21 @@ function projExtCost(pid){
     .reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function projExtCostWeek(pid, wk){
-  // wk = "YYYY-Wnn" — match on week_key field first, then fall back to date month
+  // wk = "YYYY-Wnn" — match entries that cover this week
   try{
+    // Direct match: entry has this exact week_key
     const direct=(S.externalCosts||[]).filter(e=>(e.project_id===pid||e.project_id==pid)&&e.week_key===wk)
       .reduce((s,e)=>s+parseFloat(e.amount||0),0);
     if(direct>0)return direct;
-    // Fallback: use month of week start date
+    // Fallback: use month of week start date for entries without week_key
     const{start}=_wkBounds(wk);
     const d=new Date(start*86400000);
     const mo=`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
-    return (S.externalCosts||[]).filter(e=>(e.project_id===pid||e.project_id==pid)&&!e.week_key&&e.date&&e.date.substring(0,7)===mo)
-      .reduce((s,e)=>s+parseFloat(e.amount||0),0);
+    return (S.externalCosts||[]).filter(e=>{
+      if(e.project_id!==pid&&e.project_id!=pid)return false;
+      if(e.week_key)return false; // already handled above
+      return e.date&&e.date.substring(0,7)===mo;
+    }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
   }catch(e){return 0;}
 }
 function projExtCostMonth(pid,mStr){
@@ -5448,25 +5494,38 @@ async function fcDebugRaw(){
 async function fcFixUncategorised(){
   const panel=document.getElementById('fc-debug-panel');
   if(panel){panel.style.display='block';panel.textContent='Fetching from Supabase…';}
-  // Fetch all fresh from Supabase
-  const all=await _supaReq('GET','fixed_costs',null,'?select=id,name,category&order=id.asc');
+  const all=await _supaReq('GET','fixed_costs',null,'?select=id,name,category,active,vat_type,vat_pct&order=id.asc');
   if(!all){if(panel)panel.textContent='ERROR: Could not reach Supabase';return;}
+
+  // 1. Fix uncategorised → Loonkosten
   const toFix=all.filter(r=>!r.category||r.category===''||r.category==='Uncategorised');
-  if(!toFix.length){if(panel)panel.textContent='✓ No uncategorised entries found!';return;}
-  if(panel)panel.textContent=`Found ${toFix.length} uncategorised entries:\n${toFix.map(r=>`  id:${r.id} "${r.name}"`).join('\n')}\n\nPatching to "Loonkosten"…`;
+  // 2. Fix Stein/Ralph/Sanne: should be Loonkosten + No VAT
+  const loonNames=['Stein Kooijman','Ralph Pijls','Sanne','Stein','Ralph','Kamiel Fokking','SJ van Houten'];
+  const toFixVat=all.filter(r=>loonNames.some(n=>r.name&&r.name.includes(n.split(' ')[0]))&&(r.vat_type!=='none'||(r.category||'')===''));
+
+  if(panel)panel.textContent=`Found ${toFix.length} uncategorised, ${toFixVat.length} with wrong VAT/category.\nPatching…`;
+
   let done=0,failed=0;
+  // Fix uncategorised
   for(const r of toFix){
     const res=await _supaReq('PATCH','fixed_costs',{category:'Loonkosten'},'?id=eq.'+r.id);
     if(res!==null){done++;if(panel)panel.textContent+=`\n✓ id:${r.id} "${r.name}" → Loonkosten`;}
-    else{failed++;if(panel)panel.textContent+=`\n✗ id:${r.id} FAILED (check console for HTTP error)`;}
+    else{failed++;if(panel)panel.textContent+=`\n✗ id:${r.id} FAILED`;}
   }
-  if(panel)panel.textContent+=`\n\nDone: ${done} updated, ${failed} failed.`;
-  // Refresh in memory
+  // Fix VAT for salary entries
+  for(const r of toFixVat){
+    const patch={vat_type:'none',vat_pct:0,category:'Loonkosten'};
+    const res=await _supaReq('PATCH','fixed_costs',patch,'?id=eq.'+r.id);
+    if(res!==null){done++;if(panel)panel.textContent+=`\n✓ id:${r.id} "${r.name}" → Loonkosten + No VAT`;}
+    else{failed++;if(panel)panel.textContent+=`\n✗ id:${r.id} FAILED`;}
+  }
+
+  if(panel)panel.textContent+=`\n\nDone: ${done} fixed, ${failed} failed.`;
   const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
   const fresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
   if(fresh&&fresh.length>0){fresh.forEach(_n);S.fixedCosts=fresh;}
   renderFixedCosts();renderDashboard();
-  showToast(`✓ ${done} entries → Loonkosten`);
+  showToast(`✓ ${done} entries fixed`);
 }
 
 function renderFixedCosts(){
