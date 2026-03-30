@@ -9298,11 +9298,13 @@ function renderEmployeeView(){
       const myStaff=S.staffing.filter(s=>s.week_key===firstWkKey&&(String(s.employee_id)===String(e.id))&&parseFloat(s.days||0)>0);
       if(!myStaff.length)return; // skip if no hours this week
       const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
+      const maxDays=e.available_days_per_week||5;
+      const isOver=totalDays>maxDays;
       const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(Boolean))];
-      html+='<div style="background:var(--bg);border:1.5px solid var(--bdr);border-radius:8px;padding:8px 12px;min-width:110px">'
+      html+='<div style="background:var(--bg);border:1.5px solid '+(isOver?'var(--red)':'var(--bdr)')+';border-radius:8px;padding:8px 12px;min-width:110px">'
         +'<div style="font-weight:700;font-size:13px;color:var(--navy)">'+esc(e.name)+'</div>'
-        +'<div style="font-size:17px;font-weight:800;color:var(--blue);line-height:1.1">'+totalDays.toFixed(1)+'d</div>'
-        +'<div style="font-size:10px;color:var(--t3);margin-top:2px">'+clients.slice(0,2).map(esc).join(' · ')+'</div>'
+        +'<div style="font-size:17px;font-weight:800;color:'+(isOver?'var(--red)':'var(--blue)')+';line-height:1.1">'+totalDays.toFixed(1)+'d'+(isOver?' ⚠':'')+'</div>'
+        +'<div style="font-size:10px;color:'+(isOver?'var(--red)':'var(--t3)')+';margin-top:2px">'+(isOver?'Over '+maxDays+'d contract':clients.slice(0,2).map(esc).join(' · '))+'</div>'
         +'</div>';
     });
     html+='</div>';
