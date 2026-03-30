@@ -3752,12 +3752,6 @@ function renderStaffing(){
         td+=`<td class="center" style="${isDraft?'color:var(--amber)':''}">${dayTotal||''}</td>`;
       });
       const cost=S.staffing.filter(s=>s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
-      // External costs per week for this project
-      const extCostTotal=weeks.reduce((s,wk)=>s+projExtCostWeek(p.id,wk),0);
-      const extCells=weeks.map(wk=>{
-        const ec=projExtCostWeek(p.id,wk);
-        return ec>0?`<td class="center" style="color:var(--orange,#f97316);font-size:11px;font-weight:600">${fmtS(ec)}</td>`:`<td class="center cell-zero text-muted">—</td>`;
-      }).join('');
       tbody+=`<tr class="row-emp${isDraft?' row-draft-proj':''}">
         <td style="${isDraft?'color:var(--amber)':'color:var(--navy);font-weight:700'}">
           ${isDraft?'<span class="badge badge-draft" style="margin-right:4px;font-size:8px">draft</span>':'<span style="display:inline-block;width:3px;height:14px;background:#1d4ed8;border-radius:2px;margin-right:6px;vertical-align:middle;opacity:.7"></span>'}
@@ -3766,15 +3760,7 @@ function renderStaffing(){
         ${td}<td class="right bold" style="${isDraft?'color:var(--amber)':'color:var(--navy)'}">${totalDays}d</td>
         <td class="right" style="color:var(--pink)">${fmt(cost)}</td>
       </tr>`;
-      // External costs sub-row (only if there are any)
-      if(extCostTotal>0){
-        tbody+=`<tr style="background:rgba(249,115,22,.04)">
-          <td style="padding-left:22px;color:var(--orange,#f97316);font-size:11px;font-style:italic">↳ Ext. costs</td>
-          ${extCells}
-          <td class="right" style="color:var(--orange,#f97316);font-size:11px;font-weight:700">${fmt(extCostTotal)}</td>
-          <td></td>
-        </tr>`;
-      }
+      // Ext costs removed from staffing grid — shown in Project Dashboard only
     };
     const confVis=confProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
     const draftVis=draftProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
@@ -3848,8 +3834,12 @@ function renderStaffing(){
           const totalVacDays=wkData.reduce((s,d)=>s+d.vac,0);
           tbody+=`<tr class="row-vac"><td>&#x1F3D6; Vacation</td>${vacCells}<td class="right" style="color:var(--purple)">${totalVacDays}d</td><td></td></tr>`;
         }
-        // Confirmed projects for this employee
-        const empConfProjs=confProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
+        // Only show confirmed projects where this employee has at least 1 day assigned
+        const empConfProjs=confProjs.filter(p=>{
+          // Must overlap with current month AND employee must have days on it
+          if(!projectWkKeys(p).some(w=>weeks.includes(w)))return false;
+          return S.staffing.some(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)&&parseFloat(s.days||0)>0);
+        });
         if(empConfProjs.length){
           empConfProjs.forEach(p=>{
             const pkWks=projectWkKeys(p);
@@ -3863,20 +3853,19 @@ function renderStaffing(){
               return`<td class="center editable${_note?' has-note':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_note?esc(_note):'Click to edit'}">${d||''}${_note?`<span style="font-size:7px;color:var(--blue);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_note)}</span>`:''}</td>`;
             }).join('');
             const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
-            const pExtTotal=weeks.reduce((s,wk)=>s+projExtCostWeek(p.id,wk),0);
             tbody+=`<tr class="row-proj">
               <td>${esc(p.client_name+' / '+p.name)}</td>${pCells}
               <td class="right">${pTotalDays?pTotalDays+'d':''}</td>
               <td class="right text-muted">${pCost?fmt(pCost):''}</td>
             </tr>`;
-            if(pExtTotal>0){
-              const pExtCells=weeks.map(wk=>{const ec=projExtCostWeek(p.id,wk);return ec>0?`<td class="center" style="color:var(--orange,#f97316);font-size:10px">${fmtS(ec)}</td>`:`<td></td>`;}).join('');
-              tbody+=`<tr style="background:rgba(249,115,22,.04)"><td style="padding-left:28px;color:var(--orange,#f97316);font-size:10px;font-style:italic">↳ ext. costs</td>${pExtCells}<td class="right" style="color:var(--orange,#f97316);font-size:10px">${fmt(pExtTotal)}</td><td></td></tr>`;
-            }
+            // Ext costs removed from staffing grid — shown in Project Dashboard and Forecast only
           });
         }
-        // Draft section divider + draft projects
-        const empDraftProjs=draftProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
+        // Draft section: also only show if employee has days assigned
+        const empDraftProjs=draftProjs.filter(p=>{
+          if(!projectWkKeys(p).some(w=>weeks.includes(w)))return false;
+          return S.staffing.some(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)&&parseFloat(s.days||0)>0);
+        });
         if(empDraftProjs.length){
           tbody+=`<tr class="row-draft-div"><td colspan="${weeks.length+3}">&#9675; Draft Projects</td></tr>`;
           empDraftProjs.forEach(p=>{
