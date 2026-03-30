@@ -1144,7 +1144,7 @@ const DB={
   _store:null,
   _gs(){
     if(this._store)return this._store;
-    const raw=localStorage.getItem('sp-v5')||localStorage.getItem('sp-v4')||localStorage.getItem('sp-v3');
+    var raw;try{raw=localStorage.getItem('sp-v5')||localStorage.getItem('sp-v4')||localStorage.getItem('sp-v3');}catch(e){raw=null;}
     if(raw){
       try{this._store=JSON.parse(raw);}catch(e){this._store=null;}
     }
@@ -1238,7 +1238,7 @@ const DB={
       s.employees.forEach(e=>{if((!e.daily_cost||e.daily_cost===0)&&costMap.hasOwnProperty(e.name))e.daily_cost=costMap[e.name];});
     }
   },
-  _sv(){localStorage.setItem('sp-v5',JSON.stringify(this._store));},
+  _sv(){try{localStorage.setItem('sp-v5',JSON.stringify(this._store));}catch(e){console.warn('localStorage write failed:',e);}},
   _ni(t){const s=this._gs();const id=s._ids[t]||1;s._ids[t]=id+1;return id;},
   _injectRealProjects(){this._ensureRealProjects();},
   _seed(){
@@ -1423,11 +1423,8 @@ async function supaLoadAll() {
     // Supabase is the single source of truth for all fields including category.
     // No local overrides — changes saved via PATCH to Supabase are authoritative.
 
-    // Normalize fixed_costs active field — Supabase returns boolean true/false, not integer
-    (store.fixed_costs||[]).forEach(function(c){
-      c.id=parseInt(c.id)||c.id;
-      c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;
-    });
+    // Normalize fixed_costs active field AND auto-fix salary entries
+    _normFixedCosts(store.fixed_costs||[]);
 
     // Normalize all IDs to integers in the loaded store (prevents === type-mismatch)
     (store.employees||[]).forEach(function(e){e.id=parseInt(e.id)||e.id;});
@@ -1668,7 +1665,7 @@ async function supaLoadAll() {
     // Extract staffing_notes from Supabase settings into localStorage
     try{
       const _snSetting=supaSettings.find(function(s){return s.key==='staffing_notes';});
-      if(_snSetting) localStorage.setItem('sp-staff-notes',_snSetting.value||'{}');
+      if(_snSetting) try{localStorage.setItem('sp-staff-notes',_snSetting.value||'{}');}catch(e){}
     }catch(e){}
     localStorage.setItem('sp-v5', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
@@ -1810,6 +1807,37 @@ async function pullFromSupabase(){
 
 // Schema whitelist: only send columns that actually exist in Supabase
 // Prevents PGRST204 "column not found" errors for every table
+// Central fixed costs normalizer — call whenever S.fixedCosts is loaded from Supabase
+// Fixes: active field type, and known salary employees always get Loonkosten + No VAT
+var _FC_SALARY_NAMES=['Stein','Ralph','Sanne','Kamiel','Siebeline','Koen','Marco','Mees','Paul'];
+function _normFixedCosts(arr){
+  (arr||[]).forEach(function(c){
+    // Normalize active
+    c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;
+    c.id=parseInt(c.id)||c.id;
+    // Auto-fix salary entries: Loonkosten + No VAT
+    var isSalary=_FC_SALARY_NAMES.some(function(n){return c.name&&c.name.toLowerCase().indexOf(n.toLowerCase())>=0;});
+    if(isSalary){
+      if(!c.category||c.category===''||c.category==='Uncategorised')c.category='Loonkosten';
+      if(c.vat_type!=='none'){c.vat_type='none';c.vat_pct=0;}
+    }
+  });
+  return arr;
+}
+// Async version: also patches Supabase for any entries that needed fixing
+async function _normFixedCostsAndSync(arr){
+  _normFixedCosts(arr);
+  for(var i=0;i<(arr||[]).length;i++){
+    var c=arr[i];
+    var isSalary=_FC_SALARY_NAMES.some(function(n){return c.name&&c.name.toLowerCase().indexOf(n.toLowerCase())>=0;});
+    if(isSalary&&c._needsSync){
+      await _supaReq('PATCH','fixed_costs',{category:c.category,vat_type:'none',vat_pct:0},'?id=eq.'+c.id);
+      delete c._needsSync;
+    }
+  }
+  return arr;
+}
+
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes','start_month','end_month'],
   projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
@@ -2310,7 +2338,7 @@ function getVATCategories(){
   S.transactions.forEach(t=>{if(t.category&&t.category.trim())cats.add(t.category.trim());});
   S.fixedCosts.forEach(c=>{if(c.category&&c.category.trim())cats.add(c.category.trim());});
   S.futureCosts.forEach(c=>{if(c.category&&c.category.trim())cats.add(c.category.trim());});
-  const custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');
+  var custom;try{custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');}catch(e){custom=[];}
   custom.forEach(c=>{if(c&&c.trim())cats.add(c.trim());});
   return [...cats].sort();
 }
@@ -2348,7 +2376,7 @@ function navigate(page,el){
       try{
         const snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key,value');
         if(snSet&&snSet.length>0){
-          localStorage.setItem('sp-staff-notes',snSet[0].value||'{}');
+          try{localStorage.setItem('sp-staff-notes',snSet[0].value||'{}');}catch(e){}
           // Re-merge into S.staffing
           try{
             const sn=JSON.parse(snSet[0].value||'{}');
@@ -2394,20 +2422,20 @@ function navigate(page,el){
       // Fetch fixed_costs fresh from Supabase
       const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc').catch(()=>null);
       if(fcFresh&&fcFresh.length>0){
-        fcFresh.forEach(_normActive);
+        _normFixedCosts(fcFresh);
         S.fixedCosts=fcFresh;
       } else {
         // Fallback: use whatever is already in S.fixedCosts (from prior loadData)
-        S.fixedCosts.forEach(_normActive);
+        _normFixedCosts(S.fixedCosts);
       }
       // Load all other data without touching fixedCosts
       await loadData();
       // Restore the fresh fixedCosts after loadData overwrites it
       if(fcFresh&&fcFresh.length>0){
-        fcFresh.forEach(_normActive);
+        _normFixedCosts(fcFresh);
         S.fixedCosts=fcFresh;
       } else {
-        S.fixedCosts.forEach(_normActive);
+        _normFixedCosts(S.fixedCosts);
       }
       renderPage(page);
     })();
@@ -2436,8 +2464,8 @@ async function loadData(){
     DB.select('partner_invoices'),DB.select('cashflow_months'),DB.select('sick_leave'),DB.select('external_costs')]);
   S.projects=pr||[];S.employees=em||[];S.staffing=st||[];S.vacations=va||[];S.sickLeave=sl||[];
   S.fixedCosts=fc||[];S.transactions=tx||[];S.invoices=inv||[];S.futureCosts=fut||[];
-  // Normalize active field — Supabase returns boolean true/false, not integer 1/0
-  S.fixedCosts.forEach(c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;});
+  // Normalize active field AND auto-fix salary entries
+  _normFixedCosts(S.fixedCosts);
   S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];S.externalCosts=ec||[];_parseCFNotes(S.cashflowMonths);
   // Normalize all IDs to integers to prevent === type-mismatch bugs
   S.employees.forEach(e=>{e.id=parseInt(e.id)||e.id;});
@@ -2763,7 +2791,7 @@ function ecUpdateWeekPreview(){
   prev.style.display='block';
   prev.textContent=count<=1?`Week: ${startWk}`:`${count} weeks: ${weeks[0]} → ${weeks[weeks.length-1]}${perWk}`;
 }
-function ecCalcHourly(){
+function ecCalcAmount(){
   const h=parseFloat(document.getElementById('ec-hours')?.value)||0;
   const r=parseFloat(document.getElementById('ec-rate')?.value)||0;
   if(h>0&&r>0){
@@ -2811,12 +2839,12 @@ function ecConvertUSD(){
     const eur = Math.round(usd*rate*100)/100;
     document.getElementById('ec-amount').value = eur;
     if(result){ result.style.display='block'; result.innerHTML=`<strong>$${usd.toFixed(2)} ÷ ${(1/rate).toFixed(4)} (= 1 USD × ${rate.toFixed(4)}) = <span style="color:var(--orange,#f97316);font-weight:700">€${eur.toFixed(2)}</span></strong> — filled into Total Amount ↑`; }
-    ecCalcAmount();
+    ecCalcHourly();
   } else {
     if(result) result.style.display='none';
   }
 }
-function ecCalcAmount(){
+function ecCalcHourly(){
   const h=parseFloat(document.getElementById('ec-hours')?.value)||0;
   const r=parseFloat(document.getElementById('ec-rate')?.value)||0;
   if(h>0&&r>0){
@@ -3683,7 +3711,7 @@ function renderStaffing(){
   if(sfSearch) sfSearch.value=selP?(selP.client_name+' / '+selP.name):'';
   empSel.value=curEmp;
 
-  const filterEmpId=parseInt(empSel.value)||null;
+  const filterEmpId=parseInt(empSel.value,10)||null;
   const filterProjId=parseInt(document.getElementById('sf-proj')?.value)||null;
   const view=S.staffingView;
 
@@ -3977,7 +4005,7 @@ function openStaffingBreakdownModal(y,m){
     var empRows=Object.values(p.emps).sort(function(a,b){return b.cost-a.cost;}).map(function(e){
       return`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 12px 4px 24px;border-top:1px solid var(--bdr);font-size:11px">
         <span style="color:var(--t2)">${esc(e.name)} <span style="color:var(--t3);font-size:10px">${e.days}d × €${e.rate}/d</span></span>
-        <span style="font-family:var(--mono);font-weight:600;color:var(--t1)">${fmt(e.cost)}</span>
+        <span style="font-family:var(--mono);font-weight:600;color:var(--text)">${fmt(e.cost)}</span>
       </div>`;
     }).join('');
     return`<div style="border:1px solid var(--bdr);border-radius:6px;margin-bottom:8px;overflow:hidden">
@@ -4351,7 +4379,7 @@ function _staffingNotesPush(){
       Object.assign(notes,local); // local wins
     }catch(e){}
     const json=JSON.stringify(notes);
-    localStorage.setItem('sp-staff-notes',json);
+    try{localStorage.setItem('sp-staff-notes',json);}catch(e){}
     // Push to Supabase
     (async()=>{
       try{
@@ -4368,7 +4396,7 @@ function _staffNoteSave(empId,projId,wk,note){
     const notes=JSON.parse(raw);
     const k=_staffNoteKey(empId,projId,wk);
     if(note) notes[k]=note; else delete notes[k];
-    localStorage.setItem('sp-staff-notes',JSON.stringify(notes));
+    try{localStorage.setItem('sp-staff-notes',JSON.stringify(notes));}catch(e){}
     // Push to Supabase settings
     const json=JSON.stringify(notes);
     (async()=>{
@@ -5370,10 +5398,10 @@ function getFCCategories(){
   const fromEntries=[...new Set((S.fixedCosts||[])
     .map(c=>c.category||'').filter(c=>c&&c!=='Uncategorised'))].sort();
   let fromStorage=[];
-  try{fromStorage=JSON.parse(localStorage.getItem('nxp-fc-categories')||'[]');}catch(e){}
+  try{fromStorage=JSON.parse((()=>{try{return localStorage.getItem('nxp-fc-categories');}catch(e){return null;}})()||'[]');}catch(e){}
   return[...new Set([...fromEntries,...fromStorage])].sort();
 }
-function saveFCCategories(cats){localStorage.setItem('nxp-fc-categories',JSON.stringify(cats));}
+function saveFCCategories(cats){try{localStorage.setItem('nxp-fc-categories',JSON.stringify(cats));}catch(e){}}
 function getFCVat(entry){
   // If vat_type is 'none', no VAT regardless of vat_pct value
   if((entry.vat_type||'incl')==='none') return 0;
@@ -5531,21 +5559,14 @@ async function fcFixUncategorised(){
   if(panel)panel.textContent+=`\n\nDone: ${done} fixed, ${failed} failed.`;
   const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
   const fresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
-  if(fresh&&fresh.length>0){fresh.forEach(_n);S.fixedCosts=fresh;}
+  if(fresh&&fresh.length>0){_normFixedCosts(fresh);S.fixedCosts=fresh;}
   renderFixedCosts();renderDashboard();
   showToast(`✓ ${done} entries fixed`);
 }
 
 function renderFixedCosts(){
-  // Exhaustive active normalization — Supabase returns true/false/1/0/"1"/"0"/null
-  (S.fixedCosts||[]).forEach(c=>{
-    // Treat anything truthy EXCEPT explicit false/0/"0"/"false"/null/undefined as active
-    if(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined){
-      c.active=0;
-    } else {
-      c.active=1;
-    }
-  });
+  // Normalize active + auto-fix salary entries
+  _normFixedCosts(S.fixedCosts||[]);
   const fActiveEl=document.getElementById('fc-filter-active');
   const fMonthEl=document.getElementById('fc-filter-month');
   const activeFilter=fActiveEl?.value||'active';
@@ -5891,7 +5912,7 @@ async function fcaDoAssign(){
     if(!cats.includes(cat)){ cats.push(cat); saveFCCategories(cats); }
   }
   if(!cat){ showToast('Select a category first','error'); return; }
-  const selected=[...document.querySelectorAll('.fca-chk:checked')].map(cb=>parseInt(cb.value));
+  const selected=[...document.querySelectorAll('.fca-chk:checked')].map(cb=>parseInt(cb.value,10));
   if(!selected.length){ showToast('Select at least one entry','error'); return; }
   let done=0,failed=0;
   for(const id of selected){
@@ -6089,16 +6110,27 @@ async function deleteFCEntry(id){
 // Central helper: normalize, render immediately, then refresh from Supabase
 async function _fcReloadAndRender(){
   const _norm=c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;};
-  // Render immediately from current S.fixedCosts
+  // Names of employees whose salary costs should always be Loonkosten + No VAT
+  const _salaryNames=['Stein','Ralph','Sanne','Kamiel','Siebeline','Koen','Marco','Mees','Paul'];
+  const _fixSalary=async(items)=>{
+    for(const c of items){
+      const isSalary=_salaryNames.some(n=>c.name&&c.name.toLowerCase().includes(n.toLowerCase()));
+      if(isSalary&&((!c.category||c.category===''||c.category==='Uncategorised')||(c.vat_type&&c.vat_type!=='none'))){
+        c.category='Loonkosten';c.vat_type='none';c.vat_pct=0;
+        await _supaReq('PATCH','fixed_costs',{category:'Loonkosten',vat_type:'none',vat_pct:0},'?id=eq.'+c.id);
+      }
+    }
+  };
   S.fixedCosts.forEach(_norm);
   _finData=null;
-  renderFixedCosts();
-  renderDashboard();
-  // Then fetch fresh from Supabase in background
+  renderFixedCosts();renderDashboard();
   setTimeout(async()=>{
     try{
       const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
-      if(fcFresh&&fcFresh.length>0){fcFresh.forEach(_norm);S.fixedCosts=fcFresh;renderFixedCosts();renderDashboard();}
+      if(fcFresh&&fcFresh.length>0){
+        _normFixedCosts(fcFresh);
+        S.fixedCosts=fcFresh;renderFixedCosts();renderDashboard();
+      }
     }catch(e){}
   },600);
 }
@@ -6456,7 +6488,7 @@ function renderHistory(){
   S.projects.forEach(p=>{if(p.start_date)years.add(parseInt(p.start_date.substring(0,4)));if(p.end_date)years.add(parseInt(p.end_date.substring(0,4)));});
   S.staffing.forEach(s=>{if(s.week_key)years.add(parseInt(s.week_key.substring(0,4)));});
   years.add(2025);years.add(2026);
-  const curYear=parseInt(yearSel.value)||2026;
+  const curYear=parseInt(yearSel.value,10)||2026;
   yearSel.innerHTML=[...years].sort().map(y=>`<option value="${y}"${y===curYear?' selected':''}>${y}</option>`).join('');
   yearSel.value=curYear;
   const y=curYear;
@@ -6570,7 +6602,7 @@ function openModal(type,id,id2){
   else if(type==='invoice')m.innerHTML=modalInvoice(item,null);
   else if(type==='partnerinvoice')m.innerHTML=modalPartnerInvoice(item);
   else if(type==='transaction')m.innerHTML=modalTransaction(item);
-  else if(type==='extcost'){m.innerHTML=modalExtCost(item?item.id:null, id2);setTimeout(()=>{if(document.getElementById('ec-hours')&&document.getElementById('ec-rate')){const h=document.getElementById('ec-hours').value,r=document.getElementById('ec-rate').value;if(h&&r)ecCalcAmount();}},30);}
+  else if(type==='extcost'){m.innerHTML=modalExtCost(item?item.id:null, id2);setTimeout(()=>{if(document.getElementById('ec-hours')&&document.getElementById('ec-rate')){const h=document.getElementById('ec-hours').value,r=document.getElementById('ec-rate').value;if(h&&r)ecCalcHourly();}},30);}
   else if(type==='fixedcost'){m.innerHTML=modalFixedCost(item);setTimeout(fcModalPostRender,10);}
   else if(type==='vacation')m.innerHTML=modalVacation(item);
   else if(type==='sickleave')m.innerHTML=modalSickLeave(item);
@@ -6578,7 +6610,7 @@ function openModal(type,id,id2){
   // Bind week auto-calc
   const sd=document.getElementById('f-start-date'),wd=document.getElementById('f-weeks'),ed=document.getElementById('f-end-date');
   if(sd&&wd&&ed){
-    const calcEnd=()=>{const w=parseInt(wd.value);if(sd.value&&w>0)ed.value=addWeeks(sd.value,w);};
+    const calcEnd=()=>{const w=parseInt(wd.value,10);if(sd.value&&w>0)ed.value=addWeeks(sd.value,w);};
     wd.addEventListener('input',calcEnd);sd.addEventListener('input',()=>{if(wd.value)calcEnd();});
   }
 }
@@ -7019,7 +7051,6 @@ async function saveFixedCost(id){
   try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
   closeModal();
   // Update S.fixedCosts in memory immediately so UI shows the change right away
-  const _normActive2=c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;};
   if(id){
     // Update existing entry in memory
     const idx=S.fixedCosts.findIndex(c=>c.id===id||c.id==id);
@@ -7028,7 +7059,7 @@ async function saveFixedCost(id){
     // Add new entry to memory
     S.fixedCosts.push({...data,id:Date.now()});
   }
-  S.fixedCosts.forEach(_normActive2);
+  _normFixedCosts(S.fixedCosts);
   _fcSaveDateOverrides();
   _finData=null;
   renderFixedCosts();
@@ -7040,7 +7071,7 @@ async function saveFixedCost(id){
     try{
       const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
       if(fcFresh&&fcFresh.length>0){
-        fcFresh.forEach(_normActive2);
+        _normFixedCosts(fcFresh);
         S.fixedCosts=fcFresh;
         renderFixedCosts();
         renderDashboard();
@@ -7053,9 +7084,12 @@ async function deleteItem(table,id){
   if(!confirm('Delete this item? This cannot be undone.'))return;
   await DB.delete(table,id);
   await loadData();
-  const pageMap={projects:'renderProjects',employees:'renderEmployees',invoices:'renderInvoices',bank_transactions:'renderCashflow',fixed_costs:'renderFixedCosts',vacations:'renderVacation',future_costs:'renderForecast',partner_invoices:'renderPartner'};
-  if(pageMap[table])eval(pageMap[table]+'()');
-  // Cross-refresh: invoices and partner page share data
+  const pageMap={
+    projects:renderProjects, employees:renderEmployees, invoices:renderInvoices,
+    bank_transactions:renderCashflow, fixed_costs:renderFixedCosts,
+    vacations:renderVacation, future_costs:renderForecast, partner_invoices:renderPartner
+  };
+  if(pageMap[table] && typeof pageMap[table]==='function') pageMap[table]();
   if(table==='invoices'&&typeof renderPartner==='function')renderPartner();
   if(table==='partner_invoices'&&typeof renderInvoices==='function')renderInvoices();
 }
@@ -7150,7 +7184,7 @@ function renderVAT(){
 
     // Auto-prune custom categories with 0 usage (silently)
     const pruned=customCats.filter(c=>!allUniq.includes(c)||(usage[c]||0)>0);
-    if(pruned.length!==customCats.length)localStorage.setItem('sp-custom-cats',JSON.stringify(pruned));
+    if(pruned.length!==customCats.length)try{localStorage.setItem('sp-custom-cats',JSON.stringify(pruned));}catch(e){}
 
     catPanel.innerHTML=`
     <div style="display:flex;gap:7px;align-items:center;margin-bottom:14px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--bdr)">
@@ -8464,7 +8498,8 @@ async function exportAllExcel(){
 
 // ══ EXPORT JSON BACKUP ══
 function exportBackup(){
-  const data=localStorage.getItem('sp-v5')||localStorage.getItem('sp-v4')||localStorage.getItem('sp-v3');
+  var data;
+  try{data=localStorage.getItem('sp-v5')||localStorage.getItem('sp-v4')||localStorage.getItem('sp-v3');}catch(e){data=null;}
   if(!data)return alert('No data to export.');
   const blob=new Blob([data],{type:'application/json'});
   const a=document.createElement('a');
@@ -8577,15 +8612,15 @@ function addCustomCategory(){
   const inp=document.getElementById('cat-new-input');
   const name=(inp?.value||'').trim();
   if(!name)return;
-  const existing=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');
-  if(!existing.includes(name)){existing.push(name);localStorage.setItem('sp-custom-cats',JSON.stringify(existing));}
+  var existing;try{existing=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');}catch(e){existing=[];}
+  if(!existing.includes(name)){existing.push(name);try{localStorage.setItem('sp-custom-cats',JSON.stringify(existing));}catch(e){}}
   if(inp)inp.value='';
   renderVAT();showToast(`Category "${name}" added`);
 }
 function deleteCustomCategory(name){
-  const existing=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');
+  var existing;try{existing=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');}catch(e){existing=[];}
   const updated=existing.filter(c=>c!==name);
-  localStorage.setItem('sp-custom-cats',JSON.stringify(updated));
+  try{try{localStorage.setItem('sp-custom-cats',JSON.stringify(updated));}catch(e){}}catch(e){}
   renderVAT();showToast(`Category "${name}" deleted`);
 }
 
@@ -8602,9 +8637,9 @@ async function renameCategory(oldName,newName){
   // Also update VAT overrides
   if(S.vatOverrides[oldName]!=null){S.vatOverrides[newName]=S.vatOverrides[oldName];delete S.vatOverrides[oldName];saveVatOverrides();}
   // Update custom categories list in localStorage
-  const custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');
+  var custom;try{custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');}catch(e){custom=[];}
   const updatedCustom=custom.map(c=>c===oldName?newName:c);
-  localStorage.setItem('sp-custom-cats',JSON.stringify(updatedCustom));
+  try{try{localStorage.setItem('sp-custom-cats',JSON.stringify(updatedCustom));}catch(e){}}catch(e){}
   await loadData();renderVAT();renderCashflow();renderFixedCosts();
   showToast(`Renamed "${oldName}" → "${newName}" (${count} records updated)`);
 }
@@ -8622,8 +8657,8 @@ async function mergeCategory(fromCat,intoCat){
   if(S.vatOverrides[fromCat]!=null&&S.vatOverrides[intoCat]==null){S.vatOverrides[intoCat]=S.vatOverrides[fromCat];saveVatOverrides();}
   delete S.vatOverrides[fromCat];saveVatOverrides();
   // Remove from custom categories
-  const custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');
-  localStorage.setItem('sp-custom-cats',JSON.stringify(custom.filter(c=>c!==fromCat)));
+  var custom;try{custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');}catch(e){custom=[];}
+  try{localStorage.setItem('sp-custom-cats',JSON.stringify(custom.filter(c=>c!==fromCat)));}catch(e){}
   await loadData();renderVAT();renderCashflow();renderFixedCosts();
   showToast(`Merged "${fromCat}" into "${intoCat}" (${count} records updated)`);
 }
@@ -8632,8 +8667,8 @@ async function mergeCategory(fromCat,intoCat){
 // For 0-usage: deletes immediately. For N-usage: confirms with option to clear or reassign.
 async function deleteCategory(name){
   // Remove from custom list if present
-  const custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');
-  localStorage.setItem('sp-custom-cats',JSON.stringify(custom.filter(c=>c!==name)));
+  var custom;try{custom=JSON.parse(localStorage.getItem('sp-custom-cats')||'[]');}catch(e){custom=[];}
+  try{localStorage.setItem('sp-custom-cats',JSON.stringify(custom.filter(c=>c!==name)));}catch(e){}
   // Remove VAT override
   if(S.vatOverrides[name]!=null){delete S.vatOverrides[name];saveVatOverrides();}
   renderVAT();
@@ -9026,7 +9061,7 @@ const AUTH={
   setPin(role,pin){
     const h=this.hash(pin);
     const key=role==='admin'?this.ADMIN_KEY:role==='employee'?this.EMPLOYEE_KEY:this.VIEWER_KEY;
-    localStorage.setItem(key,h);
+    try{localStorage.setItem(key,h);}catch(e){}
     // Sync PIN to Supabase so all devices share the same PIN
     const supaKey='pin_'+role;
     if(typeof _supaReq==='function'){
@@ -9044,9 +9079,9 @@ const AUTH={
       const res=await _supaReq('GET','settings',null,'?key=in.(pin_admin,pin_viewer,pin_employee)&select=key,value');
       if(!res)return;
       res.forEach(row=>{
-        if(row.key==='pin_admin')localStorage.setItem(this.ADMIN_KEY,row.value);
-        if(row.key==='pin_viewer')localStorage.setItem(this.VIEWER_KEY,row.value);
-        if(row.key==='pin_employee')localStorage.setItem(this.EMPLOYEE_KEY,row.value);
+        if(row.key==='pin_admin')try{localStorage.setItem(this.ADMIN_KEY,row.value);}catch(e){}
+        if(row.key==='pin_viewer')try{localStorage.setItem(this.VIEWER_KEY,row.value);}catch(e){}
+        if(row.key==='pin_employee')try{localStorage.setItem(this.EMPLOYEE_KEY,row.value);}catch(e){}
       });
     }catch(e){}
   },
@@ -9217,7 +9252,7 @@ async function init(){
     const _fcInit=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
     if(_fcInit&&_fcInit.length>0){
       const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
-      _fcInit.forEach(_n);
+      _normFixedCosts(_fcInit);
       S.fixedCosts=_fcInit;
     }
   }catch(e){}
