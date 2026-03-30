@@ -833,6 +833,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px"><span class="filter-lbl">View:</span>
       <div class="view-toggle"><div class="vbtn active" id="vb-full" onclick="setView('full')">Full</div><div class="vbtn" id="vb-people" onclick="setView('people')">People</div><div class="vbtn" id="vb-project" onclick="setView('project')">Project</div></div>
       <button class="btn btn-sm btn-ghost" style="font-size:9.5px;color:var(--amber);border-color:var(--amber)" onclick="cleanOrphanedStaffing(true)" title="Remove staffing rows that belong to deleted projects">🧹 Clean Orphans</button>
+      <button class="btn btn-sm btn-ghost" style="font-size:9.5px;color:var(--red);border-color:var(--red)" onclick="fixOverbookedStaffing()" title="Find and remove staffing entries that exceed available days per week">⚠ Fix Overbooked</button>
     </div>
   </div>
   <div class="alert alert-info mb-14"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>
@@ -1807,34 +1808,26 @@ async function pullFromSupabase(){
 
 // Schema whitelist: only send columns that actually exist in Supabase
 // Prevents PGRST204 "column not found" errors for every table
-// Central fixed costs normalizer — call whenever S.fixedCosts is loaded from Supabase
-// Fixes: active field type, and known salary employees always get Loonkosten + No VAT
-var _FC_SALARY_NAMES=['Stein','Ralph','Sanne','Kamiel','Siebeline','Koen','Marco','Mees','Paul'];
+// Central fixed costs normalizer — only normalizes the active field type
+// Does NOT override category or vat_type — those are user-controlled values
 function _normFixedCosts(arr){
   (arr||[]).forEach(function(c){
-    // Normalize active
     c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;
     c.id=parseInt(c.id)||c.id;
-    // Auto-fix salary entries: Loonkosten + No VAT
-    var isSalary=_FC_SALARY_NAMES.some(function(n){return c.name&&c.name.toLowerCase().indexOf(n.toLowerCase())>=0;});
-    if(isSalary){
-      if(!c.category||c.category===''||c.category==='Uncategorised')c.category='Loonkosten';
-      if(c.vat_type!=='none'){c.vat_type='none';c.vat_pct=0;}
+    // Decode start/end month from notes field if not already set
+    if(c.notes&&!c.start_month){var sm=c.notes.match(/\|\|SM:([^|]+)\|\|/);if(sm)c.start_month=sm[1];}
+    if(c.notes&&!c.end_month){var em=c.notes.match(/\|\|EM:([^|]+)\|\|/);if(em)c.end_month=em[1];}
+    // Decode vat_type from notes as fallback if Supabase value is missing
+    if(c.notes&&(!c.vat_type||c.vat_type==='incl')){
+      var vt=c.notes.match(/\|\|VT:([^|]+)\|\|/);if(vt&&vt[1])c.vat_type=vt[1];
+      var vp=c.notes.match(/\|\|VP:([^|]+)\|\|/);if(vp&&vp[1])c.vat_pct=parseFloat(vp[1])||0;
     }
   });
   return arr;
 }
-// Async version: also patches Supabase for any entries that needed fixing
+// Sync version kept for compatibility but no longer overrides VAT
 async function _normFixedCostsAndSync(arr){
   _normFixedCosts(arr);
-  for(var i=0;i<(arr||[]).length;i++){
-    var c=arr[i];
-    var isSalary=_FC_SALARY_NAMES.some(function(n){return c.name&&c.name.toLowerCase().indexOf(n.toLowerCase())>=0;});
-    if(isSalary&&c._needsSync){
-      await _supaReq('PATCH','fixed_costs',{category:c.category,vat_type:'none',vat_pct:0},'?id=eq.'+c.id);
-      delete c._needsSync;
-    }
-  }
   return arr;
 }
 
@@ -5533,35 +5526,27 @@ async function fcFixUncategorised(){
   const all=await _supaReq('GET','fixed_costs',null,'?select=id,name,category,active,vat_type,vat_pct&order=id.asc');
   if(!all){if(panel)panel.textContent='ERROR: Could not reach Supabase';return;}
 
-  // 1. Fix uncategorised → Loonkosten
+  // Only fix entries with no category — do NOT override vat_type (user-set)
   const toFix=all.filter(r=>!r.category||r.category===''||r.category==='Uncategorised');
-  // 2. Fix Stein/Ralph/Sanne: should be Loonkosten + No VAT
-  const loonNames=['Stein Kooijman','Ralph Pijls','Sanne','Stein','Ralph','Kamiel Fokking','SJ van Houten'];
-  const toFixVat=all.filter(r=>loonNames.some(n=>r.name&&r.name.includes(n.split(' ')[0]))&&(r.vat_type!=='none'||(r.category||'')===''));
 
-  if(panel)panel.textContent=`Found ${toFix.length} uncategorised, ${toFixVat.length} with wrong VAT/category.\nPatching…`;
+  if(!toFix.length){
+    if(panel)panel.textContent='✓ All entries have a category. Nothing to fix.';
+    showToast('✓ No uncategorised entries found');return;
+  }
+  if(panel)panel.textContent=`Found ${toFix.length} uncategorised entries. Patching to Loonkosten…`;
 
   let done=0,failed=0;
-  // Fix uncategorised
   for(const r of toFix){
     const res=await _supaReq('PATCH','fixed_costs',{category:'Loonkosten'},'?id=eq.'+r.id);
     if(res!==null){done++;if(panel)panel.textContent+=`\n✓ id:${r.id} "${r.name}" → Loonkosten`;}
     else{failed++;if(panel)panel.textContent+=`\n✗ id:${r.id} FAILED`;}
   }
-  // Fix VAT for salary entries
-  for(const r of toFixVat){
-    const patch={vat_type:'none',vat_pct:0,category:'Loonkosten'};
-    const res=await _supaReq('PATCH','fixed_costs',patch,'?id=eq.'+r.id);
-    if(res!==null){done++;if(panel)panel.textContent+=`\n✓ id:${r.id} "${r.name}" → Loonkosten + No VAT`;}
-    else{failed++;if(panel)panel.textContent+=`\n✗ id:${r.id} FAILED`;}
-  }
 
   if(panel)panel.textContent+=`\n\nDone: ${done} fixed, ${failed} failed.`;
-  const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
   const fresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
   if(fresh&&fresh.length>0){_normFixedCosts(fresh);S.fixedCosts=fresh;}
   renderFixedCosts();renderDashboard();
-  showToast(`✓ ${done} entries fixed`);
+  showToast(`✓ ${done} entries → Loonkosten`);
 }
 
 function renderFixedCosts(){
@@ -9297,6 +9282,47 @@ async function init(){
 
 // Removes staffing entries whose project_id no longer exists in S.projects
 // showUI=true shows a toast; showUI=false is silent (used on startup)
+async function fixOverbookedStaffing(){
+  // Find all weeks where any employee is booked over their available days
+  // For each such employee+week, show what will be trimmed and ask confirmation
+  const overbooked=[];
+  const empMap=Object.fromEntries(S.employees.map(e=>[String(e.id),e]));
+  const projMap=Object.fromEntries(S.projects.map(p=>[String(p.id),p]));
+
+  // Group staffing by employee+week
+  const groups={};
+  S.staffing.forEach(s=>{
+    const key=String(s.employee_id)+'__'+s.week_key;
+    if(!groups[key])groups[key]=[];
+    groups[key].push(s);
+  });
+
+  Object.entries(groups).forEach(([key,entries])=>{
+    const [empId,wk]=key.split('__');
+    const emp=empMap[empId];
+    if(!emp)return;
+    const maxDays=emp.available_days_per_week||5;
+    const total=entries.reduce((s,e)=>s+(parseFloat(e.days)||0),0);
+    if(total>maxDays){
+      overbooked.push({emp,wk,entries,total,maxDays,excess:total-maxDays});
+    }
+  });
+
+  if(!overbooked.length){showToast('✓ No overbooked employees found');return;}
+
+  // Show summary
+  const msg=overbooked.map(o=>{
+    const rows=o.entries.map(e=>{
+      const p=projMap[String(e.project_id)];
+      return `  ${p?p.client_name+'/'+p.name:'project#'+e.project_id}: ${e.days}d (id:${e.id})`;
+    }).join('\n');
+    return `${o.emp.name} in ${o.wk}: ${o.total}d / ${o.maxDays}d max (excess: ${o.excess.toFixed(1)}d)\n${rows}`;
+  }).join('\n\n');
+
+  if(!confirm(`Found ${overbooked.length} overbooked week(s):\n\n${msg}\n\nThis will NOT auto-delete entries. Go to the Staffing grid and manually adjust the days. Click OK to open the Staffing page.`)){return;}
+  navigate('staffing');
+}
+
 async function cleanOrphanedStaffing(showUI=true){
   const projectIds=new Set(S.projects.map(p=>p.id));
   const orphans=S.staffing.filter(s=>!projectIds.has(s.project_id));
