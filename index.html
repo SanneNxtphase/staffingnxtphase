@@ -6859,9 +6859,9 @@ function modalFixedCost(c){
       <div class="form-group" id="f-edit-vat-pct-group" style="opacity:${vatType==='none'?'0.3':'1'}"><label class="form-lbl">VAT % <span style="color:var(--t3);font-size:10px">Default 21%</span></label><input class="form-input" type="number" id="f-vat" value="${vatVal}" placeholder="21" step="0.5" min="0" max="100" oninput="fcModalPreview()"></div>
     </div>
     <div id="fc-modal-preview" style="background:var(--bg2);border-radius:var(--rsm);padding:12px 14px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;border:1px solid var(--bdr)">
-      <div><div style="color:var(--t3);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Gross (incl. VAT)</div><div id="prev-gross" style="font-weight:700;font-family:var(--mono)">${amt>0?fmt(prevGross):'—'}</div></div>
-      <div><div style="color:var(--amber);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">VAT (BTW)</div><div id="prev-vat" style="font-weight:700;color:var(--amber);font-family:var(--mono)">${amt>0?fmt(prevVat):'—'}</div></div>
-      <div><div style="color:var(--red);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Net (excl. VAT)</div><div id="prev-net" style="font-weight:700;color:var(--red);font-family:var(--mono)">${amt>0?fmt(prevNet):'—'}</div></div>
+      <div><div style="color:var(--t3);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Gross (incl. VAT)</div><div id="modal-prev-gross" style="font-weight:700;font-family:var(--mono)">${amt>0?fmt(prevGross):'—'}</div></div>
+      <div><div style="color:var(--amber);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">VAT (BTW)</div><div id="modal-prev-vat" style="font-weight:700;color:var(--amber);font-family:var(--mono)">${amt>0?fmt(prevVat):'—'}</div></div>
+      <div><div style="color:var(--red);font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Net (excl. VAT)</div><div id="modal-prev-net" style="font-weight:700;color:var(--red);font-family:var(--mono)">${amt>0?fmt(prevNet):'—'}</div></div>
     </div>
     <div class="form-row" style="margin-top:10px">
       <div class="form-group">
@@ -6956,7 +6956,9 @@ function fcModalPreview(){
   if(type==='none'){gross=amt;vatAmt=0;net=amt;}
   else if(type==='excl'){net=amt;vatAmt=Math.round(amt*(vat/100)*100)/100;gross=Math.round((amt+vatAmt)*100)/100;}
   else{gross=amt;net=vat===0?amt:Math.round(amt/(1+vat/100)*100)/100;vatAmt=Math.round((gross-net)*100)/100;}
-  const pg=document.getElementById('prev-gross');const pv=document.getElementById('prev-vat');const pn=document.getElementById('prev-net');
+  const pg=document.getElementById('modal-prev-gross');
+  const pv=document.getElementById('modal-prev-vat');
+  const pn=document.getElementById('modal-prev-net');
   if(pg)pg.textContent=amt>0?fmt(gross):'—';
   if(pv)pv.textContent=amt>0?fmt(vatAmt):'—';
   if(pn)pn.textContent=amt>0?fmt(net):'—';
@@ -9410,11 +9412,13 @@ function renderEmployeeView(){
       const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
       const maxDays=e.available_days_per_week||5;
       const isOver=totalDays>maxDays;
-      const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(Boolean))];
-      html+='<div style="background:var(--bg);border:1.5px solid '+(isOver?'var(--red)':'var(--bdr)')+';border-radius:8px;padding:8px 12px;min-width:110px">'
+      // Build hover tooltip showing exact project breakdown
+      const breakdown=myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return (p?p.client_name:s.project_id)+': '+s.days+'d';}).join('\n');
+      const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(c=>c&&c!=='?'))];
+      html+='<div title="'+esc(breakdown)+'" style="background:var(--bg);border:1.5px solid '+(isOver?'var(--red)':'var(--bdr)')+';border-radius:8px;padding:8px 12px;min-width:110px;cursor:default">'
         +'<div style="font-weight:700;font-size:13px;color:var(--navy)">'+esc(e.name)+'</div>'
         +'<div style="font-size:17px;font-weight:800;color:'+(isOver?'var(--red)':'var(--blue)')+';line-height:1.1">'+totalDays.toFixed(1)+'d'+(isOver?' ⚠':'')+'</div>'
-        +'<div style="font-size:10px;color:'+(isOver?'var(--red)':'var(--t3)')+';margin-top:2px">'+(isOver?'Over '+maxDays+'d contract':clients.slice(0,2).map(esc).join(' · '))+'</div>'
+        +'<div style="font-size:10px;color:'+(isOver?'var(--red)':'var(--t3)')+';margin-top:2px">'+(isOver?totalDays.toFixed(1)+'d / '+maxDays+'d max':clients.slice(0,2).map(esc).join(' · '))+'</div>'
         +'</div>';
     });
     html+='</div>';
