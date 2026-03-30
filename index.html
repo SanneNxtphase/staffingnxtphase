@@ -1678,7 +1678,7 @@ async function supaLoadAll() {
         if(old.amount && old.amount !== fc.amount){ repair.amount=old.amount; needsRepair=true; }
         // Repair vat_type if Supabase has null but local/notes has a value
         if(old.vat_type && old.vat_type!==fc.vat_type){ repair.vat_type=old.vat_type; repair.vat_pct=old.vat_pct||0; needsRepair=true; }
-        if(old.frequency && old.frequency!=='monthly' && old.frequency!==fc.frequency){ repair.frequency=old.frequency; repair.frequency_month=parseInt(old.frequency_month)||1; needsRepair=true; }
+        // NOTE: frequency/frequency_month not sent — those columns don't exist in Supabase (stored in notes)
         if(old.notes && old.notes !== fc.notes){ repair.notes=old.notes; needsRepair=true; }
         if(needsRepair){
           // Also apply repair to in-memory store so current session is correct
@@ -6843,22 +6843,14 @@ async function repairFixedCostsSupabase(){
   const items = S.fixedCosts || [];
   let patched = 0;
   for(const fc of items){
-    const needsSync =
-      fc.start_month || fc.end_month ||
-      (fc.frequency && fc.frequency !== 'monthly') ||
-      fc.vat_type === 'none' || fc.vat_type === 'excl'; // push non-default VAT settings
+    const needsSync = fc.vat_type === 'none' || fc.vat_type === 'excl';
     if(!needsSync) continue;
-    try{
-      await _supaReq('PATCH','fixed_costs',{
-        start_month: fc.start_month||null,
-        end_month: fc.end_month||null,
-        frequency: fc.frequency||'monthly',
-        frequency_month: parseInt(fc.frequency_month)||1,
-        vat_type: fc.vat_type||'incl',
-        vat_pct: parseFloat(fc.vat_pct)||0
-      },'?id=eq.'+fc.id);
-      patched++;
-    }catch(e){}
+    // Only send columns that exist in Supabase — frequency/frequency_month stored in notes
+    const res = await _supaReq('PATCH','fixed_costs',{
+      vat_type: fc.vat_type||'incl',
+      vat_pct: parseFloat(fc.vat_pct)||0
+    },'?id=eq.'+fc.id);
+    if(res!==null) patched++;
   }
   if(patched>0) showToast(`✓ Synced ${patched} fixed cost(s) to Supabase`);
   return patched;
@@ -6903,7 +6895,8 @@ async function saveFixedCost(id){
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
   if(id){
-    // Supabase PATCH — single clean call with only the fields that exist in the schema
+    // Only send fields that are guaranteed to exist in the Supabase schema
+    // PGRST204 = column not found — frequency/frequency_month may not exist
     const _patchData = {
       name: data.name,
       category: data.category,
@@ -6911,34 +6904,38 @@ async function saveFixedCost(id){
       vat_pct: data.vat_pct,
       vat_type: data.vat_type,
       active: data.active,
-      notes: notesEncoded,
-      start_month: data.start_month||null,
-      end_month: data.end_month||null,
-      frequency: data.frequency||'monthly',
-      frequency_month: data.frequency_month||1
+      notes: notesEncoded
     };
-    const patchResult = await _supaReq('PATCH','fixed_costs',_patchData,'?id=eq.'+parseInt(id));
+    // Try with start/end month columns first (they exist in Supabase)
+    let patchResult = await _supaReq('PATCH','fixed_costs',{
+      ..._patchData,
+      start_month: data.start_month||null,
+      end_month: data.end_month||null
+    },'?id=eq.'+parseInt(id));
+
     if(patchResult===null){
-      // PATCH failed — shown via toast in _supaReq, but also try minimal fallback
-      const fallback = await _supaReq('PATCH','fixed_costs',{category:data.category,name:data.name,amount:data.amount},'?id=eq.'+parseInt(id));
-      if(fallback===null){
-        showToast('⚠ Could not save to Supabase. Check browser console (F12) for error.','error');
-      }
+      // Minimal fallback — guaranteed columns only
+      patchResult = await _supaReq('PATCH','fixed_costs',_patchData,'?id=eq.'+parseInt(id));
+    }
+    if(patchResult===null){
+      showToast('⚠ Could not save to Supabase — check console (F12)','error');
     }
     // Update in memory regardless
     const memEntry=S.fixedCosts.find(c=>parseInt(c.id)===parseInt(id));
-    if(memEntry)Object.assign(memEntry,{...data,active:data.active});
+    if(memEntry)Object.assign(memEntry,data);
     await DB.update('fixed_costs',id,data);
   } else {
-    await DB.insert('fixed_costs',{...data,from_bank:0});
-    try{
-      const newRows=await _supaReq('GET','fixed_costs',null,'?name=eq.'+encodeURIComponent(name)+'&order=id.desc&limit=1');
-      if(newRows&&newRows[0]){
-        const _cf2={name:data.name,category:data.category,amount:data.amount,vat_pct:data.vat_pct,vat_type:data.vat_type,active:data.active,notes:notesEncoded,start_month:data.start_month||null,end_month:data.end_month||null};
-        try{await _supaReq('PATCH','fixed_costs',{..._cf2,frequency:data.frequency||'monthly',frequency_month:data.frequency_month||1},'?id=eq.'+newRows[0].id);}
-        catch(e){try{await _supaReq('PATCH','fixed_costs',_cf2,'?id=eq.'+newRows[0].id);}catch(e2){}}
-      }
-    }catch(e){}
+    // New entry — POST to Supabase directly
+    const _newData = {
+      name: data.name,
+      category: data.category,
+      amount: data.amount,
+      vat_pct: data.vat_pct,
+      vat_type: data.vat_type,
+      active: data.active,
+      notes: notesEncoded
+    };
+    await _supaReq('POST','fixed_costs',_newData,'?select=id');
   }
   // Clear fixed_costs from localStorage cache so next load gets fresh Supabase data
   try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
