@@ -1328,9 +1328,11 @@ async function _supaReq(method, table, body, qs) {
     if (!r.ok) {
       var errText = '';
       try { errText = await r.text(); } catch(e2) {}
-      console.error('[Supabase FAIL] '+method+' '+table+qs+' → HTTP '+r.status+': '+errText);
-      // Show visible error for PATCH so user knows save failed
-      if(method==='PATCH'||method==='POST') showToast('⚠ Supabase save failed ('+r.status+'): '+errText.substring(0,80),'error');
+      console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status+': '+errText);
+      // Only show visible error toast for user-initiated writes (not background GETs)
+      if((method==='PATCH'||method==='POST'||method==='DELETE') && errText.indexOf('PGRST204')===-1){
+        showToast('⚠ Save failed ('+r.status+'): '+errText.substring(0,60),'error');
+      }
       return null;
     }
     if (r.status === 204) return {};
@@ -1723,8 +1725,11 @@ async function pushAllToSupabase() {
         var payload = {};
         var keys = Object.keys(row);
         for (var ki = 0; ki < keys.length; ki++) {
-          if (keys[ki] !== '_ids') payload[keys[ki]] = row[keys[ki]];
+          if (keys[ki] !== '_ids' && keys[ki] !== 'created_at') payload[keys[ki]] = row[keys[ki]];
         }
+        // Filter to only Supabase schema columns to prevent PGRST204 errors
+        payload = _supaFilter(table, payload);
+        if (Object.keys(payload).length === 0) continue;
         try {
           var ex = await _supaReq('GET', table, null, '?id=eq.' + row.id + '&select=id');
           if (ex && ex.length > 0) {
@@ -1824,8 +1829,10 @@ async function pullFromSupabase(){
           var pay = {};
           var keys = Object.keys(row);
           for (var ki = 0; ki < keys.length; ki++) {
-            if (keys[ki] !== '_ids' && keys[ki] !== 'id') pay[keys[ki]] = row[keys[ki]];
+            if (keys[ki] !== '_ids' && keys[ki] !== 'id' && keys[ki] !== 'created_at') pay[keys[ki]] = row[keys[ki]];
           }
+          // Filter to only columns that exist in Supabase schema
+          pay = _supaFilter(table, pay);
           // Insert to Supabase and get the real auto-assigned ID back
           var supaResult = await _supaReq('POST', table, pay, '?select=id');
           if (supaResult && supaResult[0] && supaResult[0].id) {
@@ -1857,9 +1864,41 @@ async function pullFromSupabase(){
     return result;
   };
 
+  // Schema whitelist: only send columns that actually exist in Supabase
+  // Prevents PGRST204 "column not found" errors for every table
+  var _SUPA_SCHEMA = {
+    fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes','start_month','end_month'],
+    projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
+    employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
+    staffing: ['employee_id','project_id','week_key','days','note'],
+    invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
+    vacations: ['employee_id','start_date','end_date','days','notes'],
+    sick_leave: ['employee_id','start_date','end_date','days','notes'],
+    future_costs: ['description','month','amount','category','recurring'],
+    external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_count','usd_amount','usd_rate'],
+    cashflow_months: ['month','opening','closing','notes'],
+    bank_transactions: ['date','description','amount','category','type','amount_excl_vat','vat_pct','counterparty','is_fixed'],
+    partner_invoices: ['project_id','amount','month','paid','notes'],
+    settings: ['key','value']
+  };
+
+  function _supaFilter(table, data) {
+    var allowed = _SUPA_SCHEMA[table];
+    if (!allowed) return data; // unknown table — pass through as-is
+    var out = {};
+    allowed.forEach(function(k) { if (k in data) out[k] = data[k]; });
+    return out;
+  }
+
   DB.update = async function(table, id, data) {
     var result = await origUpdate(table, id, data);
-    if (_SUPA_ONLINE) { try { await _supaReq('PATCH', table, data, '?id=eq.' + id); } catch(e) { console.warn('[DB.update] Supabase PATCH failed:', table, id, e); } }
+    if (_SUPA_ONLINE) {
+      var filtered = _supaFilter(table, data);
+      if (Object.keys(filtered).length > 0) {
+        var res = await _supaReq('PATCH', table, filtered, '?id=eq.' + id);
+        if (res === null) console.warn('[DB.update] Supabase PATCH failed:', table, id);
+      }
+    }
     return result;
   };
 
