@@ -9495,12 +9495,18 @@ function renderEmployeeView(){
   // Summary cards per person
   // Summary cards use only the first (current) week
   const firstWkKey=weeks[0]?.wkKey;
-  // Helper: is a staffing entry valid? Project must exist and not be stopped
+  // Helper: is a staffing entry valid for this week?
+  // Project must exist, not be stopped, AND the week must fall within project dates
   const isActiveStaff=function(s,wk){
     if(!parseFloat(s.days||0))return false;
     const proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
-    if(!proj)return false; // orphan entry — skip
+    if(!proj)return false; // orphan — skip
     if(proj.status==='stopped')return false;
+    // If project has start/end dates, check the week falls within them
+    if(proj.start_date&&proj.end_date){
+      const pkWks=typeof projectWkKeys==='function'?projectWkKeys(proj):[];
+      if(pkWks.length>0&&!pkWks.includes(wk))return false;
+    }
     return true;
   };
 
@@ -9548,14 +9554,17 @@ function renderEmployeeView(){
       if(!emp) emp={id:s.employee_id,name:'#'+s.employee_id,role:'',daily_cost:0,available_days_per_week:5};
       if(!isTeamViewVisible(emp)) return;
 
-      // PROJECT: must exist and not be stopped
+      // PROJECT: must exist, not be stopped, and week must be within project dates
       let proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
       if(!proj&&s._projName) {
         proj=S.projects.find(p=>p.name===s._projName&&p.client_name===s._projClient);
-        if(!proj) proj={id:s.project_id,name:s._projName,client_name:s._projClient||'?',status:'confirmed'};
       }
-      // Skip orphan entries (no matching project) and stopped projects
+      // Skip: no project, stopped project, or week outside project date range
       if(!proj||proj.status==='stopped') return;
+      if(proj.start_date&&proj.end_date){
+        const pkWks=typeof projectWkKeys==='function'?projectWkKeys(proj):[];
+        if(pkWks.length>0&&!pkWks.includes(wkKey)) return;
+      }
 
       rows.push({emp:emp,proj:proj,days:parseFloat(s.days)||0,note:s.note||''});
     });
