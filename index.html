@@ -9291,44 +9291,86 @@ async function init(){
 // Removes staffing entries whose project_id no longer exists in S.projects
 // showUI=true shows a toast; showUI=false is silent (used on startup)
 async function fixOverbookedStaffing(){
-  // Find all weeks where any employee is booked over their available days
-  // For each such employee+week, show what will be trimmed and ask confirmation
-  const overbooked=[];
+  showToast('Fetching staffing data from Supabase…','info');
+
+  // Fetch all staffing from Supabase
+  const allStaff=await _supaReq('GET','staffing',null,'?select=id,employee_id,project_id,week_key,days&order=employee_id.asc,week_key.asc');
+  if(!allStaff){showToast('Cannot reach Supabase','error');return;}
+
+  // Find overbooked weeks
   const empMap=Object.fromEntries(S.employees.map(e=>[String(e.id),e]));
   const projMap=Object.fromEntries(S.projects.map(p=>[String(p.id),p]));
 
-  // Group staffing by employee+week
+  // Group by emp+week
   const groups={};
-  S.staffing.forEach(s=>{
+  allStaff.forEach(s=>{
     const key=String(s.employee_id)+'__'+s.week_key;
     if(!groups[key])groups[key]=[];
     groups[key].push(s);
   });
 
+  const overbooked=[];
   Object.entries(groups).forEach(([key,entries])=>{
     const [empId,wk]=key.split('__');
     const emp=empMap[empId];
     if(!emp)return;
     const maxDays=emp.available_days_per_week||5;
     const total=entries.reduce((s,e)=>s+(parseFloat(e.days)||0),0);
-    if(total>maxDays){
-      overbooked.push({emp,wk,entries,total,maxDays,excess:total-maxDays});
-    }
+    if(total>maxDays) overbooked.push({emp,wk,entries,total,maxDays});
   });
 
   if(!overbooked.length){showToast('✓ No overbooked employees found');return;}
 
-  // Show summary
-  const msg=overbooked.map(o=>{
-    const rows=o.entries.map(e=>{
-      const p=projMap[String(e.project_id)];
-      return `  ${p?p.client_name+'/'+p.name:'project#'+e.project_id}: ${e.days}d (id:${e.id})`;
-    }).join('\n');
-    return `${o.emp.name} in ${o.wk}: ${o.total}d / ${o.maxDays}d max (excess: ${o.excess.toFixed(1)}d)\n${rows}`;
-  }).join('\n\n');
+  // Build modal with checkboxes to select which entries to delete
+  const m=document.getElementById('modal-content');
+  document.getElementById('modal-overlay').classList.add('open');
 
-  if(!confirm(`Found ${overbooked.length} overbooked week(s):\n\n${msg}\n\nThis will NOT auto-delete entries. Go to the Staffing grid and manually adjust the days. Click OK to open the Staffing page.`)){return;}
-  navigate('staffing');
+  let html=`<div class="modal-header"><div class="modal-title">⚠ Fix Overbooked Staffing</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
+  <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+  <p style="font-size:12px;color:var(--t2);margin-bottom:12px">Select entries to <strong>DELETE</strong> from Supabase. Check the rows you want to remove.</p>`;
+
+  overbooked.forEach((o,oi)=>{
+    const totalAfter=o.total;
+    html+=`<div style="background:var(--red-p);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:10px">
+      <div style="font-weight:700;color:var(--red);font-size:13px;margin-bottom:8px">${esc(o.emp.name)} — ${o.wk}: ${o.total}d / ${o.maxDays}d max</div>`;
+    o.entries.forEach(e=>{
+      const p=projMap[String(e.project_id)];
+      const pName=p?(p.client_name+' / '+p.name):'Project #'+e.project_id;
+      html+=`<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px">
+        <input type="checkbox" name="del-staff" value="${e.id}" style="width:14px;height:14px">
+        <span>${esc(pName)}: <strong>${e.days}d</strong> <span style="color:var(--t3);font-size:10px">(id:${e.id})</span></span>
+      </label>`;
+    });
+    html+=`</div>`;
+  });
+
+  html+=`</div>
+  <div class="modal-footer">
+    <button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn" style="background:var(--red);color:#fff;border-color:var(--red)" onclick="doDeleteStaffingEntries()">🗑 Delete Selected</button>
+  </div>`;
+  m.innerHTML=html;
+}
+
+async function doDeleteStaffingEntries(){
+  const checked=[...document.querySelectorAll('input[name="del-staff"]:checked')];
+  if(!checked.length){showToast('No entries selected','error');return;}
+  if(!confirm(`Delete ${checked.length} staffing entry/entries from Supabase? This cannot be undone.`))return;
+  let done=0,failed=0;
+  for(const cb of checked){
+    const id=parseInt(cb.value);
+    const res=await _supaReq('DELETE','staffing',null,'?id=eq.'+id);
+    if(res!==null){
+      done++;
+      // Also remove from local S.staffing
+      S.staffing=S.staffing.filter(s=>s.id!==id);
+    } else failed++;
+  }
+  closeModal();
+  await loadData();
+  renderStaffing();renderDashboard();
+  if(typeof renderEmployeeView==='function')renderEmployeeView();
+  showToast(`✓ Deleted ${done} entries${failed?' ('+failed+' failed)':''}`);
 }
 
 async function cleanOrphanedStaffing(showUI=true){
