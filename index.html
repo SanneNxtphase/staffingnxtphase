@@ -1435,6 +1435,14 @@ async function supaLoadAll() {
       s.employee_id=parseInt(s.employee_id)||s.employee_id;
       s.project_id=parseInt(s.project_id)||s.project_id;
     });
+    // Deduplicate staffing rows — keep latest (highest ID) per employee+project+week
+    var _staffDedup=new Map();
+    (store.staffing||[]).forEach(function(s){
+      var k=s.employee_id+'__'+s.project_id+'__'+s.week_key;
+      var ex=_staffDedup.get(k);
+      if(!ex||s.id>ex.id)_staffDedup.set(k,s);
+    });
+    store.staffing=Array.from(_staffDedup.values());
     (store.invoices||[]).forEach(function(i){i.id=parseInt(i.id)||i.id;i.project_id=parseInt(i.project_id)||i.project_id;});
     (store.vacations||[]).forEach(function(v){v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
     (store.sick_leave||[]).forEach(function(v){v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
@@ -2455,19 +2463,28 @@ async function loadData(){
     DB.select('projects'),DB.select('employees'),DB.select('staffing'),DB.select('vacations'),
     DB.select('fixed_costs'),DB.select('bank_transactions'),DB.select('invoices'),DB.select('future_costs'),
     DB.select('partner_invoices'),DB.select('cashflow_months'),DB.select('sick_leave'),DB.select('external_costs')]);
-  S.projects=pr||[];S.employees=em||[];S.staffing=st||[];S.vacations=va||[];S.sickLeave=sl||[];
+  S.projects=pr||[];S.employees=em||[];S.vacations=va||[];S.sickLeave=sl||[];
   S.fixedCosts=fc||[];S.transactions=tx||[];S.invoices=inv||[];S.futureCosts=fut||[];
-  // Normalize active field AND auto-fix salary entries
+  // Normalize active field
   _normFixedCosts(S.fixedCosts);
   S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];S.externalCosts=ec||[];_parseCFNotes(S.cashflowMonths);
   // Normalize all IDs to integers to prevent === type-mismatch bugs
   S.employees.forEach(e=>{e.id=parseInt(e.id)||e.id;});
   S.projects.forEach(p=>{p.id=parseInt(p.id)||p.id;});
-  S.staffing.forEach(s=>{s.id=parseInt(s.id)||s.id;s.employee_id=parseInt(s.employee_id)||s.employee_id;s.project_id=parseInt(s.project_id)||s.project_id;});
   S.invoices.forEach(i=>{i.id=parseInt(i.id)||i.id;i.project_id=parseInt(i.project_id)||i.project_id;});
   S.vacations.forEach(v=>{v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
   S.sickLeave.forEach(v=>{v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
   S.externalCosts.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
+  // Deduplicate staffing: keep only the latest row (highest ID) per employee+project+week
+  // Duplicate rows cause team view to show inflated day counts
+  const rawStaff=(st||[]).map(s=>({...s,id:parseInt(s.id)||s.id,employee_id:parseInt(s.employee_id)||s.employee_id,project_id:parseInt(s.project_id)||s.project_id}));
+  const staffMap=new Map();
+  rawStaff.forEach(s=>{
+    const key=s.employee_id+'__'+s.project_id+'__'+s.week_key;
+    const existing=staffMap.get(key);
+    if(!existing||s.id>existing.id) staffMap.set(key,s);
+  });
+  S.staffing=Array.from(staffMap.values());
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
   try{const ov=localStorage.getItem('sp-vat-overrides');if(ov)Object.assign(S.vatOverrides,JSON.parse(ov));}catch(e){}
   // Merge staffing notes from localStorage into S.staffing rows
@@ -7613,14 +7630,16 @@ function renderFinancial(){
     }
     if(invRows&&invRows.length>0) S.invoices=invRows;
     if(stRows&&stRows.length>0){
-      // Apply staffing notes
       try{
         const snSet=setRows&&setRows.find(s=>s.key==='staffing_notes');
         if(snSet){const sn=JSON.parse(snSet.value||'{}');
           stRows.forEach(r=>{const k=r.employee_id+':'+r.project_id+':'+r.week_key;if(sn[k])r.note=sn[k];});
         }
       }catch(e){}
-      S.staffing=stRows;
+      // Dedup: keep latest row per employee+project+week
+      const _sm=new Map();
+      stRows.forEach(r=>{r.id=parseInt(r.id)||r.id;r.employee_id=parseInt(r.employee_id)||r.employee_id;r.project_id=parseInt(r.project_id)||r.project_id;const k=r.employee_id+'__'+r.project_id+'__'+r.week_key;const ex=_sm.get(k);if(!ex||r.id>ex.id)_sm.set(k,r);});
+      S.staffing=Array.from(_sm.values());
     }
     if(futRows&&futRows.length>0) S.futureCosts=futRows;
     if(txRows&&txRows.length>0) S.transactions=txRows;
@@ -9326,11 +9345,38 @@ async function fixOverbookedStaffing(){
 async function cleanOrphanedStaffing(showUI=true){
   const projectIds=new Set(S.projects.map(p=>p.id));
   const orphans=S.staffing.filter(s=>!projectIds.has(s.project_id));
-  if(!orphans.length){if(showUI)showToast('No orphaned staffing entries found.');return;}
-  for(const s of orphans)await DB.delete('staffing',s.id);
+
+  // Also find duplicate rows in Supabase (same emp+proj+week, multiple IDs)
+  // Fetch ALL staffing from Supabase to find dupes
+  let dupesToDelete=[];
+  try{
+    const allStaff=await _supaReq('GET','staffing',null,'?select=id,employee_id,project_id,week_key,days&order=id.asc');
+    if(allStaff&&allStaff.length>0){
+      const seen=new Map();
+      allStaff.forEach(s=>{
+        const k=parseInt(s.employee_id)+'__'+parseInt(s.project_id)+'__'+s.week_key;
+        if(seen.has(k)){
+          dupesToDelete.push(s); // keep first (lowest ID), delete subsequent
+        } else {
+          seen.set(k,s);
+        }
+      });
+    }
+  }catch(e){console.warn('Could not fetch staffing for dedup:',e);}
+
+  const total=orphans.length+dupesToDelete.length;
+  if(!total){if(showUI)showToast('✓ No orphaned or duplicate staffing entries found.');return;}
+
+  if(showUI&&dupesToDelete.length>0){
+    console.log(`[Clean] Found ${dupesToDelete.length} duplicate staffing rows to delete:`,dupesToDelete.map(s=>`id:${s.id} emp:${s.employee_id} proj:${s.project_id} wk:${s.week_key}`));
+  }
+
+  for(const s of orphans) await DB.delete('staffing',s.id);
+  for(const s of dupesToDelete) await _supaReq('DELETE','staffing',null,'?id=eq.'+s.id);
+
   await loadData();
   if(showUI){
-    showToast(`Cleaned ${orphans.length} orphaned staffing entry/entries.`);
+    showToast(`✓ Cleaned ${orphans.length} orphaned + ${dupesToDelete.length} duplicate staffing entries.`);
     renderStaffing();renderSchedule();renderDashboard();
   }
 }
