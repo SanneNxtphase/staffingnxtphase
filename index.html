@@ -6132,7 +6132,9 @@ async function fcSaveEntry(){
     const cats=getFCCategories();
     if(!cats.includes(cat)){cats.push(cat);saveFCCategories(cats);}
   }
-  await DB.insert('fixed_costs',{name,amount,category:cat==='Uncategorised'?'':cat,vat_pct:vatPct,vat_type:vatType,active:1});
+  // Encode VAT in notes as backup
+  const _newNotes='||VT:'+vatType+'||||VP:'+vatPct+'||';
+  await DB.insert('fixed_costs',{name,amount,category:cat==='Uncategorised'?'':cat,vat_pct:vatPct,vat_type:vatType,active:1,notes:_newNotes});
   closeModal();
   await _fcReloadAndRender();
   showToast(`"${name}" added`);
@@ -7048,12 +7050,13 @@ async function saveFixedCost(id){
   // Encode start_month/end_month into notes field so Supabase stores them
   // even if the table doesn't have those columns
   const notesBase=document.getElementById('f-notes')?.value?.trim()||'';
-  let notesEncoded=notesBase.replace(/\|\|SM:[^|]*\|\||\|\|EM:[^|]*\|\||\|\|FREQ:[^|]*\|\||\|\|FREQM:[^|]*\|\|/g,'').trim();
+  // Strip ALL existing encoded metadata tokens before re-encoding
+  let notesEncoded=notesBase.replace(/\|\|SM:[^|]*\|\||\|\|EM:[^|]*\|\||\|\|FREQ:[^|]*\|\||\|\|FREQM:[^|]*\|\||\|\|VT:[^|]*\|\||\|\|VP:[^|]*\|\|/g,'').trim();
   if(data.start_month) notesEncoded+='||SM:'+data.start_month+'||';
   if(data.end_month) notesEncoded+='||EM:'+data.end_month+'||';
   if(data.frequency&&data.frequency!=='monthly') notesEncoded+='||FREQ:'+data.frequency+'||';
   if(data.frequency&&data.frequency!=='monthly') notesEncoded+='||FREQM:'+data.frequency_month+'||';
-  // Always encode VAT settings in notes as backup (survives schema changes)
+  // Always encode VAT — this is the authoritative backup for vat_type/vat_pct
   notesEncoded+='||VT:'+data.vat_type+'||';
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
@@ -7106,12 +7109,21 @@ async function saveFixedCost(id){
   renderDashboard();
   if(typeof _renderFinancialActual==='function')_renderFinancialActual();
   showToast(id?`"${name}" updated`:`"${name}" added`);
-  // Then re-fetch from Supabase in background to confirm
+  // Background refresh from Supabase — but preserve the just-saved entry
+  // to prevent race condition where stale notes decode overwrites new vat_type
+  const _savedId=id?parseInt(id):null;
+  const _savedData={...data,notes:notesEncoded};
   setTimeout(async()=>{
     try{
       const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
       if(fcFresh&&fcFresh.length>0){
         _normFixedCosts(fcFresh);
+        // Re-apply the just-saved values for the edited entry
+        // (Supabase notes may not yet reflect the new VT/VP tokens)
+        if(_savedId){
+          const freshEntry=fcFresh.find(c=>parseInt(c.id)===_savedId);
+          if(freshEntry) Object.assign(freshEntry,_savedData);
+        }
         S.fixedCosts=fcFresh;
         renderFixedCosts();
         renderDashboard();
