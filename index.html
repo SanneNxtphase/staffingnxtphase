@@ -1327,21 +1327,26 @@ async function _supaReq(method, table, body, qs) {
     }
     var opts = { method: method, headers: hdrs };
     if (body) opts.body = JSON.stringify(body);
-    var r = await fetch(_supaUrl(table, qs), opts);
+    var url = _supaUrl(table, qs);
+    var r = await fetch(url, opts);
     if (!r.ok) {
       var errText = '';
       try { errText = await r.text(); } catch(e2) {}
-      console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status+': '+errText);
+      console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status, errText);
+      // Show toast for write failures so user knows
+      if(method==='PATCH'||method==='POST'){
+        showToast('⚠ Save failed (HTTP '+r.status+'). Check console.','error');
+      }
       return null;
     }
-    if (r.status === 204) return {};
-    return await r.json().catch(function() { return null; });
+    if (r.status === 204) return {}; // PATCH success
+    return await r.json().catch(function() { return {}; });
   } catch(e) {
-    // Network error or timeout — not a code bug, just connectivity
     if(method==='GET'){
       console.warn('[Supabase] '+method+' '+table+' unavailable:', e.message||e);
     } else {
-      console.error('[Supabase EXCEPTION] '+method+' '+table+':', e);
+      console.error('[Supabase EXCEPTION] '+method+' '+table+':', e.message||e);
+      showToast('⚠ Network error saving to Supabase','error');
     }
     return null;
   }
@@ -1678,22 +1683,17 @@ async function supaLoadAll() {
     }catch(e){}
     localStorage.setItem('sp-v5', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
-    // Auto-repair: push correct amount/vat_type/frequency from old local data to Supabase
-    // This fixes cases where a previous PATCH failed (e.g. unknown column error)
+    // Auto-repair: only push amount/notes if local has newer value than Supabase
+    // Do NOT repair vat_type — that causes old localStorage values to override user changes
     if(_oldStore && _oldStore.fixed_costs && store.fixed_costs) {
       store.fixed_costs.forEach(async function(fc){
         var old = _oldStore.fixed_costs.find(function(o){return o.id===fc.id;});
         if(!old) return;
         var needsRepair = false;
         var repair = {};
-        // Repair amount if old local has higher/different value (user set it locally)
         if(old.amount && old.amount !== fc.amount){ repair.amount=old.amount; needsRepair=true; }
-        // Repair vat_type if Supabase has null but local/notes has a value
-        if(old.vat_type && old.vat_type!==fc.vat_type){ repair.vat_type=old.vat_type; repair.vat_pct=old.vat_pct||0; needsRepair=true; }
-        // NOTE: frequency/frequency_month not sent — those columns don't exist in Supabase (stored in notes)
         if(old.notes && old.notes !== fc.notes){ repair.notes=old.notes; needsRepair=true; }
         if(needsRepair){
-          // Also apply repair to in-memory store so current session is correct
           Object.assign(fc, repair);
           try{ await _supaReq('PATCH','fixed_costs',repair,'?id=eq.'+fc.id); }catch(e){}
         }
@@ -6147,21 +6147,9 @@ async function deleteFCEntry(id){
   showToast('Entry deleted');
 }
 
-// Central helper: normalize, render immediately, then refresh from Supabase
+// Central helper: normalize and render immediately, then refresh from Supabase
 async function _fcReloadAndRender(){
-  const _norm=c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;};
-  // Names of employees whose salary costs should always be Loonkosten + No VAT
-  const _salaryNames=['Stein','Ralph','Sanne','Kamiel','Siebeline','Koen','Marco','Mees','Paul'];
-  const _fixSalary=async(items)=>{
-    for(const c of items){
-      const isSalary=_salaryNames.some(n=>c.name&&c.name.toLowerCase().includes(n.toLowerCase()));
-      if(isSalary&&((!c.category||c.category===''||c.category==='Uncategorised')||(c.vat_type&&c.vat_type!=='none'))){
-        c.category='Loonkosten';c.vat_type='none';c.vat_pct=0;
-        await _supaReq('PATCH','fixed_costs',{category:'Loonkosten',vat_type:'none',vat_pct:0},'?id=eq.'+c.id);
-      }
-    }
-  };
-  S.fixedCosts.forEach(_norm);
+  _normFixedCosts(S.fixedCosts);
   _finData=null;
   renderFixedCosts();renderDashboard();
   setTimeout(async()=>{
@@ -7061,6 +7049,8 @@ async function saveFixedCost(id){
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
 
+  console.log('[FC SAVE] Starting save:', {id, name, vatType:data.vat_type, vatPct:data.vat_pct, amount:data.amount});
+
   // Step 1: Update Supabase directly (bypassing DB wrapper to ensure correct data)
   const _patchPayload={
     name:data.name, category:data.category, amount:data.amount,
@@ -7068,13 +7058,18 @@ async function saveFixedCost(id){
     notes:notesEncoded, start_month:data.start_month||null, end_month:data.end_month||null
   };
   if(id){
+    console.log('[FC SAVE] Sending PATCH to Supabase, id='+parseInt(id), _patchPayload);
     const patchResult=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
+    console.log('[FC SAVE] PATCH result:', patchResult, '(null=failed, {}=success)');
     if(patchResult===null){
-      // PATCH failed — try once more
-      await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
+      console.warn('[FC SAVE] First PATCH failed, retrying...');
+      const retry=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
+      console.log('[FC SAVE] Retry result:', retry);
     }
   } else {
-    await _supaReq('POST','fixed_costs',_patchPayload,'?select=id');
+    console.log('[FC SAVE] Sending POST to Supabase', _patchPayload);
+    const postResult=await _supaReq('POST','fixed_costs',_patchPayload,'?select=id');
+    console.log('[FC SAVE] POST result:', postResult);
   }
 
   // Step 2: Update in memory immediately with the exact values the user set
