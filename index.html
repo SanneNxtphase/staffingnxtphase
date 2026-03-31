@@ -5500,12 +5500,13 @@ function fixedMonthly(y,m){
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
   const planningItems=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
-  const planningTotal=Math.round(planningItems.reduce((s,c)=>s+fcEntryExcl(c),0)*100)/100;
+  // Use fcMonthlyAmount (frequency-adjusted excl VAT) — same as fixedMonthly() and dashboards
+  const planningTotal=Math.round(planningItems.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   const catMap={};
   planningItems.forEach(c=>{
     const cat=c.category||'Uncategorised';
     if(!catMap[cat])catMap[cat]=0;
-    catMap[cat]+=Math.round(fcEntryExcl(c)*100)/100;
+    catMap[cat]+=Math.round(fcMonthlyAmount(c)*100)/100;
   });
   return{planningItems,planningTotal,catMap,bankPayees:[],bankTotal:0,total:planningTotal};
 }
@@ -5694,9 +5695,9 @@ function renderFixedCosts(){
           <thead><tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
             <th style="padding:6px 14px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Cost Name</th>
             <th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Period</th>
-            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Gross</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Gross /mo</th>
             <th style="padding:6px 10px;text-align:center;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT</th>
-            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT Amt</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT /mo</th>
             <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Net /mo</th>
             <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Net /yr</th>
             <th style="padding:6px 10px;width:80px"></th>
@@ -5706,11 +5707,11 @@ function renderFixedCosts(){
               <td style="padding:8px 14px;font-weight:600;${!c.active?'opacity:.5;text-decoration:line-through;color:var(--t3)':''}">${esc(c.name)}
                 ${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:700">INACTIVE</span>':''}
               </td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);${!c.active?'opacity:.4':''}">${fmt(fcEntryIncl(c))}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyAmountIncl(c))}</td>
               <td style="padding:8px 10px;text-align:center">${vatBadge(c)}
                 ${(()=>{const fr=c.frequency||'monthly';return fr!=='monthly'?`<br><span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700">${fr==='quarterly'?'Q':'Y'}</span>`:'';})()} 
               </td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber);${!c.active?'opacity:.4':''}">${fmt(fcEntryVatAmt(c))}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber);${!c.active?'opacity:.4':''}">${fmt(Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100)}</td>
               <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'};font-size:13px">${fmt(fcMonthlyAmount(c))}${(c.frequency||'monthly')!=='monthly'?`<span style="font-size:9px;color:var(--t3);margin-left:3px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:''}</td>
               <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyAmount(c)*12)}</td>
               <td style="padding:8px 10px;text-align:right">
