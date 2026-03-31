@@ -7060,76 +7060,60 @@ async function saveFixedCost(id){
   notesEncoded+='||VT:'+data.vat_type+'||';
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
+
+  // Step 1: Update Supabase directly (bypassing DB wrapper to ensure correct data)
+  const _patchPayload={
+    name:data.name, category:data.category, amount:data.amount,
+    vat_pct:data.vat_pct, vat_type:data.vat_type, active:data.active,
+    notes:notesEncoded, start_month:data.start_month||null, end_month:data.end_month||null
+  };
   if(id){
-    // DB.update handles both localStorage + filtered Supabase PATCH via schema whitelist
-    await DB.update('fixed_costs', id, {
-      name: data.name,
-      category: data.category,
-      amount: data.amount,
-      vat_pct: data.vat_pct,
-      vat_type: data.vat_type,
-      active: data.active,
-      notes: notesEncoded,
-      start_month: data.start_month||null,
-      end_month: data.end_month||null
-    });
-    // Update in memory
-    const memEntry=S.fixedCosts.find(c=>parseInt(c.id)===parseInt(id));
-    if(memEntry)Object.assign(memEntry,{...data,notes:notesEncoded});
+    const patchResult=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
+    if(patchResult===null){
+      // PATCH failed — try once more
+      await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
+    }
   } else {
-    // DB.insert handles both localStorage + filtered Supabase POST via schema whitelist
-    await DB.insert('fixed_costs', {
-      name: data.name,
-      category: data.category,
-      amount: data.amount,
-      vat_pct: data.vat_pct,
-      vat_type: data.vat_type,
-      active: data.active,
-      notes: notesEncoded,
-      start_month: data.start_month||null,
-      end_month: data.end_month||null
-    });
+    await _supaReq('POST','fixed_costs',_patchPayload,'?select=id');
   }
-  // Clear fixed_costs from localStorage cache so next load gets fresh Supabase data
-  try{const _st=DB._gs();if(_st.fixed_costs){_st.fixed_costs=[];DB._sv();DB._store=null;}}catch(e){}
-  closeModal();
-  // Update S.fixedCosts in memory immediately so UI shows the change right away
+
+  // Step 2: Update in memory immediately with the exact values the user set
+  // Do NOT call _normFixedCosts after this — that would re-decode stale notes from Supabase
   if(id){
-    // Update existing entry in memory
-    const idx=S.fixedCosts.findIndex(c=>c.id===id||c.id==id);
-    if(idx>=0)Object.assign(S.fixedCosts[idx],data);
+    const idx=S.fixedCosts.findIndex(c=>parseInt(c.id)===parseInt(id));
+    if(idx>=0){
+      Object.assign(S.fixedCosts[idx],{
+        name:data.name, category:data.category, amount:data.amount,
+        vat_pct:data.vat_pct, vat_type:data.vat_type, active:data.active,
+        notes:notesEncoded, start_month:data.start_month||null, end_month:data.end_month||null,
+        frequency:data.frequency, frequency_month:data.frequency_month
+      });
+    }
   } else {
-    // Add new entry to memory
-    S.fixedCosts.push({...data,id:Date.now()});
+    S.fixedCosts.push({...data, id:Date.now(), notes:notesEncoded});
   }
-  _normFixedCosts(S.fixedCosts);
+
+  // Step 3: Also update localStorage
+  try{
+    const _st=DB._gs();
+    if(_st.fixed_costs){
+      if(id){
+        const li=_st.fixed_costs.findIndex(c=>parseInt(c.id)===parseInt(id));
+        if(li>=0) Object.assign(_st.fixed_costs[li],_patchPayload);
+      } else {
+        _st.fixed_costs.push({..._patchPayload,id:Date.now(),active:1});
+      }
+      DB._sv(); DB._store=null;
+    }
+  }catch(e){}
+
   _fcSaveDateOverrides();
   _finData=null;
+  closeModal();
   renderFixedCosts();
   renderDashboard();
   if(typeof _renderFinancialActual==='function')_renderFinancialActual();
   showToast(id?`"${name}" updated`:`"${name}" added`);
-  // Background refresh from Supabase — but preserve the just-saved entry
-  // to prevent race condition where stale notes decode overwrites new vat_type
-  const _savedId=id?parseInt(id):null;
-  const _savedData={...data,notes:notesEncoded};
-  setTimeout(async()=>{
-    try{
-      const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
-      if(fcFresh&&fcFresh.length>0){
-        _normFixedCosts(fcFresh);
-        // Re-apply the just-saved values for the edited entry
-        // (Supabase notes may not yet reflect the new VT/VP tokens)
-        if(_savedId){
-          const freshEntry=fcFresh.find(c=>parseInt(c.id)===_savedId);
-          if(freshEntry) Object.assign(freshEntry,_savedData);
-        }
-        S.fixedCosts=fcFresh;
-        renderFixedCosts();
-        renderDashboard();
-      }
-    }catch(e){}
-  },800);
 }
 
 async function deleteItem(table,id){
