@@ -1817,23 +1817,36 @@ async function pullFromSupabase(){
 // Schema whitelist: only send columns that actually exist in Supabase
 // Prevents PGRST204 "column not found" errors for every table
 // Central fixed costs normalizer
+// Business rules:
+//   vat_type='none'  → no VAT, amount stays as-is
+//   vat_type='excl'  → amount is excl VAT, gross = amount * (1 + vat_pct/100)
+//   vat_type='incl'  → amount is incl VAT (gross), net = amount / (1 + vat_pct/100)
+//   Notes field is authoritative backup for vat_type/vat_pct (Supabase may have stale values)
 function _normFixedCosts(arr){
   (arr||[]).forEach(function(c){
+    // Normalize active
     c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;
     c.id=parseInt(c.id)||c.id;
-    // Default empty category to Loonkosten in memory
-    // Supabase is patched separately in init() to persist this
-    if(!c.category||c.category.trim()===''||c.category==='Uncategorised'){
-      c.category='Loonkosten';
+    // Default empty category
+    if(!c.category||c.category.trim()===''||c.category==='Uncategorised') c.category='Loonkosten';
+    // Decode notes — notes ALWAYS overrides Supabase for VAT fields
+    // because Supabase may have stale vat_type if a previous PATCH failed
+    if(c.notes){
+      var sm=c.notes.match(/\|\|SM:([^|]+)\|\|/); if(sm&&!c.start_month) c.start_month=sm[1];
+      var em=c.notes.match(/\|\|EM:([^|]+)\|\|/); if(em&&!c.end_month) c.end_month=em[1];
+      var vt=c.notes.match(/\|\|VT:(none|incl|excl)\|\|/);
+      if(vt&&vt[1]){
+        c.vat_type=vt[1]; // notes is authoritative
+        var vp=c.notes.match(/\|\|VP:([\d.]+)\|\|/);
+        if(vp) c.vat_pct=parseFloat(vp[1])||0;
+      }
     }
-    // Decode start/end month from notes field if not already set
-    if(c.notes&&!c.start_month){var sm=c.notes.match(/\|\|SM:([^|]+)\|\|/);if(sm)c.start_month=sm[1];}
-    if(c.notes&&!c.end_month){var em=c.notes.match(/\|\|EM:([^|]+)\|\|/);if(em)c.end_month=em[1];}
-    // Decode vat_type from notes as fallback if Supabase value is missing
-    if(c.notes&&(!c.vat_type||c.vat_type==='incl')){
-      var vt=c.notes.match(/\|\|VT:([^|]+)\|\|/);if(vt&&vt[1])c.vat_type=vt[1];
-      var vp=c.notes.match(/\|\|VP:([^|]+)\|\|/);if(vp&&vp[1])c.vat_pct=parseFloat(vp[1])||0;
-    }
+    // Validate vat_type — must be one of the three valid values
+    if(!c.vat_type||!['none','incl','excl'].includes(c.vat_type)) c.vat_type='incl';
+    // Ensure vat_pct is numeric
+    c.vat_pct=parseFloat(c.vat_pct)||0;
+    // none type → vat_pct must be 0
+    if(c.vat_type==='none') c.vat_pct=0;
   });
   return arr;
 }
@@ -5405,51 +5418,80 @@ function getFCCategories(){
   return[...new Set([...fromEntries,...fromStorage])].sort();
 }
 function saveFCCategories(cats){try{localStorage.setItem('nxp-fc-categories',JSON.stringify(cats));}catch(e){}}
+// ── FIXED COST VAT CALCULATION ENGINE ────────────────────────────────────────
+// Decision model (priority order):
+//   1. vat_type = 'none'  → no VAT, amount = net = gross, vat = 0
+//   2. vat_type = 'excl'  → amount is net excl VAT, gross = net × (1 + pct/100)
+//   3. vat_type = 'incl'  → amount is gross incl VAT, net = gross / (1 + pct/100)
+//   4. vat_type missing   → treated as 'incl' (legacy safety default)
+//   5. vat_pct missing    → default 21%
+//   6. vat_pct = 0        → no VAT math (all values equal amount)
+
+// Get effective VAT percentage — always returns a number
 function getFCVat(entry){
-  // If vat_type is 'none', no VAT regardless of vat_pct value
-  if((entry.vat_type||'incl')==='none') return 0;
-  return entry.vat_pct!=null&&entry.vat_pct!==''?parseFloat(entry.vat_pct)||0:21;
+  const type=entry.vat_type||'incl';
+  if(type==='none') return 0; // none type → always 0%
+  const pct=parseFloat(entry.vat_pct);
+  if(isNaN(pct)||pct<0) return 21; // missing/invalid → default 21%
+  return pct;
 }
-// vat_type: 'excl' = amount is excl VAT, 'incl' = amount is incl VAT, 'none' = no VAT
-// Legacy entries without vat_type treated as 'incl' for backward compatibility
+
+// Get net amount excl. VAT (the real cost to the business after VAT reclaim)
 function fcEntryExcl(entry){
-  const amt=parseFloat(entry.amount||0);
-  const pct=getFCVat(entry);
+  const amt=parseFloat(entry.amount)||0;
+  if(amt===0) return 0;
   const type=entry.vat_type||'incl';
-  if(type==='none')return amt;
-  if(type==='excl')return amt; // amount IS the net excl figure
-  // type==='incl': amount is gross, derive net excl
-  return pct===0?amt:Math.round(amt/(1+pct/100)*100)/100;
+  const pct=getFCVat(entry);
+  if(type==='none') return amt;          // no VAT → amount = net
+  if(type==='excl') return amt;          // amount IS net excl
+  // type === 'incl': amount is gross, back-calculate net
+  if(pct===0) return amt;                // 0% VAT → gross = net
+  return Math.round(amt/(1+pct/100)*100)/100;
 }
+
+// Get gross amount incl. VAT (what you actually pay out)
 function fcEntryIncl(entry){
-  const amt=parseFloat(entry.amount||0);
-  const pct=getFCVat(entry);
+  const amt=parseFloat(entry.amount)||0;
+  if(amt===0) return 0;
   const type=entry.vat_type||'incl';
-  if(type==='none')return amt;
-  if(type==='incl')return amt; // amount IS gross
-  // type==='excl': compute gross from net
+  const pct=getFCVat(entry);
+  if(type==='none') return amt;          // no VAT → amount = gross
+  if(type==='incl') return amt;          // amount IS gross
+  // type === 'excl': amount is net, add VAT
+  if(pct===0) return amt;               // 0% VAT → net = gross
   return Math.round(amt*(1+pct/100)*100)/100;
 }
+
+// Get VAT amount (always: gross - net)
 function fcEntryVatAmt(entry){
   const type=entry.vat_type||'incl';
-  if(type==='none')return 0;
-  return Math.round((fcEntryIncl(entry)-fcEntryExcl(entry))*100)/100;
+  if(type==='none') return 0;
+  const incl=fcEntryIncl(entry);
+  const excl=fcEntryExcl(entry);
+  return Math.round((incl-excl)*100)/100;
 }
-// Monthly equivalent amount — adjusts for frequency
-// quarterly → divide by 3, yearly → divide by 12, monthly → full amount
+
+// Monthly equivalent net excl. VAT (adjusts for frequency)
 function fcMonthlyAmount(entry){
-  const net = fcEntryExcl(entry);
-  const freq = entry.frequency || 'monthly';
-  if(freq === 'quarterly') return Math.round(net / 3 * 100) / 100;
-  if(freq === 'yearly')    return Math.round(net / 12 * 100) / 100;
-  return net; // monthly
+  const net=fcEntryExcl(entry);
+  const freq=entry.frequency||'monthly';
+  if(freq==='quarterly') return Math.round(net/3*100)/100;
+  if(freq==='yearly')    return Math.round(net/12*100)/100;
+  return net;
 }
+
+// Monthly equivalent gross incl. VAT (adjusts for frequency)
 function fcMonthlyAmountIncl(entry){
-  const gross = fcEntryIncl(entry);
-  const freq = entry.frequency || 'monthly';
-  if(freq === 'quarterly') return Math.round(gross / 3 * 100) / 100;
-  if(freq === 'yearly')    return Math.round(gross / 12 * 100) / 100;
+  const gross=fcEntryIncl(entry);
+  const freq=entry.frequency||'monthly';
+  if(freq==='quarterly') return Math.round(gross/3*100)/100;
+  if(freq==='yearly')    return Math.round(gross/12*100)/100;
   return gross;
+}
+
+// Monthly equivalent VAT amount
+function fcMonthlyVatAmt(entry){
+  return Math.round((fcMonthlyAmountIncl(entry)-fcMonthlyAmount(entry))*100)/100;
 }
 
 // Helper: human label for vat_type
@@ -5609,7 +5651,7 @@ function renderFixedCosts(){
   const activeEntries=entries.filter(c=>c.active);
   // Use monthly-equivalent amounts so totals match dashboard (quarterly÷3, yearly÷12)
   const tGross=activeEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
-  const tVat  =activeEntries.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
+  const tVat  =activeEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0);
   const tNet  =activeEntries.reduce((s,c)=>s+fcMonthlyAmount(c),0);
 
   // KPI row
@@ -5619,8 +5661,8 @@ function renderFixedCosts(){
   // This-month totals (incl VAT) — based on active entries for current month
   // Use fcInDateRange so KPI matches fixedMonthly() used in dashboards
   const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_fcPageY,_fcPageM));
-  const tGrossThisMonth=thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
-  const tVatThisMonth=thisMonthEntries.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
+  const tGrossThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
+  const tVatThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   const kpiEl=document.getElementById('fc-grand-kpis');
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
@@ -5664,7 +5706,7 @@ function renderFixedCosts(){
     const activeCes=ces.filter(c=>c.active);
     // Monthly-equivalent: quarterly÷3, yearly÷12
     const cg=activeCes.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
-    const cv=activeCes.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
+    const cv=activeCes.reduce((s,c)=>s+fcMonthlyVatAmt(c),0);
     const cn=activeCes.reduce((s,c)=>s+fcMonthlyAmount(c),0);
     const pct=tNet>0?(cn/tNet*100).toFixed(0):0;
     const catSafe=esc(cat).replace(/'/g,"\\'");
@@ -5711,7 +5753,7 @@ function renderFixedCosts(){
               <td style="padding:8px 10px;text-align:center">${vatBadge(c)}
                 ${(()=>{const fr=c.frequency||'monthly';return fr!=='monthly'?`<br><span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700">${fr==='quarterly'?'Q':'Y'}</span>`:'';})()} 
               </td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber);${!c.active?'opacity:.4':''}">${fmt(Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100)}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyVatAmt(c))}</td>
               <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'};font-size:13px">${fmt(fcMonthlyAmount(c))}${(c.frequency||'monthly')!=='monthly'?`<span style="font-size:9px;color:var(--t3);margin-left:3px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:''}</td>
               <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyAmount(c)*12)}</td>
               <td style="padding:8px 10px;text-align:right">
@@ -5759,7 +5801,7 @@ function renderFixedCosts(){
       const moEntries=S.fixedCosts.filter(c=>fcInDateRange(c,mfy2,mfm2));
       const moCats=[...new Set(moEntries.map(c=>c.category||'Uncategorised'))].sort();
       const moGross=moEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
-      const moVat=moEntries.reduce((s,c)=>s+Math.round((fcMonthlyAmountIncl(c)-fcMonthlyAmount(c))*100)/100,0);
+      const moVat=moEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0);
       mbEl.innerHTML=`<div class="card">
         <div class="card-header"><div class="card-title">&#128197; Monthly View — ${esc(monthLabel)}</div>
           <div style="display:flex;gap:16px;font-size:11px">
