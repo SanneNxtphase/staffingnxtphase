@@ -1816,12 +1816,16 @@ async function pullFromSupabase(){
 
 // Schema whitelist: only send columns that actually exist in Supabase
 // Prevents PGRST204 "column not found" errors for every table
-// Central fixed costs normalizer — only normalizes the active field type
-// Does NOT override category or vat_type — those are user-controlled values
+// Central fixed costs normalizer
 function _normFixedCosts(arr){
   (arr||[]).forEach(function(c){
     c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;
     c.id=parseInt(c.id)||c.id;
+    // Default empty category to Loonkosten in memory
+    // Supabase is patched separately in init() to persist this
+    if(!c.category||c.category.trim()===''||c.category==='Uncategorised'){
+      c.category='Loonkosten';
+    }
     // Decode start/end month from notes field if not already set
     if(c.notes&&!c.start_month){var sm=c.notes.match(/\|\|SM:([^|]+)\|\|/);if(sm)c.start_month=sm[1];}
     if(c.notes&&!c.end_month){var em=c.notes.match(/\|\|EM:([^|]+)\|\|/);if(em)c.end_month=em[1];}
@@ -9242,12 +9246,18 @@ async function init(){
   }
   await loadData();
   // Always ensure fixed_costs are fresh from Supabase and normalized
-  // loadData() reads localStorage which may have stale/boolean active values
   try{
     const _fcInit=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
     if(_fcInit&&_fcInit.length>0){
       const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
       _normFixedCosts(_fcInit);
+      // Silently patch any entries with missing category directly in Supabase
+      // This runs once per session and permanently fixes Stein etc.
+      const _missingCat=_fcInit.filter(c=>!c.category||c.category.trim()===''||c.category==='Uncategorised');
+      for(const c of _missingCat){
+        c.category='Loonkosten';
+        _supaReq('PATCH','fixed_costs',{category:'Loonkosten'},'?id=eq.'+c.id).catch(()=>{});
+      }
       S.fixedCosts=_fcInit;
     }
   }catch(e){}
