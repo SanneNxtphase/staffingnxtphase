@@ -2488,7 +2488,70 @@ function navigate(page,el){
       renderFixedCosts();
     })();
   } else if(page==='extcosts'){
-    (async()=>{ try{await supaLoadAll();await loadData();}catch(e){} renderPage(page); })();
+    (async()=>{
+      renderPage(page);
+      try{
+        const [prR,ecR]=await Promise.all([
+          _supaReq('GET','projects',null,'?select=*&order=id.asc'),
+          _supaReq('GET','external_costs',null,'?select=*&order=id.asc')
+        ]);
+        let changed=false;
+        if(prR&&prR.length>0){S.projects=prR;changed=true;}
+        if(ecR&&ecR.length>0){S.externalCosts=ecR.map(e=>({...e,id:parseInt(e.id)||e.id,project_id:parseInt(e.project_id)||e.project_id}));changed=true;}
+        if(changed){
+          const st=DB._gs();
+          if(prR&&prR.length>0)st.projects=prR;
+          if(ecR&&ecR.length>0)st.external_costs=ecR;
+          DB._sv();DB._store=null;
+          renderPage(page);
+        }
+      }catch(e){console.warn('extcosts load:',e);}
+    })();
+  } else if(page==='staffing'||page==='schedule'||page==='projects'||page==='employees'){
+    (async()=>{
+      renderPage(page); // render immediately with current data
+      // Also load fresh from Supabase in background
+      try{
+        const [prR,emR,stR]=await Promise.all([
+          _supaReq('GET','projects',null,'?select=*&order=id.asc'),
+          _supaReq('GET','employees',null,'?select=*&order=id.asc'),
+          _supaReq('GET','staffing',null,'?select=*&order=id.asc')
+        ]);
+        let changed=false;
+        if(prR&&prR.length>0){S.projects=prR.map(p=>({...p,id:parseInt(p.id)||p.id}));changed=true;}
+        if(emR&&emR.length>0){S.employees=emR.map(e=>({...e,id:parseInt(e.id)||e.id}));changed=true;}
+        if(stR&&stR.length>0){
+          // Deduplicate staffing
+          const staffMap=new Map();
+          stR.forEach(s=>{
+            const ns={...s,id:parseInt(s.id)||s.id,employee_id:parseInt(s.employee_id)||s.employee_id,project_id:parseInt(s.project_id)||s.project_id};
+            const key=ns.employee_id+'__'+ns.project_id+'__'+ns.week_key;
+            const ex=staffMap.get(key);
+            if(!ex||ns.id>ex.id)staffMap.set(key,ns);
+          });
+          S.staffing=Array.from(staffMap.values());
+          changed=true;
+        }
+        if(changed){
+          const st=DB._gs();
+          if(prR&&prR.length>0)st.projects=S.projects;
+          if(emR&&emR.length>0)st.employees=S.employees;
+          if(stR&&stR.length>0)st.staffing=S.staffing;
+          DB._sv();DB._store=null;
+          // Also load staffing notes
+          if(page==='schedule'||page==='staffing'){
+            try{
+              const snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key,value');
+              if(snSet&&snSet.length>0){
+                const sn=JSON.parse(snSet[0].value||'{}');
+                S.staffing.forEach(s=>{const k=s.employee_id+':'+s.project_id+':'+s.week_key;if(sn[k])s.note=sn[k];});
+              }
+            }catch(e){}
+          }
+          renderPage(page);
+        }
+      }catch(e){console.warn(page+' Supabase load:',e);}
+    })();
   } else if(page==='bankplanner'){
     loadData().then(()=>{ renderPage(page); setTimeout(initBankPlanner,100); });
   } else {
@@ -5625,59 +5688,83 @@ async function fcDebugRaw(){
   panel.style.display='block';
   panel.textContent='Running diagnostics…\n';
 
-  // 1. Connection info
   panel.textContent+=`URL: ${_SUPA_URL}\n`;
-  panel.textContent+=`Key prefix: ${(_SUPA_KEY||'').substring(0,20)}…\n`;
+  panel.textContent+=`Key: ${(_SUPA_KEY||'').substring(0,25)}…\n`;
   panel.textContent+=`_SUPA_ONLINE: ${_SUPA_ONLINE}\n`;
   panel.textContent+=`Protocol: ${location.protocol}\n`;
-  panel.textContent+=`S.fixedCosts.length: ${S.fixedCosts.length}\n\n`;
+  panel.textContent+=`S.fixedCosts: ${S.fixedCosts.length} rows\n`;
+  panel.textContent+=`S.projects: ${S.projects.length} rows\n`;
+  panel.textContent+=`S.externalCosts: ${S.externalCosts.length} rows\n\n`;
 
-  // 2. Raw fetch with full error reporting
-  panel.textContent+='Testing direct fetch…\n';
+  // TEST 1: GET
+  panel.textContent+='[1] Testing GET fixed_costs…\n';
   try{
-    const url=_SUPA_URL+'/rest/v1/fixed_costs?select=id,name,category,active&limit=5&order=id.asc';
-    const resp=await fetch(url,{
-      method:'GET',
-      headers:{
-        'apikey':_SUPA_KEY,
-        'Authorization':'Bearer '+_SUPA_KEY,
-        'Content-Type':'application/json'
-      }
+    const r=await fetch(`${_SUPA_URL}/rest/v1/fixed_costs?select=id,name&limit=3&order=id.asc`,{
+      headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json'}
     });
-    panel.textContent+=`HTTP Status: ${resp.status} ${resp.statusText}\n`;
-    const txt=await resp.text();
-    panel.textContent+=`Response: ${txt.substring(0,500)}\n\n`;
-    if(resp.ok){
+    const txt=await r.text();
+    panel.textContent+=`    HTTP ${r.status}: ${txt.substring(0,200)}\n`;
+    if(r.ok){
       const data=JSON.parse(txt);
-      panel.textContent+=`✓ Supabase reachable! Got ${data.length} rows\n`;
-      panel.textContent+=data.map(r=>`  id:${r.id} name:"${r.name}" cat:"${r.category}" active:${r.active}`).join('\n');
-      // Load it!
-      if(data.length>0){
-        const full=await fetch(_SUPA_URL+'/rest/v1/fixed_costs?select=*&order=id.asc',{
-          headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json'}
-        });
+      panel.textContent+=`    ✓ GET works — ${data.length} rows\n\n`;
+      // Also load full data
+      const full=await fetch(`${_SUPA_URL}/rest/v1/fixed_costs?select=*&order=id.asc`,{
+        headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json'}
+      });
+      if(full.ok){
         const fullData=await full.json();
-        _normFixedCosts(fullData);
-        S.fixedCosts=fullData;
-        _SUPA_ONLINE=true;
+        _normFixedCosts(fullData);S.fixedCosts=fullData;_SUPA_ONLINE=true;
         try{const st=DB._gs();st.fixed_costs=fullData;DB._sv();DB._store=null;}catch(e){}
-        panel.textContent+=`\n\n✓ Loaded ${fullData.length} entries into S.fixedCosts`;
+        panel.textContent+=`    Loaded ${fullData.length} entries into S.fixedCosts\n`;
         renderFixedCosts();
       }
-    }else{
-      panel.textContent+=`✗ Supabase returned error — check key/RLS policy\n`;
     }
-  }catch(e){
-    panel.textContent+=`✗ Fetch exception: ${e.message}\n`;
-    panel.textContent+=`  This usually means CORS block or network error\n`;
+  }catch(e){panel.textContent+=`    ✗ Exception: ${e.message}\n`;}
+
+  // TEST 2: PATCH test (use first entry)
+  panel.textContent+='\n[2] Testing PATCH fixed_costs…\n';
+  const testEntry=S.fixedCosts[0];
+  if(testEntry){
+    try{
+      const testPayload={name:testEntry.name,category:testEntry.category||'',
+        amount:parseFloat(testEntry.amount)||0,vat_pct:parseFloat(testEntry.vat_pct)||0,
+        vat_type:testEntry.vat_type||'incl',active:testEntry.active,notes:testEntry.notes||''};
+      panel.textContent+=`    PATCH id=${testEntry.id} payload: ${JSON.stringify(testPayload).substring(0,150)}\n`;
+      const pr=await fetch(`${_SUPA_URL}/rest/v1/fixed_costs?id=eq.${testEntry.id}`,{
+        method:'PATCH',
+        headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,
+          'Content-Type':'application/json','Prefer':'return=minimal'},
+        body:JSON.stringify(testPayload)
+      });
+      const ptxt=await pr.text();
+      panel.textContent+=`    HTTP ${pr.status} ${pr.statusText}: "${ptxt.substring(0,300)}"\n`;
+      if(pr.ok||pr.status===204){
+        panel.textContent+=`    ✓ PATCH WORKS — VAT save should work!\n`;
+        _SUPA_ONLINE=true;
+      }else{
+        panel.textContent+=`    ✗ PATCH FAILED — this is why VAT doesn't save\n`;
+        if(pr.status===401||pr.status===403)panel.textContent+=`    Reason: No write permission (RLS policy blocks anon writes)\n`;
+        if(pr.status===503)panel.textContent+=`    Reason: Supabase project is PAUSED — resume it at supabase.com\n`;
+      }
+    }catch(e){panel.textContent+=`    ✗ Exception: ${e.message}\n`;}
+  }else{
+    panel.textContent+=`    Skipped — no entries in S.fixedCosts\n`;
   }
 
-  // 3. In-memory state
-  panel.textContent+=`\n\n=== S.fixedCosts (after) ===\n`;
-  panel.textContent+=`Total: ${S.fixedCosts.length}\n`;
-  S.fixedCosts.slice(0,5).forEach(r=>{
-    panel.textContent+=`  id:${r.id} name:"${r.name}" active:${r.active}(${typeof r.active}) vat_type:${r.vat_type}\n`;
-  });
+  // TEST 3: Load projects and external costs
+  panel.textContent+='\n[3] Loading projects + external costs from Supabase…\n';
+  try{
+    const [prR,ecR]=await Promise.all([
+      fetch(`${_SUPA_URL}/rest/v1/projects?select=*&order=id.asc`,{headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY}}),
+      fetch(`${_SUPA_URL}/rest/v1/external_costs?select=*&order=id.asc`,{headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY}})
+    ]);
+    if(prR.ok){const d=await prR.json();S.projects=d;panel.textContent+=`    ✓ ${d.length} projects loaded\n`;}
+    else panel.textContent+=`    ✗ projects HTTP ${prR.status}\n`;
+    if(ecR.ok){const d=await ecR.json();S.externalCosts=d;panel.textContent+=`    ✓ ${d.length} external costs loaded\n`;}
+    else panel.textContent+=`    ✗ external_costs HTTP ${ecR.status}\n`;
+  }catch(e){panel.textContent+=`    ✗ Exception: ${e.message}\n`;}
+
+  panel.textContent+='\nDiagnostics complete. Check results above.';
 }
 
 async function fcFixUncategorised(){
@@ -7147,23 +7234,33 @@ async function saveFixedCost(id){
     notes:notesEncoded
   };
 
-  console.log('[FC SAVE] Saving:', {id, name, vatType:data.vat_type, vatPct:data.vat_pct});
+  console.log('[FC SAVE]', {id, name, vatType:data.vat_type, vatPct:data.vat_pct, SUPA_ONLINE:_SUPA_ONLINE});
 
   if(id){
-    // PATCH Supabase
-    const patchResult=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
+    const numId=parseInt(id);
+    // Always try direct Supabase PATCH first (doesn't depend on _SUPA_ONLINE flag)
+    const patchResult=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+numId);
     if(patchResult===null){
-      console.warn('[FC SAVE] PATCH failed, retrying...');
-      await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
+      console.warn('[FC SAVE] Direct PATCH failed, trying via DB.update...');
+      // Fallback: DB.update goes through _supaWrapDB which may have different auth handling
+      await DB.update('fixed_costs',numId,_patchPayload);
     }
-    console.log('[FC SAVE] PATCH done, result:', patchResult);
+    // Always update localStorage regardless of Supabase result
+    try{
+      const store=DB._gs();
+      const li=(store.fixed_costs||[]).findIndex(c=>parseInt(c.id)===numId);
+      if(li>=0) Object.assign(store.fixed_costs[li],_patchPayload);
+      DB._sv(); DB._store=null;
+    }catch(e){}
   } else {
-    const postResult=await _supaReq('POST','fixed_costs',_patchPayload,'?select=id');
-    console.log('[FC SAVE] POST done, result:', postResult);
-    // If Supabase returned the new id, use it
-    if(postResult&&postResult.length>0&&postResult[0].id){
-      data.id=postResult[0].id;
+    // New entry: insert via DB (handles ID assignment) + direct POST
+    const insertResult=await DB.insert('fixed_costs',_patchPayload);
+    // DB.insert via _supaWrapDB already handles Supabase POST
+    // If _SUPA_ONLINE was false, also try direct POST
+    if(!_SUPA_ONLINE){
+      await _supaReq('POST','fixed_costs',_patchPayload).catch(()=>{});
     }
+    if(insertResult&&insertResult.lastInsertRowid) data.id=insertResult.lastInsertRowid;
   }
 
   // Step 2: Update in memory immediately with the exact values the user set
@@ -9363,75 +9460,44 @@ async function init(){
   const _dsEl=document.getElementById('nav-data-source');
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
 
-  // Step 1: Load existing localStorage data first so S.* is never empty
+  // Step 1: Try supaLoadAll — this has critical ID remapping logic
+  // (local project/employee IDs get remapped to Supabase IDs so staffing matches)
   DB._store=null;
+  let _supaOk=false;
+  try{ _supaOk=await supaLoadAll(); }catch(e){ console.warn('[init] supaLoadAll failed:',e); }
+
+  // Step 2: If supaLoadAll failed, try loading each table directly
+  if(!_supaOk && location.protocol!=='file:'){
+    try{
+      const TABLES=['projects','employees','staffing','fixed_costs','vacations',
+        'sick_leave','bank_transactions','invoices','future_costs',
+        'partner_invoices','cashflow_months','external_costs'];
+      const results=await Promise.all(
+        TABLES.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null))
+      );
+      const get=t=>results[TABLES.indexOf(t)];
+      const store=DB._gs();
+      let anyLoaded=false;
+      TABLES.forEach(t=>{
+        const rows=get(t);
+        // Only overwrite if Supabase returned actual rows (never wipe with null/empty)
+        if(rows!==null&&Array.isArray(rows)&&rows.length>0){
+          store[t]=rows; anyLoaded=true;
+        }
+      });
+      if(anyLoaded){
+        _supaOk=true; _SUPA_ONLINE=true;
+        DB._sv(); DB._store=null;
+      }
+    }catch(e){ console.error('[init] direct load failed:',e); }
+  }
+
+  // Step 3: Load from localStorage into S.*
   await loadData();
   _normFixedCosts(S.fixedCosts||[]);
   if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
 
-  // Step 2: Load ALL tables from Supabase in parallel
-  // Each table is independent — one failure never affects others
-  let _supaOk=false;
-  if(location.protocol!=='file:'){
-    try{
-      const TABLES=['fixed_costs','projects','employees','staffing','vacations',
-        'sick_leave','bank_transactions','invoices','future_costs',
-        'partner_invoices','cashflow_months','external_costs','settings'];
-
-      const results=await Promise.all(
-        TABLES.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null))
-      );
-      const get=(t)=>results[TABLES.indexOf(t)];
-
-      // Only write tables where Supabase returned actual data (non-null, non-empty)
-      // NEVER overwrite existing data with null or empty — Supabase empty ≠ "data deleted"
-      const storeMap={
-        fixed_costs:'fixed_costs', projects:'projects', employees:'employees',
-        staffing:'staffing', vacations:'vacations', sick_leave:'sick_leave',
-        bank_transactions:'bank_transactions', invoices:'invoices',
-        future_costs:'future_costs', partner_invoices:'partner_invoices',
-        cashflow_months:'cashflow_months', external_costs:'external_costs'
-      };
-
-      let anyLoaded=false;
-      // Get store ONCE and update in-place (no DB._store=null until end)
-      const store=DB._gs();
-
-      Object.entries(storeMap).forEach(([supTable,lsKey])=>{
-        const rows=get(supTable);
-        if(rows!==null&&Array.isArray(rows)&&rows.length>0){
-          store[lsKey]=rows;
-          anyLoaded=true;
-        }
-        // If rows===null: Supabase call failed → keep existing localStorage data
-        // If rows===[] : Supabase says table is empty → keep existing (could be RLS issue)
-      });
-
-      if(anyLoaded){
-        _supaOk=true;
-        _SUPA_ONLINE=true;
-        // Settings merge (never overwrite, just add/update keys)
-        const settings=get('settings')||[];
-        settings.forEach(s=>{
-          if(!store.settings)store.settings=[];
-          const i=store.settings.findIndex(x=>x.key===s.key);
-          if(i>=0)store.settings[i].value=s.value;
-          else store.settings.push(s);
-        });
-        // Persist updated store to localStorage
-        DB._sv();
-        DB._store=null; // clear cache so loadData() re-reads the updated store
-        // Reload into S.*
-        await loadData();
-        _normFixedCosts(S.fixedCosts||[]);
-        if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
-      }
-    }catch(e){
-      console.error('[init] Supabase load error:',e);
-    }
-  }
-
-  // Step 3: Patch missing categories silently (never force vat_type)
+  // Step 4: Patch missing categories silently
   if(_supaOk&&S.fixedCosts.length){
     S.fixedCosts.filter(c=>!c.category||c.category.trim()===''||c.category==='Uncategorised')
       .forEach(c=>{
@@ -9440,7 +9506,7 @@ async function init(){
       });
   }
 
-  // Step 4: Update nav indicator
+  // Step 5: Update nav indicator
   if(_dsEl){
     if(_supaOk){
       _dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
@@ -9450,7 +9516,7 @@ async function init(){
     }
   }
 
-  // Step 5: Background tasks (non-blocking)
+  // Step 6: Background tasks
   cleanOrphanedStaffing(false).catch(()=>{});
   if(S.staffing&&S.staffing.some(s=>s.note)) _staffingNotesPush();
 
@@ -9548,19 +9614,20 @@ async function retrySupabaseConnection(){
   const _dsEl=document.getElementById('nav-data-source');
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
   DB._store=null;
-  var ok=false;
-  try{ok=await supaLoadAll();}catch(e){}
+  let ok=false;
+  try{ ok=await supaLoadAll(); }catch(e){}
   if(ok){
     _SUPA_ONLINE=true;
-    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
     await loadData();
-    // Reload current page
+    _normFixedCosts(S.fixedCosts||[]);
+    if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
     const activePage=document.querySelector('.page.active')?.id?.replace('page-','');
-    if(activePage)renderPage(activePage);
-    showToast('✓ Connected to Supabase','success');
+    if(activePage) renderPage(activePage);
+    showToast('✓ Verbonden met Supabase');
   }else{
-    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Still offline</span><br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry</span>';
-    showToast('Cannot reach Supabase — check connection','error');
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Nog steeds offline</span><br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Opnieuw proberen</span>';
+    showToast('Kan Supabase niet bereiken','error');
   }
 }
 
