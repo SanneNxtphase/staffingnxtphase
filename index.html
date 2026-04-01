@@ -1979,29 +1979,9 @@ function _supaFilter(table, data) {
   };
 
   DB.upsertStaffing = async function(data) {
+    // Only write to localStorage — Supabase write is handled directly in editCellSave
+    // to avoid race conditions from double-writes
     var result = await origUpsert(data);
-    if (_SUPA_ONLINE) {
-      try {
-        var days = parseFloat(data.days);
-        var qs = '?employee_id=eq.' + parseInt(data.employee_id) +
-                 '&project_id=eq.' + parseInt(data.project_id) +
-                 '&week_key=eq.' + encodeURIComponent(data.week_key);
-        var ex = await _supaReq('GET', 'staffing', null, qs + '&select=id');
-        if (days === 0) {
-          if (ex && ex[0]) _supaReq('DELETE', 'staffing', null, '?id=eq.' + ex[0].id);
-        } else if (ex && ex[0]) {
-          _supaReq('PATCH', 'staffing', {days: days}, '?id=eq.' + ex[0].id);
-        } else {
-          _supaReq('POST', 'staffing', {
-            employee_id: data.employee_id,
-            project_id: data.project_id,
-            week_key: data.week_key,
-            days: days,
-            created_at: new Date().toISOString()
-          });
-        }
-      } catch(e) {}
-    }
     return result;
   };
 
@@ -2041,7 +2021,7 @@ const S={
   schedWeek:null,
   schedView:'full',
   fcStart:{y:_now.getFullYear(),m:1},
-  staffingView:'full',
+  staffingView:'project',
   wwHorizon:2,
   fcView:'table',
   histTab:'financial',
@@ -3754,6 +3734,53 @@ function staffChangeMonth(d){
   S.staffingMonth.m+=d;if(S.staffingMonth.m>12){S.staffingMonth.m=1;S.staffingMonth.y++;}if(S.staffingMonth.m<1){S.staffingMonth.m=12;S.staffingMonth.y--;}
   renderStaffing();
 }
+function sfProjectCellClick(projId,wk,cell){
+  // Project view cell click — show who is assigned and let user pick employee to add/edit
+  const proj=S.projects.find(p=>p.id===projId||p.id==projId);
+  if(!proj)return;
+  const wkNum=wk.split('-W')[1];
+  const assigned=S.staffing.filter(s=>s.project_id==projId&&s.week_key===wk);
+  const m=document.getElementById('modal-content');
+  document.getElementById('modal-overlay').classList.add('open');
+  const empOptions=S.employees
+    .filter(e=>!_STAFFING_GRID_EXCLUDE.has(e.name))
+    .map(e=>{
+      const ex=assigned.find(s=>s.employee_id===e.id);
+      return`<option value="${e.id}"${ex?` data-days="${ex.days}"`:''} data-existing="${ex?ex.days:''}">${esc(e.name)}${ex?` (${ex.days}d)`:''}</option>`;
+    }).join('');
+  m.innerHTML=`
+    <div class="modal-header">
+      <div class="modal-title">Staffing · ${esc(proj.client_name+' / '+proj.name)} · Wk ${wkNum}</div>
+      <div class="modal-x" onclick="closeModal()">&#x2715;</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-lbl">Employee</label>
+          <select class="form-input" id="spc-emp" onchange="document.getElementById('spc-days').value=this.options[this.selectedIndex].dataset.existing||''">
+            <option value="">— Select employee —</option>
+            ${empOptions}
+          </select>
+        </div>
+        <div class="form-group" style="max-width:120px">
+          <label class="form-lbl">Days</label>
+          <input class="form-input" type="number" id="spc-days" min="0" max="7" step="0.5" placeholder="0">
+        </div>
+      </div>
+      ${assigned.length?`<div style="font-size:11px;color:var(--t3);margin-top:4px">Currently assigned: ${assigned.map(s=>{const e=S.employees.find(e=>e.id===s.employee_id);return(e?e.name:'?')+' '+s.days+'d';}).join(', ')}</div>`:''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="sfProjCellSave(${projId},'${wk}')">Save</button>
+    </div>`;
+  setTimeout(()=>document.getElementById('spc-emp')?.focus(),50);
+}
+async function sfProjCellSave(projId,wk){
+  const empId=parseInt(document.getElementById('spc-emp')?.value)||0;
+  const days=parseFloat(document.getElementById('spc-days')?.value)||0;
+  if(!empId)return alert('Select an employee');
+  await editCellSave(empId,projId,wk,days,'');
+}
 function setView(v){
   S.staffingView=v;
   ['full','people','project'].forEach(x=>document.getElementById('vb-'+x).classList.toggle('active',x===v));
@@ -3857,11 +3884,15 @@ function renderStaffing(){
       const pkWks=projectWkKeys(p);
       let totalDays=0;let td='';
       weeks.forEach(wk=>{
-        const active=pkWks.includes(wk);
-        if(!active){td+=`<td class="center cell-zero text-muted">—</td>`;return;}
+        const inRange=!pkWks.length||pkWks.includes(wk); // no dates = always in range
         const dayTotal=S.staffing.filter(s=>s.project_id===p.id&&s.week_key===wk).reduce((s,x)=>s+x.days,0);
         totalDays+=dayTotal;
-        td+=`<td class="center" style="${isDraft?'color:var(--amber)':''}">${dayTotal||''}</td>`;
+        // Always show editable cell — clicking opens Assign Full Project modal
+        if(!inRange){
+          td+=`<td class="center cell-zero" style="opacity:.3;cursor:not-allowed;background:var(--bg2)" title="Outside project dates — adjust start/end date to enable staffing">${dayTotal||'—'}</td>`;
+        } else {
+          td+=`<td class="center editable" style="${isDraft?'color:var(--amber)':''}" onclick="sfProjectCellClick(${p.id},'${wk}',this)" title="Click to assign staffing">${dayTotal||''}</td>`;
+        }
       });
       const cost=S.staffing.filter(s=>s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
       tbody+=`<tr class="row-emp${isDraft?' row-draft-proj':''}">
@@ -3869,19 +3900,19 @@ function renderStaffing(){
           ${isDraft?'<span class="badge badge-draft" style="margin-right:4px;font-size:8px">draft</span>':'<span style="display:inline-block;width:3px;height:14px;background:#1d4ed8;border-radius:2px;margin-right:6px;vertical-align:middle;opacity:.7"></span>'}
           ${esc(p.client_name)} / ${esc(p.name)}
         </td>
-        ${td}<td class="right bold" style="${isDraft?'color:var(--amber)':'color:var(--navy)'}">${totalDays}d</td>
-        <td class="right" style="color:var(--pink)">${fmt(cost)}</td>
+        ${td}<td class="right bold" style="${isDraft?'color:var(--amber)':'color:var(--navy)'}">${totalDays||'—'}</td>
+        <td class="right" style="color:var(--pink)">${cost>0?fmt(cost):''}</td>
       </tr>`;
-      // Ext costs removed from staffing grid — shown in Project Dashboard only
     };
-    const confVis=confProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
-    const draftVis=draftProjs.filter(p=>projectWkKeys(p).some(w=>weeks.includes(w)));
+    // Show ALL non-stopped confirmed/draft projects — no date filter
+    const confVis=confProjs;
+    const draftVis=draftProjs;
     confVis.forEach(p=>_projRowRender(p,false));
     if(draftVis.length){
       tbody+=`<tr class="row-draft-div"><td colspan="${weeks.length+3}" style="padding:7px 14px 4px;background:var(--amber-p);color:var(--amber);font-size:9.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">&#9675; Draft Projects — indicative staffing only</td></tr>`;
       draftVis.forEach(p=>_projRowRender(p,true));
     }
-    if(!confVis.length&&!draftVis.length)tbody+=`<tr><td colspan="${weeks.length+3}" class="empty">No projects with dates in this month</td></tr>`;
+    if(!confVis.length&&!draftVis.length)tbody+=`<tr><td colspan="${weeks.length+3}" class="empty">No active projects found</td></tr>`;
   } else {
     // People-focused (full or people view)
     emps.forEach(emp=>{
@@ -3939,56 +3970,53 @@ function renderStaffing(){
       </tr>`;
 
       if(view==='full'){
-        // Vacation row (if any vacation this month)
+        // Vacation row
         const hasVac=wkData.some(d=>d.vac>0);
         if(hasVac){
           const vacCells=wkData.map(d=>d.vac?`<td class="center cell-vac">${d.vac}d</td>`:`<td></td>`).join('');
           const totalVacDays=wkData.reduce((s,d)=>s+d.vac,0);
           tbody+=`<tr class="row-vac"><td>&#x1F3D6; Vacation</td>${vacCells}<td class="right" style="color:var(--purple)">${totalVacDays}d</td><td></td></tr>`;
         }
-        // Only show confirmed projects where this employee has at least 1 day assigned
-        const empConfProjs=confProjs.filter(p=>{
-          // Must overlap with current month AND employee must have days on it
-          if(!projectWkKeys(p).some(w=>weeks.includes(w)))return false;
-          return S.staffing.some(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)&&parseFloat(s.days||0)>0);
+
+        // ── CONFIRMED projects: show ALL confirmed projects under every employee ──
+        // No filter on staffing — every employee can be staffed on every project
+        confProjs.forEach(p=>{
+          const pkWks=projectWkKeys(p);
+          let pTotalDays=0;
+          const pCells=weeks.map(wk=>{
+            const inRange=!pkWks.length||pkWks.includes(wk);
+            const entry=S.staffing.find(s=>s.employee_id===emp.id&&s.project_id===p.id&&s.week_key===wk);
+            const d=entry?entry.days:0;
+            pTotalDays+=d;
+            const _note=entry?.note||'';
+            if(!inRange){
+              return`<td class="center cell-zero" style="opacity:.3;cursor:not-allowed;background:var(--bg2)" title="Outside project dates — adjust start/end date to enable staffing">—</td>`;
+            }
+            return`<td class="center editable${_note?' has-note':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_note?esc(_note):'Click to edit'}">${d||''}${_note?`<span style="font-size:7px;color:var(--blue);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_note)}</span>`:''}</td>`;
+          }).join('');
+          const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
+          tbody+=`<tr class="row-proj">
+            <td>${esc(p.client_name+' / '+p.name)}</td>${pCells}
+            <td class="right">${pTotalDays?pTotalDays+'d':''}</td>
+            <td class="right text-muted">${pCost?fmt(pCost):''}</td>
+          </tr>`;
         });
-        if(empConfProjs.length){
-          empConfProjs.forEach(p=>{
-            const pkWks=projectWkKeys(p);
-            let pTotalDays=0;
-            const pCells=weeks.map(wk=>{
-              if(!pkWks.includes(wk))return`<td class="center cell-zero">—</td>`;
-              const entry=S.staffing.find(s=>s.employee_id===emp.id&&s.project_id===p.id&&s.week_key===wk);
-              const d=entry?entry.days:0;
-              pTotalDays+=d;
-              const _note=entry?.note||'';
-              return`<td class="center editable${_note?' has-note':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_note?esc(_note):'Click to edit'}">${d||''}${_note?`<span style="font-size:7px;color:var(--blue);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_note)}</span>`:''}</td>`;
-            }).join('');
-            const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
-            tbody+=`<tr class="row-proj">
-              <td>${esc(p.client_name+' / '+p.name)}</td>${pCells}
-              <td class="right">${pTotalDays?pTotalDays+'d':''}</td>
-              <td class="right text-muted">${pCost?fmt(pCost):''}</td>
-            </tr>`;
-            // Ext costs removed from staffing grid — shown in Project Dashboard and Forecast only
-          });
-        }
-        // Draft section: also only show if employee has days assigned
-        const empDraftProjs=draftProjs.filter(p=>{
-          if(!projectWkKeys(p).some(w=>weeks.includes(w)))return false;
-          return S.staffing.some(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)&&parseFloat(s.days||0)>0);
-        });
-        if(empDraftProjs.length){
+
+        // ── DRAFT projects: show ALL draft projects under every employee ──
+        if(draftProjs.length){
           tbody+=`<tr class="row-draft-div"><td colspan="${weeks.length+3}">&#9675; Draft Projects</td></tr>`;
-          empDraftProjs.forEach(p=>{
+          draftProjs.forEach(p=>{
             const pkWks=projectWkKeys(p);
             let pTotalDays=0;
             const pCells=weeks.map(wk=>{
-              if(!pkWks.includes(wk))return`<td class="center cell-zero">—</td>`;
+              const inRange=!pkWks.length||pkWks.includes(wk);
               const entry=S.staffing.find(s=>s.employee_id===emp.id&&s.project_id===p.id&&s.week_key===wk);
               const d=entry?entry.days:0;
               pTotalDays+=d;
               const _dnote=entry?.note||'';
+              if(!inRange){
+                return`<td class="center cell-zero" style="opacity:.3;cursor:not-allowed;background:var(--bg2)" title="Outside project dates — adjust start/end date to enable staffing">—</td>`;
+              }
               return`<td class="center editable${_dnote?' has-note':''}" style="color:var(--amber)" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_dnote?esc(_dnote):'Click to edit'}">${d||''}${_dnote?`<span style="font-size:7px;color:var(--amber);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_dnote)}</span>`:''}</td>`;
             }).join('');
             const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
@@ -4454,24 +4482,59 @@ async function editCell(empId,projId,wk,cell){
     </div>`;
   setTimeout(()=>document.getElementById('sc-days')?.focus(),50);
 }
-async function editCellSave(empId,projId,wk,days,note){empId=parseInt(empId)||empId;projId=parseInt(projId)||projId;
+async function editCellSave(empId,projId,wk,days,note){
+  empId=parseInt(empId)||empId;
+  projId=parseInt(projId)||projId;
+  days=parseFloat(days)||0;
+  note=String(note||'').trim();
+
+  console.log('[STAFFING SAVE] emp='+empId+' proj='+projId+' wk='+wk+' days='+days);
+
   closeModal();
-  // Save days+note locally
-  await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days,note});
-  // Persist note in settings so it survives Supabase sync (staffing table may lack note column)
-  _staffNoteSave(empId,projId,wk,note);
-  // Push days to Supabase
+
+  // Step 1: Save to localStorage immediately (optimistic update)
+  await DB.upsertStaffing({employee_id:empId, project_id:projId, week_key:wk, days, note});
+
+  // Step 2: Save note separately (settings table — survives schema changes)
+  _staffNoteSave(empId, projId, wk, note);
+
+  // Step 3: Save days to Supabase directly (single authoritative write)
+  // NOTE: DB.upsertStaffing via _supaWrapDB also tries Supabase but doesn't handle notes
+  // We override here with full control
+  let supaOk = false;
   try{
-    const ex=await _supaReq('GET','staffing',null,`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`);
-    if(ex&&ex.length>0&&days>0){
-      await _supaReq('PATCH','staffing',{days},'?id=eq.'+ex[0].id);
-    } else if(days>0){
-      await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days});
-    } else if(ex&&ex.length>0&&days===0){
-      await _supaReq('DELETE','staffing',null,'?id=eq.'+ex[0].id);
+    const qs=`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`;
+    const ex=await _supaReq('GET','staffing',null,qs);
+    if(days===0){
+      if(ex&&ex.length>0){
+        const r=await _supaReq('DELETE','staffing',null,'?id=eq.'+ex[0].id);
+        supaOk=(r!==null);
+      } else {
+        supaOk=true; // nothing to delete
+      }
+    } else if(ex&&ex.length>0){
+      const r=await _supaReq('PATCH','staffing',{days},'?id=eq.'+ex[0].id);
+      supaOk=(r!==null);
+      if(!supaOk){
+        console.error('[STAFFING SAVE] PATCH failed for id='+ex[0].id);
+        showToast('⚠ Staffing opslaan mislukt','error');
+      }
+    } else {
+      const r=await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days});
+      supaOk=(r!==null);
+      if(!supaOk){
+        console.error('[STAFFING SAVE] POST failed emp='+empId+' proj='+projId+' wk='+wk);
+        showToast('⚠ Staffing opslaan mislukt','error');
+      }
     }
-  }catch(e){}
-  await loadData();renderStaffing();
+    if(supaOk) console.log('[STAFFING SAVE] Supabase OK days='+days);
+  }catch(e){
+    console.error('[STAFFING SAVE] Exception:',e);
+    showToast('⚠ Staffing opslaan mislukt (network error)','error');
+  }
+
+  // Step 4: Re-render with current in-memory data (fast, no reload needed)
+  renderStaffing();
 }
 
 // Staffing notes stored in settings — survives Supabase sync without schema changes
