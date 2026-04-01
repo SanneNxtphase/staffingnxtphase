@@ -1878,7 +1878,7 @@ async function _normFixedCostsAndSync(arr){
 }
 
 var _SUPA_SCHEMA = {
-  fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes','start_month','end_month'],
+  fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
   projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
@@ -7134,11 +7134,17 @@ async function saveFixedCost(id){
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
 
-  // Build payload — only Supabase-schema columns (frequency stored in notes)
+  // Build payload — ONLY columns that exist in Supabase fixed_costs table
+  // start_month/end_month are NOT Supabase columns — they are encoded in notes (||SM:||EM:||)
+  // frequency/frequency_month are NOT Supabase columns — encoded in notes (||FREQ:||FREQM:||)
   const _patchPayload={
-    name:data.name, category:data.category, amount:data.amount,
-    vat_pct:data.vat_pct, vat_type:data.vat_type, active:data.active,
-    notes:notesEncoded, start_month:data.start_month||null, end_month:data.end_month||null
+    name:data.name,
+    category:data.category,
+    amount:data.amount,
+    vat_pct:data.vat_pct,
+    vat_type:data.vat_type,
+    active:data.active,
+    notes:notesEncoded
   };
 
   console.log('[FC SAVE] Saving:', {id, name, vatType:data.vat_type, vatPct:data.vat_pct});
