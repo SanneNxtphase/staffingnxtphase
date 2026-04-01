@@ -975,6 +975,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="btn-group">
       <button class="btn btn-primary" onclick="fcAddEntryModal()">+ Add Cost Entry</button>
       <button class="btn" onclick="fcAddCategoryModal()">+ Add Category</button>
+      <button class="btn btn-sm" style="background:var(--blue-p);color:var(--blue);border-color:var(--blue);font-size:10px" onclick="fcForceReload()">↻ Force Reload</button>
       <button class="btn btn-sm" style="background:var(--amber-p);color:var(--amber);border-color:var(--amber);font-size:10px" onclick="fcDebugRaw()">🔍 Debug data</button>
       <button class="btn btn-sm" style="background:var(--red-p);color:var(--red);border-color:var(--red);font-size:10px" onclick="fcFixUncategorised()">🔧 Fix Uncategorised</button>
     </div>
@@ -1328,12 +1329,20 @@ async function _supaReq(method, table, body, qs) {
     var opts = { method: method, headers: hdrs };
     if (body) opts.body = JSON.stringify(body);
     var url = _supaUrl(table, qs);
-    var r = await fetch(url, opts);
+    // Add 10s timeout via AbortController
+    var controller = new AbortController();
+    var timer = setTimeout(()=>controller.abort(), 10000);
+    opts.signal = controller.signal;
+    var r;
+    try{
+      r = await fetch(url, opts);
+    }finally{
+      clearTimeout(timer);
+    }
     if (!r.ok) {
       var errText = '';
       try { errText = await r.text(); } catch(e2) {}
       console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status, errText);
-      // Show toast for write failures so user knows
       if(method==='PATCH'||method==='POST'){
         showToast('⚠ Save failed (HTTP '+r.status+'). Check console.','error');
       }
@@ -1342,7 +1351,9 @@ async function _supaReq(method, table, body, qs) {
     if (r.status === 204) return {}; // PATCH success
     return await r.json().catch(function() { return {}; });
   } catch(e) {
-    if(method==='GET'){
+    if(e.name==='AbortError'){
+      console.warn('[Supabase TIMEOUT] '+method+' '+table+' timed out after 10s');
+    } else if(method==='GET'){
       console.warn('[Supabase] '+method+' '+table+' unavailable:', e.message||e);
     } else {
       console.error('[Supabase EXCEPTION] '+method+' '+table+':', e.message||e);
@@ -1354,9 +1365,14 @@ async function _supaReq(method, table, body, qs) {
 
 async function _supaCheckOnline() {
   if(location.protocol==='file:') { _SUPA_ONLINE=false; return false; }
-  var r = await _supaReq('GET', 'employees', null, '?select=id&limit=1');
-  _SUPA_ONLINE = (r !== null);
-  return _SUPA_ONLINE;
+  // Try up to 3 times with short delays (handles cold-start network latency)
+  for(var attempt=0; attempt<3; attempt++){
+    var r = await _supaReq('GET', 'employees', null, '?select=id&limit=1');
+    if(r !== null){ _SUPA_ONLINE=true; return true; }
+    if(attempt<2) await new Promise(res=>setTimeout(res, 800)); // wait before retry
+  }
+  _SUPA_ONLINE = false;
+  return false;
 }
 
 var _SUPA_REAL_MEMBERS = [
@@ -2436,26 +2452,35 @@ function navigate(page,el){
     })();
   } else if(page==='fixedcosts'){
     (async()=>{
-      const _normActive=c=>{c.active=(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?0:1;c.id=parseInt(c.id)||c.id;};
-      // Fetch fixed_costs fresh from Supabase
-      const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc').catch(()=>null);
-      if(fcFresh&&fcFresh.length>0){
-        _normFixedCosts(fcFresh);
-        S.fixedCosts=fcFresh;
-      } else {
-        // Fallback: use whatever is already in S.fixedCosts (from prior loadData)
-        _normFixedCosts(S.fixedCosts);
+      // Page is already visible (navigate() called classList.add above)
+      // Show loading indicator
+      const cardsEl=document.getElementById('fc-category-cards');
+      if(cardsEl&&!S.fixedCosts.length)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading…</div>';
+      else renderFixedCosts(); // show existing data immediately
+
+      // Fetch fresh from Supabase
+      try{
+        const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
+        if(fcFresh&&fcFresh.length>0){
+          _normFixedCosts(fcFresh);
+          if(window._fcLocalOverrides){
+            Object.entries(window._fcLocalOverrides).forEach(([eid,vals])=>{
+              const e=fcFresh.find(c=>parseInt(c.id)===parseInt(eid));
+              if(e)Object.assign(e,vals);
+            });
+          }
+          S.fixedCosts=fcFresh;
+          // Persist to localStorage so subsequent loadData() calls find this data
+          try{const _st=DB._gs();_st.fixed_costs=fcFresh;DB._sv();DB._store=null;}catch(e){}
+        }else if(!S.fixedCosts.length){
+          // Supabase returned nothing — try localStorage
+          await loadData();
+        }
+      }catch(e){
+        console.warn('FC load error:',e);
+        if(!S.fixedCosts.length)await loadData();
       }
-      // Load all other data without touching fixedCosts
-      await loadData();
-      // Restore the fresh fixedCosts after loadData overwrites it
-      if(fcFresh&&fcFresh.length>0){
-        _normFixedCosts(fcFresh);
-        S.fixedCosts=fcFresh;
-      } else {
-        _normFixedCosts(S.fixedCosts);
-      }
-      renderPage(page);
+      renderFixedCosts();
     })();
   } else if(page==='extcosts'){
     (async()=>{ try{await supaLoadAll();await loadData();}catch(e){} renderPage(page); })();
@@ -5553,24 +5578,101 @@ function fixedMonthlySplit(){
   return{planningItems,planningTotal,catMap,bankPayees:[],bankTotal:0,total:planningTotal};
 }
 
+async function fcForceReload(){
+  showToast('Force reloading from Supabase…','info');
+  const cardsEl=document.getElementById('fc-category-cards');
+  if(cardsEl)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading from Supabase…</div>';
+  try{
+    const url=_SUPA_URL+'/rest/v1/fixed_costs?select=*&order=id.asc';
+    const resp=await fetch(url,{
+      method:'GET',
+      headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json'}
+    });
+    if(!resp.ok){
+      const err=await resp.text();
+      showToast('Supabase error: HTTP '+resp.status,'error');
+      if(cardsEl)cardsEl.innerHTML=`<div style="padding:32px;color:var(--red);font-family:monospace;font-size:12px">HTTP ${resp.status}: ${err}</div>`;
+      return;
+    }
+    const data=await resp.json();
+    if(data&&data.length>0){
+      _normFixedCosts(data);
+      S.fixedCosts=data;
+      _SUPA_ONLINE=true;
+      try{const st=DB._gs();st.fixed_costs=data;DB._sv();DB._store=null;}catch(e){}
+      renderFixedCosts();
+      showToast(`✓ Loaded ${data.length} fixed cost entries`,'success');
+      const dsEl=document.getElementById('nav-data-source');
+      if(dsEl)dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
+    }else{
+      if(cardsEl)cardsEl.innerHTML='<div style="padding:32px;text-align:center;color:var(--t3)">Supabase returned 0 entries. Table may be empty.</div>';
+      showToast('Supabase returned 0 rows','error');
+    }
+  }catch(e){
+    showToast('Fetch error: '+e.message,'error');
+    if(cardsEl)cardsEl.innerHTML=`<div style="padding:32px;color:var(--red);font-family:monospace;font-size:12px">Error: ${e.message}</div>`;
+  }
+}
+
 async function fcDebugRaw(){
   const panel=document.getElementById('fc-debug-panel');
   if(!panel)return;
   panel.style.display='block';
-  panel.textContent='Loading from Supabase…';
-  // 1. Raw Supabase fetch
-  const raw=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc&limit=5');
-  // 2. Current S.fixedCosts
-  const inMem=S.fixedCosts.slice(0,5);
-  panel.textContent=
-    '=== RAW SUPABASE (first 5) ===\n'+
-    (raw?raw.map(r=>`id:${r.id} active:${JSON.stringify(r.active)} (type:${typeof r.active}) cat:"${r.category}" name:"${r.name}"`).join('\n'):'NULL — fetch failed')+
-    '\n\n=== S.fixedCosts after normalize (first 5) ===\n'+
-    inMem.map(r=>`id:${r.id} active:${JSON.stringify(r.active)} (type:${typeof r.active}) cat:"${r.category}" name:"${r.name}"`).join('\n')+
-    '\n\nTotal in S.fixedCosts: '+S.fixedCosts.length+
-    '\nActive count: '+S.fixedCosts.filter(c=>c.active===1).length+
-    '\nInactive count: '+S.fixedCosts.filter(c=>c.active===0).length+
-    '\nOther active values: '+[...new Set(S.fixedCosts.map(c=>JSON.stringify(c.active)+' ('+typeof c.active+')'))].join(', ');
+  panel.textContent='Running diagnostics…\n';
+
+  // 1. Connection info
+  panel.textContent+=`URL: ${_SUPA_URL}\n`;
+  panel.textContent+=`Key prefix: ${(_SUPA_KEY||'').substring(0,20)}…\n`;
+  panel.textContent+=`_SUPA_ONLINE: ${_SUPA_ONLINE}\n`;
+  panel.textContent+=`Protocol: ${location.protocol}\n`;
+  panel.textContent+=`S.fixedCosts.length: ${S.fixedCosts.length}\n\n`;
+
+  // 2. Raw fetch with full error reporting
+  panel.textContent+='Testing direct fetch…\n';
+  try{
+    const url=_SUPA_URL+'/rest/v1/fixed_costs?select=id,name,category,active&limit=5&order=id.asc';
+    const resp=await fetch(url,{
+      method:'GET',
+      headers:{
+        'apikey':_SUPA_KEY,
+        'Authorization':'Bearer '+_SUPA_KEY,
+        'Content-Type':'application/json'
+      }
+    });
+    panel.textContent+=`HTTP Status: ${resp.status} ${resp.statusText}\n`;
+    const txt=await resp.text();
+    panel.textContent+=`Response: ${txt.substring(0,500)}\n\n`;
+    if(resp.ok){
+      const data=JSON.parse(txt);
+      panel.textContent+=`✓ Supabase reachable! Got ${data.length} rows\n`;
+      panel.textContent+=data.map(r=>`  id:${r.id} name:"${r.name}" cat:"${r.category}" active:${r.active}`).join('\n');
+      // Load it!
+      if(data.length>0){
+        const full=await fetch(_SUPA_URL+'/rest/v1/fixed_costs?select=*&order=id.asc',{
+          headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json'}
+        });
+        const fullData=await full.json();
+        _normFixedCosts(fullData);
+        S.fixedCosts=fullData;
+        _SUPA_ONLINE=true;
+        try{const st=DB._gs();st.fixed_costs=fullData;DB._sv();DB._store=null;}catch(e){}
+        panel.textContent+=`\n\n✓ Loaded ${fullData.length} entries into S.fixedCosts`;
+        renderFixedCosts();
+      }
+    }else{
+      panel.textContent+=`✗ Supabase returned error — check key/RLS policy\n`;
+    }
+  }catch(e){
+    panel.textContent+=`✗ Fetch exception: ${e.message}\n`;
+    panel.textContent+=`  This usually means CORS block or network error\n`;
+  }
+
+  // 3. In-memory state
+  panel.textContent+=`\n\n=== S.fixedCosts (after) ===\n`;
+  panel.textContent+=`Total: ${S.fixedCosts.length}\n`;
+  S.fixedCosts.slice(0,5).forEach(r=>{
+    panel.textContent+=`  id:${r.id} name:"${r.name}" active:${r.active}(${typeof r.active}) vat_type:${r.vat_type}\n`;
+  });
 }
 
 async function fcFixUncategorised(){
@@ -5603,42 +5705,37 @@ async function fcFixUncategorised(){
 }
 
 function renderFixedCosts(){
-  // Normalize active + auto-fix salary entries
   _normFixedCosts(S.fixedCosts||[]);
   const fActiveEl=document.getElementById('fc-filter-active');
   const fMonthEl=document.getElementById('fc-filter-month');
-  const activeFilter=fActiveEl?.value||'active';
-  const monthFilter=fMonthEl?.value||''; // 'YYYY-MM' or ''
-  let allEntries=S.fixedCosts.filter(c=>{
-    if(activeFilter==='active'&&c.active!==1)return false;
-    if(activeFilter==='inactive'&&c.active===1)return false;
-    // If month filter set, only show costs active that month
-    if(monthFilter){
-      const[mfy,mfm]=monthFilter.split('-').map(Number);
-      if(!fcInDateRange(c,mfy,mfm))return false;
-    }
-    return true;
-  });
   const fCatEl=document.getElementById('fc-filter-cat');
   const fVatEl=document.getElementById('fc-filter-vat');
   const sortEl=document.getElementById('fc-sort');
-  if(fCatEl){
-    const cur=fCatEl.value;
-    fCatEl.innerHTML='<option value="">All</option>'+
-      [...new Set(allEntries.map(c=>c.category||'Uncategorised'))].sort()
-       .map(c=>`<option value="${esc(c)}"${cur===c?' selected':''}>${esc(c)}</option>`).join('');
-    fCatEl.value=cur;
-  }
+  const activeFilter=fActiveEl?.value||'active';
+  const monthFilter=fMonthEl?.value||'';
   const fCat=fCatEl?.value||'';
   const fVat=fVatEl?.value||'';
   const sMode=sortEl?.value||'cat';
 
-  let entries=[...allEntries].filter(c=>{
+  let allEntries=S.fixedCosts.filter(c=>{
+    if(activeFilter==='active'&&c.active!==1)return false;
+    if(activeFilter==='inactive'&&c.active===1)return false;
+    if(monthFilter){const[mfy,mfm]=monthFilter.split('-').map(Number);if(!fcInDateRange(c,mfy,mfm))return false;}
     if(fCat&&(c.category||'Uncategorised')!==fCat)return false;
     if(fVat&&(c.vat_type||'incl')!==fVat)return false;
     return true;
   });
-  const sorted=[...entries].sort((a,b)=>{
+
+  // Update category filter options
+  if(fCatEl){
+    const cur=fCatEl.value;
+    fCatEl.innerHTML='<option value="">All</option>'+
+      [...new Set(S.fixedCosts.map(c=>c.category||'Uncategorised'))].sort()
+       .map(c=>`<option value="${esc(c)}"${cur===c?' selected':''}>${esc(c)}</option>`).join('');
+    fCatEl.value=cur;
+  }
+
+  const sorted=[...allEntries].sort((a,b)=>{
     if(sMode==='name')return(a.name||'').localeCompare(b.name||'');
     if(sMode==='amount-desc')return fcEntryExcl(b)-fcEntryExcl(a);
     if(sMode==='amount-asc')return fcEntryExcl(a)-fcEntryExcl(b);
@@ -5647,27 +5744,17 @@ function renderFixedCosts(){
     return(a.name||'').localeCompare(b.name||'');
   });
 
-  // Totals always reflect ACTIVE items only (inactive = €0 contribution)
-  const activeEntries=entries.filter(c=>c.active);
-  // Use monthly-equivalent amounts so totals match dashboard (quarterly÷3, yearly÷12)
-  const tGross=activeEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
-  const tVat  =activeEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0);
-  const tNet  =activeEntries.reduce((s,c)=>s+fcMonthlyAmount(c),0);
-
-  // KPI row
-  // Current month fixed costs (matches dashboard)
-  const _fcPageNow=new Date(),_fcPageY=_fcPageNow.getFullYear(),_fcPageM=_fcPageNow.getMonth()+1;
-  const tNetThisMonth=fixedMonthly(_fcPageY,_fcPageM);
-  // This-month totals (incl VAT) — based on active entries for current month
-  // Use fcInDateRange so KPI matches fixedMonthly() used in dashboards
-  const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_fcPageY,_fcPageM));
+  // KPI calculations
+  const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
+  const tNetThisMonth=fixedMonthly(_y,_m);
+  const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
   const tGrossThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
   const tVatThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   const kpiEl=document.getElementById('fc-grand-kpis');
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
       <div class="kpi-lbl">This Month — Excl. VAT</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
-      <div class="kpi-sub">Monthly equivalent · matches all dashboards</div></div>
+      <div class="kpi-sub">Matches all dashboards</div></div>
     <div class="kpi aa">
       <div class="kpi-lbl">This Month — Incl. VAT</div><div class="kpi-val amber">${fmt(tGrossThisMonth)}</div>
       <div class="kpi-sub">What you actually pay out</div></div>
@@ -5687,164 +5774,132 @@ function renderFixedCosts(){
 
   const vatBadge=c=>{
     const t=c.vat_type||'incl',p=getFCVat(c);
-    if(t==='none')return`<span style="background:#f0f9f4;color:#27ae60;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700">No VAT</span>`;
-    if(t==='excl')return`<span style="background:#fff8e6;color:#b8860b;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700">+${p}%</span>`;
-    return`<span style="background:var(--amber-p);color:var(--amber);border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700">${p}% in</span>`;
+    if(t==='none')return`<span style="color:#27ae60;font-size:10px;font-weight:700">No VAT</span>`;
+    if(t==='excl')return`<span style="color:var(--amber);font-size:10px;font-weight:700">+${p}%</span>`;
+    return`<span style="color:var(--amber);font-size:10px;font-weight:700">${p}% in</span>`;
   };
 
   const cardsEl=document.getElementById('fc-category-cards');
-  if(!cardsEl)return;
+  if(!cardsEl)return; // page not visible
 
-  if(!cats.length){
-    cardsEl.innerHTML=`<div class="card"><div class="card-body"><div class="empty">No cost entries yet. Click + Add Cost Entry to begin.</div></div></div>`;
-    document.getElementById('fc-grand-total-card').innerHTML='';
+  if(!sorted.length){
+    cardsEl.innerHTML=`<div style="padding:32px;text-align:center;color:var(--t3);font-size:13px">
+      ${S.fixedCosts.length===0
+        ? 'No cost entries yet. Click <strong>+ Add Cost Entry</strong> to begin.'
+        : 'No entries match the current filters.'}
+    </div>`;
+    const gt=document.getElementById('fc-grand-total-card');if(gt)gt.innerHTML='';
     return;
   }
 
-  cardsEl.innerHTML=cats.map(cat=>{
+  // ── STAFFING-GRID STYLE TABLE ──────────────────────────────────────────────
+  const activeTotal=sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0);
+
+  let html=`<div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+  <thead><tr style="background:var(--bg2);border-bottom:2px solid var(--bdr2)">
+    <th style="text-align:left;padding:8px 14px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;min-width:200px">Cost Name</th>
+    <th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px">Period</th>
+    <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px">Gross /mo</th>
+    <th style="text-align:center;padding:8px 10px;font-size:10px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.6px">VAT</th>
+    <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.6px">VAT /mo</th>
+    <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.6px">Net /mo</th>
+    <th style="text-align:right;padding:8px 10px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px">Net /yr</th>
+    <th style="width:90px;padding:8px 10px"></th>
+  </tr></thead>
+  <tbody>`;
+
+  cats.forEach(cat=>{
     const ces=grouped[cat]||[];
+    if(!ces.length)return;
     const activeCes=ces.filter(c=>c.active);
-    // Monthly-equivalent: quarterly÷3, yearly÷12
-    const cg=activeCes.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
-    const cv=activeCes.reduce((s,c)=>s+fcMonthlyVatAmt(c),0);
-    const cn=activeCes.reduce((s,c)=>s+fcMonthlyAmount(c),0);
-    const pct=tNet>0?(cn/tNet*100).toFixed(0):0;
-    const catSafe=esc(cat).replace(/'/g,"\\'");
-    return`<div class="card mb-14">
-      <div class="card-header" style="display:flex;align-items:center;gap:12px;padding:12px 16px">
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:800;color:var(--navy)">${esc(cat)}</div>
-          <div style="font-size:10px;color:var(--t3);margin-top:2px">${ces.length} entr${ces.length===1?'y':'ies'}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="text-align:right">
-            <div style="font-size:12px;font-weight:700;color:var(--red)">${fmt(cn)}<span style="font-size:9px;color:var(--t3);font-weight:400">/mo</span></div>
-            <div style="font-size:9px;color:var(--t3)">${pct}% of total</div>
-          </div>
-          <div style="width:44px;height:5px;background:var(--bdr);border-radius:3px;overflow:hidden">
-            <div style="height:100%;width:${pct}%;background:var(--navy);border-radius:3px"></div>
-          </div>
-        </div>
-        <div style="display:flex;gap:5px">
-          <button class="btn btn-sm btn-primary" style="font-size:9px" onclick="fcAddEntryModal('${catSafe}')">+ Add</button>
-          ${cat!=='Uncategorised'?`
-          <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcRenameCatModal('${catSafe}')">Rename</button>
-          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="fcDeleteCat('${catSafe}')">Delete</button>`:''}
-        </div>
-      </div>
-      ${ces.length?`<div>
-        <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead><tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
-            <th style="padding:6px 14px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Cost Name</th>
-            <th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Period</th>
-            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Gross /mo</th>
-            <th style="padding:6px 10px;text-align:center;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT</th>
-            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--amber);font-weight:700;text-transform:uppercase;letter-spacing:.6px">VAT /mo</th>
-            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Net /mo</th>
-            <th style="padding:6px 10px;text-align:right;font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Net /yr</th>
-            <th style="padding:6px 10px;width:80px"></th>
-          </tr></thead>
-          <tbody>${ces.map(c=>`
-            <tr style="border-bottom:1px solid var(--bdr)" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
-              <td style="padding:8px 14px;font-weight:600;${!c.active?'opacity:.5;text-decoration:line-through;color:var(--t3)':''}">${esc(c.name)}
-                ${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:700">INACTIVE</span>':''}
-              </td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyAmountIncl(c))}</td>
-              <td style="padding:8px 10px;text-align:center">${vatBadge(c)}
-                ${(()=>{const fr=c.frequency||'monthly';return fr!=='monthly'?`<br><span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700">${fr==='quarterly'?'Q':'Y'}</span>`:'';})()} 
-              </td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--amber);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyVatAmt(c))}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'};font-size:13px">${fmt(fcMonthlyAmount(c))}${(c.frequency||'monthly')!=='monthly'?`<span style="font-size:9px;color:var(--t3);margin-left:3px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:''}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--t3);${!c.active?'opacity:.4':''}">${fmt(fcMonthlyAmount(c)*12)}</td>
-              <td style="padding:8px 10px;text-align:right">
-                ${!c.active?`<button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--green)" onclick="fcReactivate(${c.id})">Reactivate</button>`:''}
-                <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
-                <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteFCEntry(${c.id})">✕</button>
-              </td>
-            </tr>`).join('')}
-          </tbody>
-          <tfoot><tr style="border-top:2px solid var(--bdr2);background:var(--bg2)">
-            <td style="padding:7px 14px;font-weight:700;font-size:11px;color:var(--navy)">Subtotal (${ces.length})</td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">${fmt(cg)}</td>
-            <td></td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--amber);font-weight:700">${fmt(cv)}</td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:800;color:var(--red);font-size:13px">${fmt(cn)}</td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--t3)">${fmt(cn*12)}</td>
-            <td></td>
-          </tr></tfoot>
-        </table></div>`:`<div style="padding:14px 16px;color:var(--t3);font-size:12px">No entries — click + Add.</div>`}
-    </div>`;
-  }).join('');
+    const cGross=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
+    const cVat=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
+    const cNet=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+    const pct=activeTotal>0?(cNet/activeTotal*100).toFixed(0)+'%':'—';
+    const barW=activeTotal>0?Math.round(cNet/activeTotal*100):0;
 
-  const gtEl=document.getElementById('fc-grand-total-card');
-  if(gtEl)gtEl.innerHTML=entries.length?`
-    <div class="card" style="border:2px solid var(--navy);background:var(--navy);color:#fff">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;flex-wrap:wrap;gap:12px">
-        <div><div style="font-size:13px;font-weight:800;letter-spacing:-.2px">GRAND TOTAL — ${entries.length} active entries</div><div style="font-size:10px;opacity:.6;margin-top:2px">Monthly equivalent · quarterly costs ÷3 · yearly ÷12</div></div>
-        <div style="display:flex;gap:24px;flex-wrap:wrap">
-          <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Monthly Gross</div><div style="font-size:17px;font-weight:700">${fmt(tGross)}</div></div>
-          <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">VAT</div><div style="font-size:17px;font-weight:700;color:#f0c060">${fmt(tVat)}</div></div>
-          <div style="text-align:center;border-left:1px solid rgba(255,255,255,.2);padding-left:24px"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Net / Month</div><div style="font-size:22px;font-weight:800;color:#ff9090">${fmt(tNet)}</div></div>
-          <div style="text-align:center"><div style="font-size:9px;opacity:.55;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Net / Year</div><div style="font-size:17px;font-weight:700;color:#aac8f8">${fmt(tNet*12)}</div></div>
-        </div>
-      </div>
-    </div>`:'';
+    // Category header row (like employee row in staffing grid)
+    html+=`<tr class="row-emp" style="cursor:default">
+      <td style="padding:9px 14px">
+        <span style="font-weight:700;font-size:13px;color:var(--navy)">${esc(cat)}</span>
+        <span style="font-size:10px;color:var(--t3);margin-left:6px">${ces.length} entr${ces.length===1?'y':'ies'}</span>
+        <span style="margin-left:8px;font-size:9px;background:var(--bg2);color:var(--t3);padding:1px 6px;border-radius:10px">${pct} of total</span>
+        <div style="margin-top:4px;height:3px;width:${Math.min(barW,100)}%;background:var(--blue);border-radius:2px;opacity:.4;max-width:120px"></div>
+      </td>
+      <td></td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:600">${cGross>0?fmt(cGross):''}</td>
+      <td></td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--amber)">${cVat>0?fmt(cVat):''}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(cNet)}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--t3)">${fmt(cNet*12)}</td>
+      <td style="padding:9px 10px;text-align:right">
+        <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcAddEntryForCat('${esc(cat)}')">+ Add</button>
+        <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcRenameCatModal('${esc(cat)}')">Rename</button>
+        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="fcDeleteCatModal('${esc(cat)}')">Delete</button>
+      </td>
+    </tr>`;
 
-  // ── Monthly breakdown (when month filter is active) ──────────────────────
-  const mbEl=document.getElementById('fc-monthly-breakdown');
-  if(mbEl){
-    if(monthFilter){
-      const[mfy2,mfm2]=monthFilter.split('-').map(Number);
-      const monthLabel=new Date(mfy2,mfm2-1,1).toLocaleDateString('en',{month:'long',year:'numeric'});
-      const moTotal=fixedMonthly(mfy2,mfm2);
-      // Group active entries for that month by category
-      const moEntries=S.fixedCosts.filter(c=>fcInDateRange(c,mfy2,mfm2));
-      const moCats=[...new Set(moEntries.map(c=>c.category||'Uncategorised'))].sort();
-      const moGross=moEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0);
-      const moVat=moEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0);
-      mbEl.innerHTML=`<div class="card">
-        <div class="card-header"><div class="card-title">&#128197; Monthly View — ${esc(monthLabel)}</div>
-          <div style="display:flex;gap:16px;font-size:11px">
-            <span style="color:var(--t3)">Excl. VAT: <strong style="color:var(--red)">${fmt(moTotal)}</strong></span>
-            <span style="color:var(--t3)">BTW: <strong style="color:var(--amber)">${fmt(moVat)}</strong></span>
-            <span style="color:var(--t3)">Incl. VAT: <strong>${fmt(moGross)}</strong></span>
-          </div>
-        </div>
-        <div class="card-body" style="padding:0">
-          <table><thead><tr>
-            <th>Category</th><th>Name</th><th>Frequency</th>
-            <th class="right">Excl. VAT</th><th class="right">VAT</th><th class="right">Incl. VAT</th><th>Status</th>
-          </tr></thead><tbody>
-          ${moCats.map(cat=>{
-            const ces=moEntries.filter(c=>(c.category||'Uncategorised')===cat);
-            const catNet=ces.reduce((s,c)=>s+fcMonthlyAmount(c),0);
-            let rows=ces.map(c=>{
-              const freq=c.frequency||'monthly';
-              const freqLabel=freq==='quarterly'?'Quarterly':freq==='yearly'?'Yearly':'Monthly';
-              return`<tr>
-                <td class="text-muted" style="font-size:10px">${esc(cat)}</td>
-                <td style="font-weight:600">${esc(c.name)}</td>
-                <td><span style="font-size:10px;background:${freq==='monthly'?'var(--blue-p)':freq==='quarterly'?'var(--amber-p)':'var(--green-p)'};color:${freq==='monthly'?'var(--blue)':freq==='quarterly'?'var(--amber)':'var(--green)'};padding:2px 6px;border-radius:3px;font-weight:600">${freqLabel}</span></td>
-                <td class="right mono" style="color:var(--red)">${fmt(fcEntryExcl(c))}</td>
-                <td class="right mono text-muted">${fmt(fcEntryVatAmt(c))}</td>
-                <td class="right mono bold">${fmt(fcEntryIncl(c))}</td>
-                <td><span style="font-size:10px;color:${c.active?'var(--green)':'var(--red)'}">${c.active?'Active':'Inactive'}</span></td>
-              </tr>`;
-            }).join('');
-            return rows+`<tr style="background:var(--bg2)"><td colspan="3" style="font-size:10px;font-weight:700;padding:4px 12px;color:var(--t3)">${esc(cat)} subtotal</td><td class="right mono bold" style="color:var(--red)">${fmt(catNet)}</td><td colspan="3"></td></tr>`;
-          }).join('')}
-          <tr style="background:var(--navy);color:#fff"><td colspan="3" style="font-weight:700;padding:6px 12px">TOTAL ${esc(monthLabel).toUpperCase()}</td><td class="right mono bold" style="color:#aee8ff">${fmt(moTotal)}</td><td class="right mono" style="color:#ffd080">${fmt(moVat)}</td><td class="right mono bold" style="color:#fff">${fmt(moGross)}</td><td></td></tr>
-          </tbody></table>
-        </div>
-      </div>`;
-    } else {
-      mbEl.innerHTML='';
-    }
-  }
+    // Entry rows (like project rows in staffing grid)
+    ces.forEach(c=>{
+      const gross=fcMonthlyAmountIncl(c);
+      const vat=fcMonthlyVatAmt(c);
+      const net=fcMonthlyAmount(c);
+      const freqBadge=(c.frequency||'monthly')!=='monthly'
+        ?`<span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700;margin-left:4px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:'';
+      const period=c.start_month||c.end_month
+        ?`<span style="font-size:10px;color:var(--t3)">${c.start_month||'…'}${c.end_month?' → '+c.end_month:''}</span>`:'';
+      html+=`<tr class="row-proj" style="${!c.active?'opacity:.45':''}" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
+        <td style="padding:7px 14px 7px 28px;${!c.active?'text-decoration:line-through;color:var(--t3)':''}">
+          ${esc(c.name)}
+          ${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 4px;border-radius:3px;margin-left:4px">INACTIVE</span>':''}
+        </td>
+        <td style="padding:7px 10px">${period}${freqBadge}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono)">${fmt(gross)}</td>
+        <td style="text-align:center;padding:7px 10px">${vatBadge(c)}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--amber)">${vat>0?fmt(vat):'€0'}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'}">
+          ${fmt(net)}
+        </td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--t3)">${fmt(net*12)}</td>
+        <td style="padding:7px 10px;text-align:right">
+          ${!c.active?`<button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--green)" onclick="fcReactivate(${c.id})">Reactivate</button>`:''}
+          <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
+          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="deleteFCEntry(${c.id})">✕</button>
+        </td>
+      </tr>`;
+    });
+  });
+
+  // Grand total row
+  const totalNet=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  const totalGross=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
+  const totalVat=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
+  html+=`<tr style="background:var(--navy);color:#fff;border-top:2px solid var(--bdr2)">
+    <td style="padding:9px 14px;font-weight:700;font-size:12px">TOTAL — ${sorted.filter(c=>c.active).length} active entries</td>
+    <td colspan="2" style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:600;color:#e0eeff">${fmt(totalGross)}</td>
+    <td></td>
+    <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:#ffd080">${fmt(totalVat)}</td>
+    <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:800;color:#aee8ff;font-size:13px">${fmt(totalNet)}</td>
+    <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:#aee8ff">${fmt(totalNet*12)}</td>
+    <td></td>
+  </tr>`;
+
+  html+=`</tbody></table></div>`;
+  cardsEl.innerHTML=html;
+  const gt=document.getElementById('fc-grand-total-card');if(gt)gt.innerHTML='';
 }
 
 
 // ── FC View toggle ────────────────────────────────────────────────────────
+function fcDeleteCatModal(cat){
+  const uses=S.fixedCosts.filter(c=>c.category===cat).length;
+  if(uses===0) deleteCategory(cat);
+  else deleteCategoryConfirm(cat,uses);
+}
+function fcAddEntryForCat(cat){
+  fcAddEntryModal(cat);
+}
 function setFCView(v){
   S.fcView=v;
   renderFixedCosts();
@@ -7073,17 +7128,20 @@ async function saveFixedCost(id){
   }
 
   // Step 2: Update in memory immediately with the exact values the user set
-  // Do NOT call _normFixedCosts after this — that would re-decode stale notes from Supabase
+  const _savedVals={
+    name:data.name, category:data.category, amount:data.amount,
+    vat_pct:data.vat_pct, vat_type:data.vat_type, active:data.active,
+    notes:notesEncoded, start_month:data.start_month||null, end_month:data.end_month||null,
+    frequency:data.frequency, frequency_month:data.frequency_month
+  };
   if(id){
     const idx=S.fixedCosts.findIndex(c=>parseInt(c.id)===parseInt(id));
-    if(idx>=0){
-      Object.assign(S.fixedCosts[idx],{
-        name:data.name, category:data.category, amount:data.amount,
-        vat_pct:data.vat_pct, vat_type:data.vat_type, active:data.active,
-        notes:notesEncoded, start_month:data.start_month||null, end_month:data.end_month||null,
-        frequency:data.frequency, frequency_month:data.frequency_month
-      });
-    }
+    if(idx>=0) Object.assign(S.fixedCosts[idx],_savedVals);
+    // Store as local override so navigate() doesn't overwrite with stale Supabase data
+    if(!window._fcLocalOverrides) window._fcLocalOverrides={};
+    window._fcLocalOverrides[String(parseInt(id))]=_savedVals;
+    // Clear override after 10 seconds (Supabase should have it by then)
+    setTimeout(()=>{if(window._fcLocalOverrides)delete window._fcLocalOverrides[String(parseInt(id))];},10000);
   } else {
     S.fixedCosts.push({...data, id:Date.now(), notes:notesEncoded});
   }
@@ -9260,74 +9318,102 @@ document.addEventListener('keydown',function(e){
 });
 
 async function init(){
-  // Guard: only run if authenticated and NOT employee (employee view has its own init)
   if(!AUTH.isAuthenticated())return;
   if(AUTH.isEmployee()||AUTH.isStaffOnly())return;
-  // PINs already synced at startup (before auth screen showed)
-  // Always force fresh Supabase load on login — Supabase is primary source of truth
-  DB._store = null; // clear cache so supaLoadAll fetches fresh data
-  var _supaOk = false;
-  try { _supaOk = await supaLoadAll(); } catch(e) { console.warn('supaLoadAll failed:', e); }
-  if(_supaOk) _SUPA_ONLINE = true; // ensure writes go to Supabase
-  // Update data source indicator
-  var _dsEl = document.getElementById('nav-data-source');
-  if(_dsEl) {
-    if(_supaOk) {
-      _dsEl.innerHTML = '<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
-    } else {
-      _dsEl.innerHTML = '<span style="color:rgba(255,180,50,.6)">● Local data only</span><br><span style="font-size:8px;opacity:.7">Push to Supabase to sync</span>';
+
+  DB._store=null;
+  const _dsEl=document.getElementById('nav-data-source');
+  if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
+
+  // ── Load ALL tables directly from Supabase in parallel ──────────────────────
+  // Skip supaLoadAll (too complex, too many failure points).
+  // Direct _supaReq calls work reliably from the browser.
+  const TABLES=['fixed_costs','projects','employees','staffing','vacations',
+    'sick_leave','bank_transactions','invoices','future_costs',
+    'partner_invoices','cashflow_months','external_costs','settings'];
+
+  let _supaOk=false;
+  if(location.protocol!=='file:'){
+    try{
+      const results=await Promise.all(
+        TABLES.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null))
+      );
+      const idx=(t)=>TABLES.indexOf(t);
+      const get=(t)=>results[idx(t)];
+
+      // Check if at least fixed_costs or projects came through
+      _supaOk=!!(get('fixed_costs')||get('projects')||get('employees'));
+
+      if(_supaOk){
+        _SUPA_ONLINE=true;
+        // Write all results to localStorage AND S.* in one shot
+        const store=DB._gs();
+        const map={
+          fixed_costs:'fixed_costs', projects:'projects', employees:'employees',
+          staffing:'staffing', vacations:'vacations', sick_leave:'sick_leave',
+          bank_transactions:'bank_transactions', invoices:'invoices',
+          future_costs:'future_costs', partner_invoices:'partner_invoices',
+          cashflow_months:'cashflow_months', external_costs:'external_costs'
+        };
+        Object.entries(map).forEach(([table,storeKey])=>{
+          const rows=get(table);
+          if(rows&&rows.length>0) store[storeKey]=rows;
+        });
+        DB._sv(); DB._store=null;
+
+        // Handle settings separately (fc_date_overrides, starting_balance)
+        const settings=get('settings')||[];
+        if(settings.length>0&&store.settings){
+          settings.forEach(s=>{
+            const idx2=store.settings.findIndex(x=>x.key===s.key);
+            if(idx2>=0)store.settings[idx2].value=s.value;
+            else store.settings.push(s);
+          });
+          DB._sv(); DB._store=null;
+        }
+      }
+    }catch(e){
+      console.error('[init] Supabase load failed:',e);
     }
   }
+
+  // Load from localStorage into S.*
   await loadData();
-  // Always ensure fixed_costs are fresh from Supabase and normalized
-  try{
-    const _fcInit=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
-    if(_fcInit&&_fcInit.length>0){
-      const _n=c=>{c.active=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined)?1:0;c.id=parseInt(c.id)||c.id;};
-      _normFixedCosts(_fcInit);
-      // Silently patch any entries with missing category directly in Supabase
-      // This runs once per session and permanently fixes Stein etc.
-      const _missingCat=_fcInit.filter(c=>!c.category||c.category.trim()===''||c.category==='Uncategorised');
-      for(const c of _missingCat){
+
+  // Normalize fixed_costs
+  _normFixedCosts(S.fixedCosts||[]);
+
+  // Patch missing categories silently
+  if(_supaOk&&S.fixedCosts.length){
+    S.fixedCosts.filter(c=>!c.category||c.category.trim()===''||c.category==='Uncategorised')
+      .forEach(c=>{
         c.category='Loonkosten';
         _supaReq('PATCH','fixed_costs',{category:'Loonkosten'},'?id=eq.'+c.id).catch(()=>{});
-      }
-      S.fixedCosts=_fcInit;
+      });
+  }
+
+  // Persist fixed_costs to localStorage if loaded from Supabase
+  if(S.fixedCosts.length){
+    try{const st=DB._gs();st.fixed_costs=S.fixedCosts;DB._sv();DB._store=null;}catch(e){}
+  }
+
+  // Parse cashflow notes
+  if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
+
+  // Update nav indicator
+  if(_dsEl){
+    if(_supaOk){
+      _dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
+    }else{
+      _dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Local data only</span>'
+        +'<br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry connection</span>';
     }
-  }catch(e){}
-  // Silently remove staffing rows for deleted projects on startup
-  await cleanOrphanedStaffing(false);
-  // Ensure cashflow_months is populated
-  if(!S.cashflowMonths||S.cashflowMonths.length===0){
-    try{
-      const cfRows=await _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc');
-      if(cfRows&&cfRows.length>0){
-        S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);
-        const st=DB._gs();st.cashflow_months=cfRows;DB._sv();DB._store=null;
-      }
-    }catch(e){}
   }
-  // Push staffing notes to Supabase so team link can see them
+
+  // Background tasks
+  cleanOrphanedStaffing(false).catch(()=>{});
   if(S.staffing&&S.staffing.some(s=>s.note)) _staffingNotesPush();
-  // Push fc_date_overrides to Supabase if any fixed costs have start/end months
-  // This ensures mobile devices get the date overrides too
-  if(S.fixedCosts&&S.fixedCosts.some(fc=>fc.start_month||fc.end_month)){
-    _fcSaveDateOverrides();
-    // Also encode start/end month into notes field in Supabase (guaranteed cross-device)
-    S.fixedCosts.forEach(async fc=>{
-      if(fc.start_month||fc.end_month){
-        try{
-          const notesBase=(fc.notes||'').replace(/\|\|SM:[^|]*\|\||\|\|EM:[^|]*\|\|/g,'').trim();
-          let enc=notesBase;
-          if(fc.start_month)enc+='||SM:'+fc.start_month+'||';
-          if(fc.end_month)enc+='||EM:'+fc.end_month+'||';
-          if(enc!==(fc.notes||'')){
-            await _supaReq('PATCH','fixed_costs',{notes:enc},'?id=eq.'+fc.id);
-          }
-        }catch(e){}
-      }
-    });
-  }
+
   renderDashboard();
   S.schedWeek=toWeekKey(new Date());
 }
@@ -9415,6 +9501,27 @@ async function doDeleteStaffingEntries(){
   renderStaffing();renderDashboard();
   if(typeof renderEmployeeView==='function')renderEmployeeView();
   showToast(`✓ Deleted ${done} entries${failed?' ('+failed+' failed)':''}`);
+}
+
+// Retry Supabase connection — called from nav indicator when offline
+async function retrySupabaseConnection(){
+  const _dsEl=document.getElementById('nav-data-source');
+  if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
+  DB._store=null;
+  var ok=false;
+  try{ok=await supaLoadAll();}catch(e){}
+  if(ok){
+    _SUPA_ONLINE=true;
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
+    await loadData();
+    // Reload current page
+    const activePage=document.querySelector('.page.active')?.id?.replace('page-','');
+    if(activePage)renderPage(activePage);
+    showToast('✓ Connected to Supabase','success');
+  }else{
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Still offline</span><br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry</span>';
+    showToast('Cannot reach Supabase — check connection','error');
+  }
 }
 
 async function cleanOrphanedStaffing(showUI=true){
