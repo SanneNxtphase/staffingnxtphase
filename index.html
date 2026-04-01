@@ -6009,10 +6009,13 @@ function fcActiveInMonth(c,y,m){
   return true;
 }
 
+function fcIsActive(c){
+  return !(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined);
+}
 function fcInDateRange(c,y,m){
   // Returns true if this cost is ACTIVE in this month's date range
   // Robust active check — handles boolean true/false, integer 1/0, string, null
-  const isActive=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined);
+  const isActive=fcIsActive(c);
   if(!isActive)return false;
   const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
   if(moStr){
@@ -6188,6 +6191,20 @@ async function fcFixUncategorised(){
   showToast(`✓ ${done} entries → Loonkosten`);
 }
 
+function fcValidateMath(entries){
+  const issues=[];
+  (entries||[]).forEach(c=>{
+    const gross=fcMonthlyAmountIncl(c);
+    const vat=fcMonthlyVatAmt(c);
+    const net=fcMonthlyAmount(c);
+    const delta=Math.abs((net+vat)-gross);
+    if(delta>0.02){
+      issues.push({id:c.id,name:c.name||'(unnamed)',delta:Number(delta.toFixed(2)),gross,vat,net});
+    }
+  });
+  return issues;
+}
+
 function renderFixedCosts(){
   _normFixedCosts(S.fixedCosts||[]);
   const fActiveEl=document.getElementById('fc-filter-active');
@@ -6202,8 +6219,8 @@ function renderFixedCosts(){
   const sMode=sortEl?.value||'cat';
 
   let allEntries=S.fixedCosts.filter(c=>{
-    if(activeFilter==='active'&&c.active!==1)return false;
-    if(activeFilter==='inactive'&&c.active===1)return false;
+    if(activeFilter==='active'&&!fcIsActive(c))return false;
+    if(activeFilter==='inactive'&&fcIsActive(c))return false;
     if(monthFilter){const[mfy,mfm]=monthFilter.split('-').map(Number);if(!fcInDateRange(c,mfy,mfm))return false;}
     if(fCat&&(c.category||'Uncategorised')!==fCat)return false;
     if(fVat&&(c.vat_type||'incl')!==fVat)return false;
@@ -6232,6 +6249,7 @@ function renderFixedCosts(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
   const tNetThisMonth=fixedMonthly(_y,_m);
   const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
+  const calcIssues=fcValidateMath(thisMonthEntries);
   const tGrossThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
   const tVatThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   const kpiEl=document.getElementById('fc-grand-kpis');
@@ -6277,10 +6295,10 @@ function renderFixedCosts(){
   }
 
   // ── STAFFING-GRID STYLE TABLE ──────────────────────────────────────────────
-  const activeTotal=sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0);
+  const activeTotal=sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyAmount(c),0);
 
-  let html=`<div style="overflow-x:auto">
-  <table style="width:100%;border-collapse:collapse;font-size:12px">
+  let html=`${calcIssues.length?`<div style="margin:0 0 12px 0;padding:10px 14px;border:1px solid rgba(245,158,11,.25);background:#fff8eb;border-radius:10px;color:#7a4b00;font-size:12px;font-weight:600">Calculation audit: ${calcIssues.length} entr${calcIssues.length===1?'y has':'ies have'} a rounding mismatch larger than €0.02. Open browser console for details.</div>`:''}<div style="overflow-x:auto;border:1px solid var(--bdr2);border-radius:12px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.04)">
+  <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:12px;background:#fff">
   <thead><tr style="background:var(--bg2);border-bottom:2px solid var(--bdr2)">
     <th style="text-align:left;padding:8px 14px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;min-width:200px">Cost Name</th>
     <th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px">Period</th>
@@ -6296,7 +6314,7 @@ function renderFixedCosts(){
   cats.forEach(cat=>{
     const ces=grouped[cat]||[];
     if(!ces.length)return;
-    const activeCes=ces.filter(c=>c.active);
+    const activeCes=ces.filter(c=>fcIsActive(c));
     const cGross=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
     const cVat=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
     const cNet=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
@@ -6304,7 +6322,7 @@ function renderFixedCosts(){
     const barW=activeTotal>0?Math.round(cNet/activeTotal*100):0;
 
     // Category header row (like employee row in staffing grid)
-    html+=`<tr class="row-emp" style="cursor:default">
+    html+=`<tr class="row-emp" style="cursor:default;background:#f8fbff">
       <td style="padding:9px 14px">
         <span style="font-weight:700;font-size:13px;color:var(--navy)">${esc(cat)}</span>
         <span style="font-size:10px;color:var(--t3);margin-left:6px">${ces.length} entr${ces.length===1?'y':'ies'}</span>
@@ -6312,11 +6330,11 @@ function renderFixedCosts(){
         <div style="margin-top:4px;height:3px;width:${Math.min(barW,100)}%;background:var(--blue);border-radius:2px;opacity:.4;max-width:120px"></div>
       </td>
       <td></td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:600">${cGross>0?fmt(cGross):''}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:700;background:#f8fbff;color:var(--navy)">${cGross>0?fmt(cGross):''}</td>
       <td></td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--amber)">${cVat>0?fmt(cVat):''}</td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(cNet)}</td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--t3)">${fmt(cNet*12)}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--navy);background:#f8fbff;font-weight:700">${cVat>0?fmt(cVat):''}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:800;color:var(--navy);background:#f8fbff">${fmt(cNet)}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--navy);background:#f8fbff;font-weight:700">${fmt(cNet*12)}</td>
       <td style="padding:9px 10px;text-align:right">
         <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcAddEntryForCat('${esc(cat)}')">+ Add</button>
         <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcRenameCatModal('${esc(cat)}')">Rename</button>
@@ -6333,19 +6351,19 @@ function renderFixedCosts(){
         ?`<span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700;margin-left:4px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:'';
       const period=c.start_month||c.end_month
         ?`<span style="font-size:10px;color:var(--t3)">${c.start_month||'…'}${c.end_month?' → '+c.end_month:''}</span>`:'';
-      html+=`<tr class="row-proj" style="${!c.active?'opacity:.45':''}" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
-        <td style="padding:7px 14px 7px 28px;${!c.active?'text-decoration:line-through;color:var(--t3)':''}">
+      html+=`<tr class="row-proj" style="${!fcIsActive(c)?'opacity:.55':''}" onmouseover="Array.from(this.children).forEach(td=>td.style.background='#f8fbff')" onmouseout="Array.from(this.children).forEach(td=>td.style.background='#fff')">
+        <td style="padding:7px 14px 7px 28px;background:#fff;${!fcIsActive(c)?'text-decoration:line-through;color:var(--t3)':''}">
           ${esc(c.name)}
-          ${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 4px;border-radius:3px;margin-left:4px">INACTIVE</span>':''}
+          ${!fcIsActive(c)?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 4px;border-radius:3px;margin-left:4px">INACTIVE</span>':''}
         </td>
-        <td style="padding:7px 10px">${period}${freqBadge}</td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono)">${fmt(gross)}</td>
-        <td style="text-align:center;padding:7px 10px">${vatBadge(c)}</td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--amber)">${vat>0?fmt(vat):'€0'}</td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'}">
+        <td style="padding:7px 10px;background:#fff">${period}${freqBadge}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;color:var(--navy);font-weight:700">${fmt(gross)}</td>
+        <td style="text-align:center;padding:7px 10px;background:#fff">${vatBadge(c)}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;color:var(--navy);font-weight:700">${vat>0?fmt(vat):'€0'}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;font-weight:800;color:var(--navy)">
           ${fmt(net)}
         </td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--t3)">${fmt(net*12)}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;color:var(--navy);font-weight:700">${fmt(net*12)}</td>
         <td style="padding:7px 10px;text-align:right">
           ${!c.active?`<button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--green)" onclick="fcReactivate(${c.id})">Reactivate</button>`:''}
           <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
@@ -6356,11 +6374,11 @@ function renderFixedCosts(){
   });
 
   // Grand total row
-  const totalNet=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
-  const totalGross=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
-  const totalVat=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
+  const totalNet=Math.round(sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  const totalGross=Math.round(sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
+  const totalVat=Math.round(sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   html+=`<tr style="background:var(--navy);color:#fff;border-top:2px solid var(--bdr2)">
-    <td style="padding:9px 14px;font-weight:700;font-size:12px">TOTAL — ${sorted.filter(c=>c.active).length} active entries</td>
+    <td style="padding:9px 14px;font-weight:700;font-size:12px">TOTAL — ${sorted.filter(c=>fcIsActive(c)).length} active entries</td>
     <td colspan="2" style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:600;color:#e0eeff">${fmt(totalGross)}</td>
     <td></td>
     <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:#ffd080">${fmt(totalVat)}</td>
@@ -6371,6 +6389,7 @@ function renderFixedCosts(){
 
   html+=`</tbody></table></div>`;
   cardsEl.innerHTML=html;
+  if(calcIssues.length) console.warn('Fixed Costs calculation audit mismatches',calcIssues);
   const gt=document.getElementById('fc-grand-total-card');if(gt)gt.innerHTML='';
 }
 
