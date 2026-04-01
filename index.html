@@ -476,6 +476,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div class="nav-item" onclick="lockApp()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="8" rx="1"/><path d="M5 7V5a3 3 0 016 0v2"/></svg>Lock</div>
     <div id="nav-data-source" style="padding:6px 10px;font-size:9px;color:rgba(255,255,255,.3);line-height:1.4">&#9679; Loading…</div>
     <div class="nav-item" id="nav-changepin" style="display:none" onclick="openChangePinModal()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M11 10l1 1 2-2"/></svg>Change PINs</div>
+    <div class="nav-item" id="nav-diagbtn" style="display:none" onclick="openSupaDiag()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v4M8 11v1"/></svg>Supabase Diagnostics</div>
     <div class="nav-item" onclick="openShareableView()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="4" r="2"/><circle cx="4" cy="8" r="2"/><circle cx="12" cy="12" r="2"/><path d="M6 7l4-2M6 9l4 2"/></svg>Share / Snapshot</div>
     <div class="nav-item" onclick="openMonthlyPDFModal()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 5h6M5 8h6M5 11h3"/><path d="M10 10l1.5 1.5L13 9" stroke-width="1.5"/></svg>Monthly Report PDF</div>
     <div class="nav-item" id="nav-supa-push" onclick="pushAllToSupabase()" style="color:rgba(80,200,120,.85)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 11V3M5 6l3-3 3 3M2 12v1a1 1 0 001 1h10a1 1 0 001-1v-1"/></svg>Push to Supabase</div>
@@ -3097,20 +3098,20 @@ async function saveExtCost(id){
   let ok=false;
   try{
     if(id){
-      const payload={...baseData,amount:totalAmount,week_key:startWk,week_count:weekCount};
+      const payload=_supaFilter('external_costs',{...baseData,amount:totalAmount,week_key:startWk,week_count:weekCount});
       const r=await _supaReq('PATCH','external_costs',payload,'?id=eq.'+id);
       ok=(r!==null);
       if(ok) showToast('External cost updated');
     } else if(weeks.length>1){
       let allOk=true;
       for(const wk of weeks){
-        const r=await _supaReq('POST','external_costs',{...baseData,amount:perWk,week_key:wk,week_count:weekCount});
+        const r=await _supaReq('POST','external_costs',_supaFilter('external_costs',{...baseData,amount:perWk,week_key:wk,week_count:weekCount}));
         if(!r) allOk=false;
       }
       ok=allOk;
       if(ok) showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk — total ${fmt(totalAmount)}`);
     } else {
-      const r=await _supaReq('POST','external_costs',{...baseData,amount:totalAmount,week_key:startWk||null,week_count:1});
+      const r=await _supaReq('POST','external_costs',_supaFilter('external_costs',{...baseData,amount:totalAmount,week_key:startWk||null,week_count:1}));
       ok=(r!==null);
       if(ok) showToast('External cost added');
     }
@@ -4949,7 +4950,7 @@ function modalSickLeave(v){
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-lbl">Working Days</label><input class="form-input" type="number" id="f-sl-days" value="${v?.days||''}" placeholder="Auto-calculated" step="0.5" min="0.5"></div>
-      <div class="form-group"><label class="form-lbl">Note (internal)</label><input class="form-input" id="f-sl-note" value="${esc(v?.note||'')}" placeholder="e.g. Flu" autocomplete="off"></div>
+      <div class="form-group"><label class="form-lbl">Note (internal)</label><input class="form-input" id="f-sl-note" value="${esc(v?.notes||v?.note||'')}" placeholder="e.g. Flu" autocomplete="off"></div>
     </div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn" style="background:var(--red);color:#fff;border-color:var(--red)" onclick="saveSickLeave(${v?.id||''})">Save</button></div>`;
@@ -4966,12 +4967,13 @@ async function saveSickLeave(id){
   if(ed<sd)return alert('End date must be after start date.');
   let days=parseFloat(document.getElementById('f-sl-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
-  const data={employee_id:parseInt(document.getElementById('f-sl-emp').value),start_date:sd,end_date:ed,days,note:document.getElementById('f-sl-note').value};
+  const data={employee_id:parseInt(document.getElementById('f-sl-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-sl-note').value||null};
   closeModal();
   try{
     let r;
-    if(id) r=await _supaReq('PATCH','sick_leave',data,'?id=eq.'+id);
-    else r=await _supaReq('POST','sick_leave',data);
+    const payload=_supaFilter('sick_leave',data);
+    if(id) r=await _supaReq('PATCH','sick_leave',payload,'?id=eq.'+id);
+    else r=await _supaReq('POST','sick_leave',payload);
     if(!r) showToast('⚠ Opslaan mislukt','error');
     else showToast(id?'Sick leave updated':'Sick leave registered');
   }catch(e){showToast('⚠ Opslaan mislukt','error');}
@@ -7153,7 +7155,7 @@ function modalVacation(v){
         <input class="form-input" type="number" id="f-days" min="0.5" max="30" step="0.5" value="${v?.days||''}">
         <div class="form-hint" id="f-days-hint" style="color:var(--blue)"></div>
       </div>
-      <div class="form-group"><label class="form-lbl">Note (optional)</label><input class="form-input" id="f-note" value="${esc(v?.note||'')}"></div>
+      <div class="form-group"><label class="form-lbl">Note (optional)</label><input class="form-input" id="f-note" value="${esc(v?.notes||v?.note||'')}"></div>
     </div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-purple" onclick="saveVacation(${v?.id||''})">Save</button></div>`;
@@ -7177,7 +7179,7 @@ async function saveVacation(id){
   if(ed<sd)return alert('End date must be after start date.');
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
-  const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,note:document.getElementById('f-note').value};
+  const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
   if(id)await DB.update('vacations',id,data);else await DB.insert('vacations',data);
   closeModal();await loadData();renderVacation();
 }
@@ -9640,6 +9642,8 @@ function updateRoleBadge(){
     }
   }
   if(pinNav)pinNav.style.display=AUTH.isAdmin()?'flex':'none';
+  const diagNav=document.getElementById('nav-diagbtn');
+  if(diagNav)diagNav.style.display=AUTH.isAdmin()?'flex':'none';
 }
 
 // Viewer guard — blocks write operations in Viewer mode
@@ -9657,6 +9661,63 @@ function requireAdmin(action='This action'){
 
 
 // Change PIN dialog (Admin only)
+async function openSupaDiag(){
+  const m=document.getElementById('modal-content');
+  document.getElementById('modal-overlay').classList.add('open');
+  m.innerHTML=`<div class="modal-header"><div class="modal-title">🔬 Supabase Diagnostics</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
+  <div class="modal-body"><pre id="diag-out" style="font-size:10px;line-height:1.6;background:var(--bg2);padding:12px;border-radius:6px;max-height:420px;overflow:auto;white-space:pre-wrap">Running tests…</pre></div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="runSupaDiag()">Re-run</button></div>`;
+  runSupaDiag();
+}
+async function runSupaDiag(){
+  const out=document.getElementById('diag-out');
+  if(!out)return;
+  const log=(s)=>{out.textContent+=s+'\n';out.scrollTop=out.scrollHeight;};
+  out.textContent='';
+  log('Supabase URL: '+_SUPA_URL);
+  log('Key: '+_SUPA_KEY.substring(0,20)+'…\n');
+
+  const tables=['projects','employees','staffing','fixed_costs','sick_leave','external_costs','cashflow_months','vacations','invoices','bank_transactions'];
+  for(const t of tables){
+    const r=await _supaReq('GET',t,null,'?select=id&limit=1');
+    if(r===null) log(`❌ GET ${t} → FAILED (null)`);
+    else log(`✅ GET ${t} → OK (${Array.isArray(r)?r.length:'obj'} rows)`);
+  }
+
+  // Test INSERT on sick_leave
+  log('\n--- Write test: sick_leave ---');
+  const testSL={employee_id:1,start_date:'2099-01-01',end_date:'2099-01-01',days:1,notes:'DIAG_TEST'};
+  const ins=await _supaReq('POST','sick_leave',testSL);
+  if(!ins||!ins.id) log('❌ INSERT sick_leave → FAILED (RLS blocked or schema error)');
+  else{
+    log('✅ INSERT sick_leave → OK id='+ins.id);
+    // Clean up test row
+    await _supaReq('DELETE','sick_leave',null,'?id=eq.'+ins.id);
+    log('✅ DELETE test row OK');
+  }
+
+  // Test INSERT on external_costs
+  log('\n--- Write test: external_costs ---');
+  const proj=S.projects.find(p=>p.status==='confirmed');
+  if(!proj){log('⚠ No confirmed project to test with — skipping');} else {
+    const testEC={project_id:proj.id,vendor:'DIAG_TEST',description:'test',amount:1};
+    const ins2=await _supaReq('POST','external_costs',testEC);
+    if(!ins2||!ins2.id) log('❌ INSERT external_costs → FAILED (RLS blocked or schema error)');
+    else{
+      log('✅ INSERT external_costs → OK id='+ins2.id);
+      await _supaReq('DELETE','external_costs',null,'?id=eq.'+ins2.id);
+      log('✅ DELETE test row OK');
+    }
+  }
+
+  log('\n--- Current S.* data ---');
+  log('S.sickLeave: '+S.sickLeave.length+' rows');
+  log('S.externalCosts: '+S.externalCosts.length+' rows');
+  log('S.projects: '+S.projects.length+' rows');
+  log('S.fixedCosts: '+S.fixedCosts.length+' rows');
+  log('\nDone.');
+}
+
 function openChangePinModal(){
   if(!requireAdmin('Changing PIN'))return;
   const m=document.getElementById('modal-content');
