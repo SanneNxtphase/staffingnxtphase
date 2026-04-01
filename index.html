@@ -227,6 +227,9 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 .row-draft-div td:first-child{background:var(--amber-p)!important;}
 .row-cost td{background:var(--bg3)!important;border-top:2px solid var(--bdr2);}
 .row-cost td:first-child{background:var(--bg3)!important;}
+#fc-category-cards .row-proj td{background:var(--bg)!important;}
+#fc-category-cards .row-proj:hover td{background:var(--blue-bg)!important;}
+.audit-banner{margin:0 0 12px;padding:10px 12px;border:1px solid var(--amber);background:var(--amber-p);border-radius:var(--rsm);font-size:11px;color:#7a4a0a;}
 .cell-over{background:var(--red-p)!important;}
 .cell-partial{background:var(--amber-p)!important;}
 .cell-full{background:var(--green-p)!important;}
@@ -888,7 +891,6 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>
     <span>Red cells in the staffing grid show sick days — deducted from available capacity. This page is <strong>admin only</strong> and never shown in the employee view.</span>
   </div>
-  <div id="sl-sync-banner"></div>
   <div class="kpi-row" id="sl-kpis"></div>
   <div id="sl-emp-summary"></div>
   <div class="card"><div class="table-wrap"><table>
@@ -1304,7 +1306,6 @@ const DB={
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
-var _SUPA_MISSING_TABLES = Object.create(null);
 
 function _supaHdr() {
   return {
@@ -1347,9 +1348,6 @@ async function _supaReq(method, table, body, qs, suppressToast) {
       var errText = '';
       try { errText = await r.text(); } catch(e2) {}
       console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status+': '+errText);
-      if(r.status===404){
-        _SUPA_MISSING_TABLES[table]=true;
-      }
       if(method==='PATCH'||method==='POST'||method==='DELETE'){
         var hint='';
         if(r.status===401||r.status===403) hint=' — geen schrijfrechten (RLS)';
@@ -1889,7 +1887,7 @@ var _SUPA_SCHEMA = {
   vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
-  external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_key_end','week_count','total_amount','usd_amount','usd_rate'],
+  external_costs: ['project_id','vendor','description','hours','rate','amount','date','invoice_date','status','notes','week_key','week_key_end','week_count','total_amount','usd_amount','usd_rate'],
   cashflow_months: ['month','opening','closing','notes'],
   bank_transactions: ['date','description','amount','category','type','amount_excl_vat','vat_pct','counterparty','is_fixed'],
   partner_invoices: ['project_id','amount','month','paid','notes'],
@@ -2264,6 +2262,14 @@ function _parseCFNotes(entries){
   });
   return entries;
 }
+function _normalizeExtCostRow(row){
+  if(!row) return row;
+  if(!row.date && row.invoice_date) row.date=row.invoice_date;
+  if(!row.invoice_date && row.date) row.invoice_date=row.date;
+  row.project_id=parseInt(row.project_id)||row.project_id;
+  row.id=parseInt(row.id)||row.id;
+  return row;
+}
 function getCFEntryForMonth(moStr){
   return S.cashflowMonths.find(e=>e.month===moStr)||null;
 }
@@ -2442,6 +2448,7 @@ function navigate(page,el){
       // Page is already visible (navigate() called classList.add above)
       // Show loading indicator
       const cardsEl=document.getElementById('fc-category-cards');
+  const audit=window.__NXP_AUDIT__||{issueCount:0,issues:[]};
       if(cardsEl&&!S.fixedCosts.length)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading…</div>';
       else renderFixedCosts(); // show existing data immediately
 
@@ -2544,13 +2551,21 @@ function navigate(page,el){
       renderPage(page);
       // Refresh relevant tables from Supabase based on page
       const pageTableMap={
-        sickleave:['sick_leave'],
+        dashboard:['projects','employees','staffing','fixed_costs','external_costs','cashflow_months'],
+        financial:['cashflow_months','fixed_costs','invoices','staffing','future_costs','bank_transactions','external_costs','settings'],
+        projects:['projects','external_costs','staffing','invoices'],
+        staffing:['employees','projects','staffing','vacations','sick_leave','settings'],
+        schedule:['employees','projects','staffing','vacations','sick_leave','settings'],
+        sickleave:['sick_leave','employees'],
         vacation:['vacations','employees'],
+        employees:['employees','staffing','vacations','sick_leave'],
         invoices:['invoices','projects'],
         partner:['partner_invoices','projects'],
-        cashflow:['cashflow_months'],
+        fixedcosts:['fixed_costs','settings'],
+        extcosts:['external_costs','projects'],
+        cashflow:['cashflow_months','settings'],
         forecast:['future_costs','projects'],
-        history:['projects','employees','staffing','invoices'],
+        history:['projects','employees','staffing','invoices','fixed_costs','external_costs','cashflow_months'],
       };
       const tables=pageTableMap[page]||[];
       if(!tables.length||location.protocol==='file:') return;
@@ -2558,15 +2573,17 @@ function navigate(page,el){
         const results=await Promise.all(tables.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null)));
         const tableToS={sick_leave:'sickLeave',vacations:'vacations',employees:'employees',
           invoices:'invoices',projects:'projects',partner_invoices:'partnerInvoices',
-          cashflow_months:'cashflowMonths',future_costs:'futureCosts',staffing:'staffing'};
+          cashflow_months:'cashflowMonths',future_costs:'futureCosts',staffing:'staffing',
+          fixed_costs:'fixedCosts',external_costs:'externalCosts',bank_transactions:'transactions'};
         const store=DB._gs();
         let changed=false;
         tables.forEach((t,i)=>{
           const rows=results[i];
-          if(!rows||!rows.length)return;
+          if(rows===null||rows===undefined)return;
           const sKey=tableToS[t];
-          // Normalize IDs
-          const norm=rows.map(r=>({...r,id:parseInt(r.id)||r.id}));
+          let norm=(rows||[]).map(r=>({...r,id:parseInt(r.id)||r.id}));
+          if(t==='fixed_costs') norm=_normFixedCosts(norm);
+          if(t==='external_costs') norm=norm.map(_normalizeExtCostRow);
           if(sKey&&S[sKey]!==undefined){ S[sKey]=norm; changed=true; }
           store[t]=norm;
         });
@@ -2610,14 +2627,14 @@ async function loadData(){
       if(pr!==null){S.projects=(pr||[]).map(p=>({...p,id:parseInt(p.id)||p.id,is_partner:p.is_partner||0,recurring_amount:p.recurring_amount||0,recurring_freq:p.recurring_freq||'monthly'}));anyLoaded=true;}
       if(em!==null){S.employees=(em||[]).map(e=>({...e,id:parseInt(e.id)||e.id}));anyLoaded=true;}
       if(va!==null){S.vacations=(va||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));anyLoaded=true;}
-      if(sl!==null){S.sickLeave=(sl||[]).map(normalizeSickLeaveRow);anyLoaded=true;}
+      if(sl!==null){S.sickLeave=(sl||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));anyLoaded=true;}
       if(fc!==null){S.fixedCosts=fc||[];_normFixedCosts(S.fixedCosts);anyLoaded=true;}
       if(tx!==null){S.transactions=(tx||[]).map(t=>({...t,id:parseInt(t.id)||t.id}));anyLoaded=true;}
       if(inv!==null){S.invoices=(inv||[]).map(i=>({...i,id:parseInt(i.id)||i.id,project_id:parseInt(i.project_id)||i.project_id}));anyLoaded=true;}
       if(fut!==null){S.futureCosts=(fut||[]).map(f=>({...f,id:parseInt(f.id)||f.id}));anyLoaded=true;}
       if(pi!==null){S.partnerInvoices=(pi||[]).map(p=>({...p,id:parseInt(p.id)||p.id}));anyLoaded=true;}
       if(cfm!==null){S.cashflowMonths=cfm||[];_parseCFNotes(S.cashflowMonths);anyLoaded=true;}
-      if(ec!==null){S.externalCosts=(ec||[]).map(e=>({...e,id:parseInt(e.id)||e.id,project_id:parseInt(e.project_id)||e.project_id}));anyLoaded=true;}
+      if(ec!==null){S.externalCosts=(ec||[]).map(e=>_normalizeExtCostRow({...e}));anyLoaded=true;}
 
       if(st!==null){
         // Deduplicate staffing: keep latest row per employee+project+week
@@ -2666,6 +2683,7 @@ async function loadData(){
         // Update nav indicator — live
         try{const d=document.getElementById('nav-data-source');if(d)d.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';}catch(e){}
         console.log('[loadData] Live — projects:'+S.projects.length+' staffing:'+S.staffing.length+' fc:'+S.fixedCosts.length);
+        try{ runDataIntegrityAudit(); }catch(e){}
         return;
       }
     }catch(e){
@@ -2683,7 +2701,7 @@ async function loadData(){
   S.projects=(pr||[]).map(p=>({...p,id:parseInt(p.id)||p.id}));
   S.employees=(em||[]).map(e=>({...e,id:parseInt(e.id)||e.id}));
   S.vacations=(va||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));
-  S.sickLeave=(sl||[]).map(normalizeSickLeaveRow);
+  S.sickLeave=(sl||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));
   S.fixedCosts=fc||[];_normFixedCosts(S.fixedCosts);
   S.transactions=(tx||[]).map(t=>({...t,id:parseInt(t.id)||t.id}));
   S.invoices=(inv||[]).map(i=>({...i,id:parseInt(i.id)||i.id,project_id:parseInt(i.project_id)||i.project_id}));
@@ -2697,31 +2715,6 @@ async function loadData(){
   S.staffing=Array.from(staffMap.values());
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
   try{const sn=JSON.parse(localStorage.getItem('sp-staff-notes')||'{}');S.staffing.forEach(s=>{const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;if(sn[k])s.note=sn[k];});}catch(e){}
-}
-var _AUTO_SYNC_TIMER=null;
-var _AUTO_SYNC_BUSY=false;
-async function autoSyncActivePage(force){
-  if(_AUTO_SYNC_BUSY||location.protocol==='file:') return;
-  const active=document.querySelector('.page.active');
-  if(!active) return;
-  const page=active.id.replace('page-','');
-  const syncPages=new Set(['sickleave','vacation','staffing','schedule','employees','projects','invoices','partner','cashflow','forecast','fixedcosts','extcosts','history','dashboard','financial']);
-  if(!syncPages.has(page)) return;
-  _AUTO_SYNC_BUSY=true;
-  try{
-    await loadData();
-    renderPage(page);
-  }catch(e){
-    console.warn('[autoSync] '+page+' failed:',e);
-  }finally{
-    _AUTO_SYNC_BUSY=false;
-  }
-}
-function startAutoSync(){
-  if(_AUTO_SYNC_TIMER||location.protocol==='file:') return;
-  _AUTO_SYNC_TIMER=setInterval(function(){ autoSyncActivePage(false); }, 15000);
-  window.addEventListener('focus', function(){ autoSyncActivePage(true); });
-  document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') autoSyncActivePage(true); });
 }
 function saveVatOverrides(){try{localStorage.setItem('sp-vat-overrides',JSON.stringify(S.vatOverrides));}catch(e){}}
 
@@ -2822,7 +2815,7 @@ function renderExtCosts(){
 
   let rows=S.externalCosts||[];
   if(filterProj) rows=rows.filter(e=>e.project_id==filterProj);
-  rows=[...rows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  rows=[...rows].map(e=>_normalizeExtCostRow({...e})).sort((a,b)=>((b.date||b.invoice_date||'').localeCompare(a.date||a.invoice_date||'')));
 
   // KPIs
   const total=rows.reduce((s,e)=>s+parseFloat(e.amount||0),0);
@@ -2854,7 +2847,7 @@ function renderExtCosts(){
       <td class="right text-muted">${e.rate?fmt(e.rate):'—'}</td>
       <td class="right bold" style="color:var(--orange,#f97316)">${fmt(parseFloat(e.amount||0))}${e.usd_amount?`<div style="font-size:9px;color:var(--t3);font-weight:400">$${parseFloat(e.usd_amount).toFixed(0)} @ ${parseFloat(e.usd_rate||0.92).toFixed(4)}</div>`:''}</td>
       <td>${weekLbl}</td>
-      <td class="text-muted" style="font-size:11px">${e.date||'—'}</td>
+      <td class="text-muted" style="font-size:11px">${e.date||e.invoice_date||'—'}</td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('extcost',${e.id})">Edit</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteExtCost(${e.id})">Delete</button>
@@ -3118,6 +3111,9 @@ async function saveExtCost(id){
     hours:parseFloat(document.getElementById('ec-hours')?.value)||null,
     rate:parseFloat(document.getElementById('ec-rate')?.value)||null,
     date:document.getElementById('ec-date')?.value||null,
+    invoice_date:document.getElementById('ec-date')?.value||null,
+    status:'open',
+    notes:(document.getElementById('ec-desc')?.value||'').trim(),
     total_amount:totalAmount,
     week_key_end:endWk||startWk||null,
     usd_amount:parseFloat(document.getElementById('ec-usd')?.value)||null,
@@ -3183,11 +3179,11 @@ function toggleProjectDetail(id, pid){
   const margin = p.revenue - cost - extTotal;
   const mg = p.revenue>0?(margin/p.revenue*100):0;
   const mc = mg>40?'var(--green)':mg>10?'var(--blue)':'var(--red)';
-  const extRows = extCosts.length ? extCosts.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(e=>`
+  const extRows = extCosts.length ? extCosts.map(e=>_normalizeExtCostRow({...e})).sort((a,b)=>((b.date||b.invoice_date||'').localeCompare(a.date||a.invoice_date||''))).map(e=>`
     <tr style="background:var(--bg2);font-size:11px">
       <td style="padding:5px 8px 5px 32px;color:var(--orange,#f97316)">${esc(e.vendor||'—')}</td>
       <td style="padding:5px 8px;color:var(--t2)">${esc(e.description||'—')}</td>
-      <td style="padding:5px 8px;color:var(--t3)">${e.date||'—'}</td>
+      <td style="padding:5px 8px;color:var(--t3)">${e.date||e.invoice_date||'—'}</td>
       <td style="padding:5px 8px;text-align:right;font-weight:600;color:var(--orange,#f97316)">${fmt(parseFloat(e.amount||0))}</td>
       <td style="padding:5px 8px"><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('extcost',${e.id})">Edit</button>
@@ -3259,14 +3255,16 @@ function projExtCostMonth(pid,mStr){
   // mStr = 'YYYY-MM'
   return (S.externalCosts||[]).filter(e=>{
     if(e.project_id!==pid&&e.project_id!=pid)return false;
-    if(!e.date)return true; // no date = always counts
-    return e.date.substring(0,7)===mStr;
+    const d=e.date||e.invoice_date;
+    if(!d)return true; // no date = always counts
+    return d.substring(0,7)===mStr;
   }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function totalExtCostMonth(mStr){
   return (S.externalCosts||[]).filter(e=>{
-    if(!e.date)return false;
-    return e.date.substring(0,7)===mStr;
+    const d=e.date||e.invoice_date;
+    if(!d)return false;
+    return d.substring(0,7)===mStr;
   }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function renderDashboard(){
@@ -3293,7 +3291,7 @@ function renderDashboard(){
     <div class="kpi ${profit>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${profit>=0?'green':'red'}">${fmtS(profit)}</div><div class="kpi-sub">Rev − Staff${extCostThisMonth>0?' − Ext':''}</div></div>
     <div class="kpi an"><div class="kpi-lbl">Active Projects</div><div class="kpi-val">${S.projects.filter(p=>{if(p.status!=='confirmed')return false;const weeks=getWeeksInMonth(y,m);return projectWkKeys(p).some(w=>weeks.includes(w));}).length}</div><div class="kpi-sub">${monthLbl(y,m)}</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Fixed Costs /mo</div><div class="kpi-val amber">${fmtS(fc)}</div><div class="kpi-sub">Excl. VAT · See Company Dashboard</div></div>
-    <div class="kpi ${profit>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${profit>=0?'green':'red'}">${fmtS(profit)}</div><div class="kpi-sub">Rev − staffing only · ${margin.toFixed(1)}%</div></div>`;
+    <div class="kpi ${margin>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin %</div><div class="kpi-val ${margin>=0?'green':'red'}">${margin.toFixed(1)}%</div><div class="kpi-sub">Revenue vs staffing${extCostThisMonth>0?' + ext costs':''}</div></div>`;
   document.getElementById('dash-draft-kpis').innerHTML=draftRev>0||allDraftRev>0?`
     <div class="draft-kpi"><div class="kpi-lbl">Draft Rev (this month)</div><div class="kpi-val amber">${fmtS(draftRev)}</div></div>
     <div class="draft-kpi"><div class="kpi-lbl">All Draft Projects</div><div class="kpi-val">${fmtS(allDraftRev)}</div><div class="kpi-sub">Total pipeline</div></div>
@@ -4965,75 +4963,6 @@ function renderSchedule(){
 }
 
 
-
-const SUPABASE_SICK_LEAVE_SQL = `create table if not exists public.sick_leave (
-  id bigint generated by default as identity primary key,
-  employee_id bigint not null references public.employees(id) on delete cascade,
-  start_date date not null,
-  end_date date not null,
-  days numeric(8,2) not null default 0,
-  notes text null,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists sick_leave_employee_idx on public.sick_leave(employee_id);
-create index if not exists sick_leave_start_idx on public.sick_leave(start_date);
-create index if not exists sick_leave_end_idx on public.sick_leave(end_date);
-
-alter table public.sick_leave enable row level security;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public'
-      and tablename = 'sick_leave'
-      and policyname = 'Allow anon full access to sick_leave'
-  ) then
-    create policy "Allow anon full access to sick_leave"
-      on public.sick_leave
-      for all
-      to anon
-      using (true)
-      with check (true);
-  end if;
-end $$;`;
-
-function isSickLeaveTableMissing(){
-  return !!_SUPA_MISSING_TABLES['sick_leave'];
-}
-
-async function saveSickLeaveLocal(id,data){
-  if(id) await DB.update('sick_leave',id,data);
-  else await DB.insert('sick_leave',data);
-  _SUPA_MISSING_TABLES['sick_leave']=true;
-}
-
-async function deleteSickLeaveLocal(id){
-  await DB.delete('sick_leave',id);
-  _SUPA_MISSING_TABLES['sick_leave']=true;
-}
-
-function downloadSickLeaveSchema(){
-  const blob=new Blob([SUPABASE_SICK_LEAVE_SQL],{type:'text/sql;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;
-  a.download='supabase_sick_leave_schema.sql';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); },0);
-}
-
-function copySickLeaveSchema(){
-  const done=function(){ showToast('Sick Leave SQL copied'); };
-  if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(SUPABASE_SICK_LEAVE_SQL).then(done).catch(function(){ window.prompt('Copy this SQL:', SUPABASE_SICK_LEAVE_SQL); });
-  }else{
-    window.prompt('Copy this SQL:', SUPABASE_SICK_LEAVE_SQL);
-  }
-}
-
 // ══ SICK LEAVE ══
 function modalSickLeave(v){
   const empOpts=S.employees.filter(e=>e.name&&e.name!=='Vakantie').map(e=>`<option value="${e.id}"${v&&v.employee_id===e.id?' selected':''}>${esc(e.name)}</option>`).join('');
@@ -5058,39 +4987,6 @@ function slCalcDays(){
   const s=document.getElementById('f-sl-start')?.value,e=document.getElementById('f-sl-end')?.value;
   if(s&&e){const d=countWorkdays(s,e);const el=document.getElementById('f-sl-days');if(el&&!el.value)el.value=d;}
 }
-function normalizeSickLeaveRow(v){
-  if(!v) return v;
-  const row={...v};
-  row.id=parseInt(row.id)||row.id;
-  if(row.employee_id!=null&&row.employee_id!==''){
-    row.employee_id=parseInt(row.employee_id)||row.employee_id;
-  }else if(row.employee){
-    const emp=S.employees.find(e=>(e.name||'').trim().toLowerCase()===String(row.employee).trim().toLowerCase());
-    row.employee_id=emp?emp.id:null;
-  }
-  row.start_date=row.start_date||row.date||'';
-  row.end_date=row.end_date||row.start_date||row.date||'';
-  row.notes=row.notes??row.note??null;
-  if(row.days==null||row.days===''){
-    row.days=(row.start_date&&row.end_date)?countWorkdays(row.start_date,row.end_date):1;
-  }
-  return row;
-}
-async function saveSickLeaveRemote(id,data){
-  const primary=_supaFilter('sick_leave',data);
-  let r=null;
-  if(id) r=await _supaReq('PATCH','sick_leave',primary,'?id=eq.'+id,true);
-  else r=await _supaReq('POST','sick_leave',primary,null,true);
-  if(r) return {ok:true,mode:'primary',result:r};
-
-  const emp=S.employees.find(e=>e.id===data.employee_id||e.id==data.employee_id);
-  const legacy={employee:emp?.name||'',start_date:data.start_date,end_date:data.end_date,note:data.notes||null};
-  if(id) r=await _supaReq('PATCH','sick_leave',legacy,'?id=eq.'+id,true);
-  else r=await _supaReq('POST','sick_leave',legacy,null,true);
-  if(r) return {ok:true,mode:'legacy',result:r};
-
-  return {ok:false};
-}
 async function saveSickLeave(id){
   const sd=document.getElementById('f-sl-start').value;
   if(!sd)return alert('Start date required.');
@@ -5102,50 +4998,32 @@ async function saveSickLeave(id){
   const data={employee_id:parseInt(document.getElementById('f-sl-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-sl-note').value||null};
   closeModal();
   try{
-    let remote=null;
-    if(!isSickLeaveTableMissing() && location.protocol!=='file:'){
-      remote=await saveSickLeaveRemote(id,data);
-    }
-    if(remote&&remote.ok){
-      if(remote.mode==='legacy') showToast(id?'Sick leave updated':'Sick leave registered');
-      else showToast(id?'Sick leave updated':'Sick leave registered');
-    } else {
-      await saveSickLeaveLocal(id,data);
-      showToast((id?'Sick leave locally updated':'Sick leave locally saved')+' — run the SQL file once in Supabase to enable cloud sync','warning');
-    }
+    const payload=_supaFilter('sick_leave',data);
+    console.log('[saveSickLeave] payload:', JSON.stringify(payload));
+    let r;
+    if(id) r=await _supaReq('PATCH','sick_leave',payload,'?id=eq.'+id);
+    else r=await _supaReq('POST','sick_leave',payload);
+    console.log('[saveSickLeave] result:', JSON.stringify(r));
+    if(!r) showToast('⚠ Sick leave opslaan mislukt — zie Supabase Diagnostics in sidebar','error');
+    else showToast(id?'Sick leave updated':'Sick leave registered');
   }catch(e){
     console.error('[saveSickLeave] exception:',e);
-    await saveSickLeaveLocal(id,data);
-    showToast('Sick leave lokaal opgeslagen — Supabase sync failed','warning');
+    showToast('⚠ Opslaan mislukt: '+e.message,'error');
   }
-  await loadData();renderSickLeave();renderPage('sickleave');
+  await loadData();renderSickLeave();renderPage('schedule');
 }
 async function deleteSickLeave(id){
   if(!confirm('Delete this sick leave entry?'))return;
   try{
-    let r=null;
-    if(!isSickLeaveTableMissing() && location.protocol!=='file:'){
-      r=await _supaReq('DELETE','sick_leave',null,'?id=eq.'+id,true);
-    }
-    if(r){
-      showToast('Sick leave deleted');
-    } else {
-      await deleteSickLeaveLocal(id);
-      showToast('Sick leave locally deleted — run the SQL file once in Supabase to enable cloud sync','warning');
-    }
-  }catch(e){
-    await deleteSickLeaveLocal(id);
-    showToast('Sick leave lokaal verwijderd — Supabase sync failed','warning');
-  }
-  await loadData();renderSickLeave();renderPage('sickleave');
+    const r=await _supaReq('DELETE','sick_leave',null,'?id=eq.'+id);
+    if(!r) showToast('⚠ Verwijderen mislukt','error');
+    else showToast('Sick leave deleted');
+  }catch(e){showToast('⚠ Verwijderen mislukt','error');}
+  await loadData();renderSickLeave();renderPage('schedule');
 }
 function renderSickLeave(){
   const today=new Date().toISOString().split('T')[0];
   const active=S.sickLeave.filter(v=>v.start_date<=today&&v.end_date>=today);
-  const bannerEl=document.getElementById('sl-sync-banner');
-  if(bannerEl){
-    bannerEl.innerHTML=isSickLeaveTableMissing()?`<div class="alert alert-warning" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div><strong>Sick Leave draait nu lokaal.</strong> De Supabase tabel <span class="mono">sick_leave</span> ontbreekt of is niet schrijfbaar. Download of kopieer het SQL-bestand en run het eenmalig in Supabase SQL Editor.</div><div class="btn-group"><button class="btn btn-sm" onclick="copySickLeaveSchema()">Copy SQL</button><button class="btn btn-sm btn-primary" onclick="downloadSickLeaveSchema()">Download SQL</button></div></div>`:'';
-  }
   const totalDays=S.sickLeave.reduce((s,v)=>s+parseFloat(v.days||0),0);
   // Calculate costs per entry and totals
   const totalCost=S.sickLeave.reduce((s,v)=>{
@@ -5204,7 +5082,7 @@ function renderSickLeave(){
       <td class="right bold">${v.days}</td>
       <td class="right bold" style="color:var(--red)">${fmt(cost)}</td>
       <td style="font-size:11px;color:var(--t3)">${wkLabel}</td>
-      <td style="font-size:11px;color:var(--t2)">${esc(v.note||v.notes||'')}</td>
+      <td style="font-size:11px;color:var(--t2)">${esc(v.note||'')}</td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('sickleave',${v.id})">Edit</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteSickLeave(${v.id})">&#x2715;</button>
@@ -5256,7 +5134,7 @@ function renderVacation(){
       <td>${v.start_date}</td><td>${v.end_date}</td>
       <td class="right"><span class="badge badge-vacation">${v.days}d</span></td>
       <td class="text-muted">${wkStr}</td>
-      <td class="text-muted">${esc(v.note||v.notes||'')}</td>
+      <td class="text-muted">${esc(v.note||'')}</td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('vacation',${v.id})">Edit</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteItem('vacations',${v.id})">&#x2715;</button>
@@ -6009,13 +5887,10 @@ function fcActiveInMonth(c,y,m){
   return true;
 }
 
-function fcIsActive(c){
-  return !(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined);
-}
 function fcInDateRange(c,y,m){
   // Returns true if this cost is ACTIVE in this month's date range
   // Robust active check — handles boolean true/false, integer 1/0, string, null
-  const isActive=fcIsActive(c);
+  const isActive=!(c.active===false||c.active===0||c.active==='0'||c.active==='false'||c.active===null||c.active===undefined);
   if(!isActive)return false;
   const moStr=y&&m?(y+'-'+String(m).padStart(2,'0')):null;
   if(moStr){
@@ -6044,6 +5919,7 @@ function fixedMonthlySplit(){
 async function fcForceReload(){
   showToast('Force reloading from Supabase…','info');
   const cardsEl=document.getElementById('fc-category-cards');
+  const audit=window.__NXP_AUDIT__||{issueCount:0,issues:[]};
   if(cardsEl)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading from Supabase…</div>';
   try{
     const url=_SUPA_URL+'/rest/v1/fixed_costs?select=*&order=id.asc';
@@ -6191,20 +6067,6 @@ async function fcFixUncategorised(){
   showToast(`✓ ${done} entries → Loonkosten`);
 }
 
-function fcValidateMath(entries){
-  const issues=[];
-  (entries||[]).forEach(c=>{
-    const gross=fcMonthlyAmountIncl(c);
-    const vat=fcMonthlyVatAmt(c);
-    const net=fcMonthlyAmount(c);
-    const delta=Math.abs((net+vat)-gross);
-    if(delta>0.02){
-      issues.push({id:c.id,name:c.name||'(unnamed)',delta:Number(delta.toFixed(2)),gross,vat,net});
-    }
-  });
-  return issues;
-}
-
 function renderFixedCosts(){
   _normFixedCosts(S.fixedCosts||[]);
   const fActiveEl=document.getElementById('fc-filter-active');
@@ -6219,8 +6081,8 @@ function renderFixedCosts(){
   const sMode=sortEl?.value||'cat';
 
   let allEntries=S.fixedCosts.filter(c=>{
-    if(activeFilter==='active'&&!fcIsActive(c))return false;
-    if(activeFilter==='inactive'&&fcIsActive(c))return false;
+    if(activeFilter==='active'&&c.active!==1)return false;
+    if(activeFilter==='inactive'&&c.active===1)return false;
     if(monthFilter){const[mfy,mfm]=monthFilter.split('-').map(Number);if(!fcInDateRange(c,mfy,mfm))return false;}
     if(fCat&&(c.category||'Uncategorised')!==fCat)return false;
     if(fVat&&(c.vat_type||'incl')!==fVat)return false;
@@ -6249,7 +6111,6 @@ function renderFixedCosts(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
   const tNetThisMonth=fixedMonthly(_y,_m);
   const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
-  const calcIssues=fcValidateMath(thisMonthEntries);
   const tGrossThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
   const tVatThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   const kpiEl=document.getElementById('fc-grand-kpis');
@@ -6282,6 +6143,7 @@ function renderFixedCosts(){
   };
 
   const cardsEl=document.getElementById('fc-category-cards');
+  const audit=window.__NXP_AUDIT__||{issueCount:0,issues:[]};
   if(!cardsEl)return; // page not visible
 
   if(!sorted.length){
@@ -6295,10 +6157,10 @@ function renderFixedCosts(){
   }
 
   // ── STAFFING-GRID STYLE TABLE ──────────────────────────────────────────────
-  const activeTotal=sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyAmount(c),0);
+  const activeTotal=sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0);
 
-  let html=`${calcIssues.length?`<div style="margin:0 0 12px 0;padding:10px 14px;border:1px solid rgba(245,158,11,.25);background:#fff8eb;border-radius:10px;color:#7a4b00;font-size:12px;font-weight:600">Calculation audit: ${calcIssues.length} entr${calcIssues.length===1?'y has':'ies have'} a rounding mismatch larger than €0.02. Open browser console for details.</div>`:''}<div style="overflow-x:auto;border:1px solid var(--bdr2);border-radius:12px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.04)">
-  <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:12px;background:#fff">
+  let html=`<div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
   <thead><tr style="background:var(--bg2);border-bottom:2px solid var(--bdr2)">
     <th style="text-align:left;padding:8px 14px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;min-width:200px">Cost Name</th>
     <th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px">Period</th>
@@ -6314,7 +6176,7 @@ function renderFixedCosts(){
   cats.forEach(cat=>{
     const ces=grouped[cat]||[];
     if(!ces.length)return;
-    const activeCes=ces.filter(c=>fcIsActive(c));
+    const activeCes=ces.filter(c=>c.active);
     const cGross=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
     const cVat=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
     const cNet=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
@@ -6322,7 +6184,7 @@ function renderFixedCosts(){
     const barW=activeTotal>0?Math.round(cNet/activeTotal*100):0;
 
     // Category header row (like employee row in staffing grid)
-    html+=`<tr class="row-emp" style="cursor:default;background:#f8fbff">
+    html+=`<tr class="row-emp" style="cursor:default">
       <td style="padding:9px 14px">
         <span style="font-weight:700;font-size:13px;color:var(--navy)">${esc(cat)}</span>
         <span style="font-size:10px;color:var(--t3);margin-left:6px">${ces.length} entr${ces.length===1?'y':'ies'}</span>
@@ -6330,11 +6192,11 @@ function renderFixedCosts(){
         <div style="margin-top:4px;height:3px;width:${Math.min(barW,100)}%;background:var(--blue);border-radius:2px;opacity:.4;max-width:120px"></div>
       </td>
       <td></td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:700;background:#f8fbff;color:var(--navy)">${cGross>0?fmt(cGross):''}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:600">${cGross>0?fmt(cGross):''}</td>
       <td></td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--navy);background:#f8fbff;font-weight:700">${cVat>0?fmt(cVat):''}</td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:800;color:var(--navy);background:#f8fbff">${fmt(cNet)}</td>
-      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--navy);background:#f8fbff;font-weight:700">${fmt(cNet*12)}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--amber)">${cVat>0?fmt(cVat):''}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(cNet)}</td>
+      <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:var(--t3)">${fmt(cNet*12)}</td>
       <td style="padding:9px 10px;text-align:right">
         <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcAddEntryForCat('${esc(cat)}')">+ Add</button>
         <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="fcRenameCatModal('${esc(cat)}')">Rename</button>
@@ -6351,19 +6213,19 @@ function renderFixedCosts(){
         ?`<span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700;margin-left:4px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:'';
       const period=c.start_month||c.end_month
         ?`<span style="font-size:10px;color:var(--t3)">${c.start_month||'…'}${c.end_month?' → '+c.end_month:''}</span>`:'';
-      html+=`<tr class="row-proj" style="${!fcIsActive(c)?'opacity:.55':''}" onmouseover="Array.from(this.children).forEach(td=>td.style.background='#f8fbff')" onmouseout="Array.from(this.children).forEach(td=>td.style.background='#fff')">
-        <td style="padding:7px 14px 7px 28px;background:#fff;${!fcIsActive(c)?'text-decoration:line-through;color:var(--t3)':''}">
+      html+=`<tr class="row-proj" style="${!c.active?'opacity:.45':''}" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
+        <td style="padding:7px 14px 7px 28px;${!c.active?'text-decoration:line-through;color:var(--t3)':''}">
           ${esc(c.name)}
-          ${!fcIsActive(c)?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 4px;border-radius:3px;margin-left:4px">INACTIVE</span>':''}
+          ${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 4px;border-radius:3px;margin-left:4px">INACTIVE</span>':''}
         </td>
-        <td style="padding:7px 10px;background:#fff">${period}${freqBadge}</td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;color:var(--navy);font-weight:700">${fmt(gross)}</td>
-        <td style="text-align:center;padding:7px 10px;background:#fff">${vatBadge(c)}</td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;color:var(--navy);font-weight:700">${vat>0?fmt(vat):'€0'}</td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;font-weight:800;color:var(--navy)">
+        <td style="padding:7px 10px">${period}${freqBadge}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono)">${fmt(gross)}</td>
+        <td style="text-align:center;padding:7px 10px">${vatBadge(c)}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--amber)">${vat>0?fmt(vat):'€0'}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);font-weight:700;color:${c.active?'var(--red)':'var(--t3)'}">
           ${fmt(net)}
         </td>
-        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);background:#fff;color:var(--navy);font-weight:700">${fmt(net*12)}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--t3)">${fmt(net*12)}</td>
         <td style="padding:7px 10px;text-align:right">
           ${!c.active?`<button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--green)" onclick="fcReactivate(${c.id})">Reactivate</button>`:''}
           <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="openModal('fixedcost',${c.id})">Edit</button>
@@ -6374,11 +6236,11 @@ function renderFixedCosts(){
   });
 
   // Grand total row
-  const totalNet=Math.round(sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
-  const totalGross=Math.round(sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
-  const totalVat=Math.round(sorted.filter(c=>fcIsActive(c)).reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
+  const totalNet=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  const totalGross=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
+  const totalVat=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   html+=`<tr style="background:var(--navy);color:#fff;border-top:2px solid var(--bdr2)">
-    <td style="padding:9px 14px;font-weight:700;font-size:12px">TOTAL — ${sorted.filter(c=>fcIsActive(c)).length} active entries</td>
+    <td style="padding:9px 14px;font-weight:700;font-size:12px">TOTAL — ${sorted.filter(c=>c.active).length} active entries</td>
     <td colspan="2" style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:600;color:#e0eeff">${fmt(totalGross)}</td>
     <td></td>
     <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:#ffd080">${fmt(totalVat)}</td>
@@ -6389,7 +6251,6 @@ function renderFixedCosts(){
 
   html+=`</tbody></table></div>`;
   cardsEl.innerHTML=html;
-  if(calcIssues.length) console.warn('Fixed Costs calculation audit mismatches',calcIssues);
   const gt=document.getElementById('fc-grand-total-card');if(gt)gt.innerHTML='';
 }
 
@@ -7089,6 +6950,35 @@ async function deleteCFMonth(id){
   S.cashflowMonths=S.cashflowMonths.filter(x=>x.id!=_id);
   renderSimpleCashflow();
   showToast('Month deleted');
+}
+
+function runDataIntegrityAudit(){
+  const issues=[];
+  const projIds=new Set((S.projects||[]).map(p=>String(p.id)));
+  const empIds=new Set((S.employees||[]).map(e=>String(e.id)));
+  const staffSeen=new Set();
+  (S.staffing||[]).forEach(s=>{
+    const key=[s.employee_id,s.project_id,s.week_key].join('__');
+    if(staffSeen.has(key)) issues.push('Duplicate staffing row for '+key);
+    staffSeen.add(key);
+    if(!empIds.has(String(s.employee_id))) issues.push('Staffing row without employee '+s.employee_id);
+    if(!projIds.has(String(s.project_id))) issues.push('Staffing row without project '+s.project_id);
+  });
+  (S.invoices||[]).forEach(i=>{ if(i.project_id!=null && !projIds.has(String(i.project_id))) issues.push('Invoice '+i.id+' references missing project '+i.project_id); });
+  (S.partnerInvoices||[]).forEach(i=>{ if(i.project_id!=null && !projIds.has(String(i.project_id))) issues.push('Partner invoice '+i.id+' references missing project '+i.project_id); });
+  (S.externalCosts||[]).forEach(e=>{ if(e.project_id!=null && !projIds.has(String(e.project_id))) issues.push('External cost '+e.id+' references missing project '+e.project_id); });
+  (S.vacations||[]).forEach(v=>{ if(v.employee_id!=null && !empIds.has(String(v.employee_id))) issues.push('Vacation '+v.id+' references missing employee '+v.employee_id); });
+  (S.sickLeave||[]).forEach(v=>{ if(v.employee_id!=null && !empIds.has(String(v.employee_id))) issues.push('Sick leave '+v.id+' references missing employee '+v.employee_id); });
+  const cf=[...(S.cashflowMonths||[])].sort((a,b)=>(a.month||'').localeCompare(b.month||''));
+  for(let i=1;i<cf.length;i++){
+    const prev=parseFloat(cf[i-1].closing||0), cur=parseFloat(cf[i].opening||0);
+    if(Math.abs(prev-cur)>0.01) issues.push('Cashflow continuity mismatch: '+cf[i-1].month+' closing != '+cf[i].month+' opening');
+  }
+  const fcMismatches=(S.fixedCosts||[]).filter(c=>Math.abs(fcEntryIncl(c)-fcEntryExcl(c)-fcEntryVatAmt(c))>0.02);
+  fcMismatches.forEach(c=>issues.push('Fixed cost VAT mismatch on '+(c.name||('id '+c.id))));
+  window.__NXP_AUDIT__={runAt:new Date().toISOString(), issueCount:issues.length, issues};
+  console[issues.length?'warn':'info']('[NXTPhase audit]', window.__NXP_AUDIT__);
+  return window.__NXP_AUDIT__;
 }
 
 function renderHistory(){
@@ -8231,8 +8121,8 @@ function renderFinancial(){
   ];
   Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows,txRows,ecRows])=>{
     // Apply fetched data into S (only override if we got real data)
-    if(cfRows&&cfRows.length>0){S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);}
-    if(fcRows&&fcRows.length>0){
+    if(cfRows){S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);}
+    if(fcRows){
       // Supabase is the single source of truth for all fields.
       // No localStorage override - stale cache must never corrupt live data.
       // Parse start/end month from notes field
@@ -8268,8 +8158,8 @@ function renderFinancial(){
       }catch(e){}
       S.fixedCosts=fcRows;
     }
-    if(invRows&&invRows.length>0) S.invoices=invRows;
-    if(stRows&&stRows.length>0){
+    if(invRows) S.invoices=invRows;
+    if(stRows){
       try{
         const snSet=setRows&&setRows.find(s=>s.key==='staffing_notes');
         if(snSet){const sn=JSON.parse(snSet.value||'{}');
@@ -8281,10 +8171,10 @@ function renderFinancial(){
       stRows.forEach(r=>{r.id=parseInt(r.id)||r.id;r.employee_id=parseInt(r.employee_id)||r.employee_id;r.project_id=parseInt(r.project_id)||r.project_id;const k=r.employee_id+'__'+r.project_id+'__'+r.week_key;const ex=_sm.get(k);if(!ex||r.id>ex.id)_sm.set(k,r);});
       S.staffing=Array.from(_sm.values());
     }
-    if(futRows&&futRows.length>0) S.futureCosts=futRows;
-    if(txRows&&txRows.length>0) S.transactions=txRows;
-    if(ecRows&&ecRows.length>0){
-      ecRows.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
+    if(futRows) S.futureCosts=futRows;
+    if(txRows) S.transactions=txRows;
+    if(ecRows){
+      ecRows=ecRows.map(e=>_normalizeExtCostRow({...e}));
       S.externalCosts=ecRows;
     }
     _renderFinancialActual();
@@ -8387,6 +8277,7 @@ function _renderFinancialActual(){
     months.push({mo,moStr,revenue,confRev,draftRev,fixedCosts,forecastCosts,staffingCosts,extCosts,totalOpCosts,opResult,opMargin,bankIn,bankOut,netCash,openBal,closeBal,cfEntry,activeConf,isCurrent,isPast});
   }
   _finData={months,year};
+  try{ runDataIntegrityAudit(); }catch(e){};
 
   // ── Bank balance from Cashflow module (single source of truth) ───────────
   // Starting balance = earliest opening balance in cashflow entries
@@ -10905,7 +10796,6 @@ function initBankPlanner(){
   bpAutoLoad();
   runBankPlan();
 }
-startAutoSync();
 </script>
 <!-- ═══════════════════════════════════════════════════════════
      EMPLOYEE STAFFING VIEW — shown instead of main app for 'employee' role
