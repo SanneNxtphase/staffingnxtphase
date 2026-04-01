@@ -1342,9 +1342,14 @@ async function _supaReq(method, table, body, qs) {
     if (!r.ok) {
       var errText = '';
       try { errText = await r.text(); } catch(e2) {}
-      console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status, errText);
-      if(method==='PATCH'||method==='POST'){
-        showToast('⚠ Save failed (HTTP '+r.status+'). Check console.','error');
+      console.error('[Supabase FAIL] '+method+' '+table+(qs||'')+' → HTTP '+r.status+': '+errText);
+      if(method==='PATCH'||method==='POST'||method==='DELETE'){
+        var hint='';
+        if(r.status===401||r.status===403) hint=' — geen schrijfrechten (RLS)';
+        else if(r.status===404) hint=' — tabel niet gevonden';
+        else if(r.status===422) hint=' — ongeldige data';
+        else if(r.status===409) hint=' — conflict (duplicate)';
+        showToast('⚠ Opslaan mislukt HTTP '+r.status+hint,'error');
       }
       return null;
     }
@@ -6453,7 +6458,8 @@ function renderSimpleCashflow(){
 }
 
 function openCFMonthModal(id){
-  const e=id?S.cashflowMonths.find(x=>x.id===id):null;
+  // Use == not === because Supabase returns string IDs but onclick passes numbers
+  const e=id!=null?S.cashflowMonths.find(x=>x.id==id):null;
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
   m.innerHTML=`<div class="modal-header"><div class="modal-title">${e?'Edit Month':'Add Month'} — Cashflow</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
@@ -6527,39 +6533,63 @@ function scfPreview(changed){
   if(elOut)elOut.textContent=outflow>0?fmt(outflow):(c<o?fmt(o-c):'—');
 }
 async function saveCFMonth(id){
+  const _id=id?parseInt(id)||id:null; // normalize to int
   const month=document.getElementById('scf-month')?.value?.trim();
   const opening=parseFloat(document.getElementById('scf-opening')?.value)||0;
   const inflowVal=document.getElementById('scf-inflow')?.value;
   const outflowVal=document.getElementById('scf-outflow')?.value;
   const inflow=inflowVal!==''&&inflowVal!=null?parseFloat(inflowVal)||0:null;
   const outflow=outflowVal!==''&&outflowVal!=null?parseFloat(outflowVal)||0:null;
-  // Auto-calc closing if inflow+outflow given but closing is blank
   const closingEl=document.getElementById('scf-closing');
   let closing=parseFloat(closingEl?.value)||0;
   if((!closingEl?.value)&&inflow!=null&&outflow!=null) closing=opening+(inflow||0)-(outflow||0);
   const notes=document.getElementById('scf-notes')?.value?.trim()||'';
   if(!month||!/^\d{4}-\d{2}$/.test(month))return alert('Month must be in YYYY-MM format.');
-  // Encode inflow/outflow into notes for cross-device sync (Supabase has no inflow/outflow cols)
-  // First strip ALL existing encoded tokens (any pipe count), then append clean ones
   let notesEncoded=notes.replace(/\|+(?:IN|OUT):[\d.]+\|*/g,'').replace(/\[(?:IN|OUT):[\d.]+\]/g,'').trim();
   if(inflow!=null) notesEncoded=(notesEncoded?notesEncoded+' ':'')+'[IN:'+inflow.toFixed(2)+']';
   if(outflow!=null) notesEncoded=(notesEncoded?notesEncoded+' ':'')+'[OUT:'+outflow.toFixed(2)+']';
   const data={month,opening,closing,notes:notesEncoded};
-  if(id)await DB.update('cashflow_months',id,data);
+
+  // Update localStorage
+  if(_id) await DB.update('cashflow_months',_id,data);
   else await DB.insert('cashflow_months',data);
+
+  // Update in-memory immediately
+  if(_id){
+    const mi=S.cashflowMonths.findIndex(x=>x.id==_id);
+    if(mi>=0) Object.assign(S.cashflowMonths[mi],data);
+  } else {
+    S.cashflowMonths.push({...data,id:Date.now()});
+  }
+
   // Push to Supabase
   try{
     const ex=await _supaReq('GET','cashflow_months',null,'?month=eq.'+month+'&select=id');
-    if(ex&&ex.length>0) await _supaReq('PATCH','cashflow_months',{month,opening,closing,notes:notesEncoded},'?month=eq.'+month);
-    else await _supaReq('POST','cashflow_months',{month,opening,closing,notes:notesEncoded});
-  }catch(e){}
-  closeModal();await loadData();renderSimpleCashflow();
-  showToast(id?'Month updated':'Month added');
+    if(ex&&ex.length>0){
+      const r=await _supaReq('PATCH','cashflow_months',{month,opening,closing,notes:notesEncoded},'?month=eq.'+month);
+      if(r===null) console.warn('[CF SAVE] PATCH failed for month',month);
+    } else {
+      const r=await _supaReq('POST','cashflow_months',{month,opening,closing,notes:notesEncoded});
+      if(r===null) console.warn('[CF SAVE] POST failed for month',month);
+    }
+  }catch(e){console.error('[CF SAVE] Supabase error:',e);}
+
+  closeModal();
+  _parseCFNotes(S.cashflowMonths);
+  renderSimpleCashflow();
+  showToast(_id?'Month updated':'Month added');
 }
 async function deleteCFMonth(id){
   if(!confirm('Delete this month entry?'))return;
-  await DB.delete('cashflow_months',id);
-  await loadData();renderSimpleCashflow();
+  const _id=parseInt(id)||id;
+  await DB.delete('cashflow_months',_id);
+  // Also delete from Supabase
+  try{
+    const e=S.cashflowMonths.find(x=>x.id==_id);
+    if(e&&e.month) await _supaReq('DELETE','cashflow_months',null,'?month=eq.'+e.month);
+  }catch(e){}
+  S.cashflowMonths=S.cashflowMonths.filter(x=>x.id!=_id);
+  renderSimpleCashflow();
   showToast('Month deleted');
 }
 
