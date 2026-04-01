@@ -3119,7 +3119,7 @@ async function saveExtCost(id){
     console.error('[saveExtCost]',e);
     ok=false;
   }
-  if(!ok) showToast('⚠ Opslaan mislukt — check je verbinding','error');
+  if(!ok) showToast('⚠ Ext cost opslaan mislukt — zie Supabase Diagnostics in sidebar','error');
   await loadData();
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
@@ -4970,13 +4970,18 @@ async function saveSickLeave(id){
   const data={employee_id:parseInt(document.getElementById('f-sl-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-sl-note').value||null};
   closeModal();
   try{
-    let r;
     const payload=_supaFilter('sick_leave',data);
+    console.log('[saveSickLeave] payload:', JSON.stringify(payload));
+    let r;
     if(id) r=await _supaReq('PATCH','sick_leave',payload,'?id=eq.'+id);
     else r=await _supaReq('POST','sick_leave',payload);
-    if(!r) showToast('⚠ Opslaan mislukt','error');
+    console.log('[saveSickLeave] result:', JSON.stringify(r));
+    if(!r) showToast('⚠ Sick leave opslaan mislukt — zie Supabase Diagnostics in sidebar','error');
     else showToast(id?'Sick leave updated':'Sick leave registered');
-  }catch(e){showToast('⚠ Opslaan mislukt','error');}
+  }catch(e){
+    console.error('[saveSickLeave] exception:',e);
+    showToast('⚠ Opslaan mislukt: '+e.message,'error');
+  }
   await loadData();renderSickLeave();renderPage('schedule');
 }
 async function deleteSickLeave(id){
@@ -9643,7 +9648,7 @@ function updateRoleBadge(){
   }
   if(pinNav)pinNav.style.display=AUTH.isAdmin()?'flex':'none';
   const diagNav=document.getElementById('nav-diagbtn');
-  if(diagNav)diagNav.style.display=AUTH.isAdmin()?'flex':'none';
+  if(diagNav)diagNav.style.display='flex'; // always show — needed for debugging
 }
 
 // Viewer guard — blocks write operations in Viewer mode
@@ -9665,57 +9670,130 @@ async function openSupaDiag(){
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
   m.innerHTML=`<div class="modal-header"><div class="modal-title">🔬 Supabase Diagnostics</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
-  <div class="modal-body"><pre id="diag-out" style="font-size:10px;line-height:1.6;background:var(--bg2);padding:12px;border-radius:6px;max-height:420px;overflow:auto;white-space:pre-wrap">Running tests…</pre></div>
+  <div class="modal-body"><pre id="diag-out" style="font-size:10.5px;line-height:1.7;background:#1a1a2e;color:#e2e8f0;padding:14px;border-radius:6px;max-height:460px;overflow:auto;white-space:pre-wrap;font-family:monospace">Starting…</pre></div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="runSupaDiag()">Re-run</button></div>`;
   runSupaDiag();
 }
+
 async function runSupaDiag(){
   const out=document.getElementById('diag-out');
   if(!out)return;
-  const log=(s)=>{out.textContent+=s+'\n';out.scrollTop=out.scrollHeight;};
-  out.textContent='';
-  log('Supabase URL: '+_SUPA_URL);
-  log('Key: '+_SUPA_KEY.substring(0,20)+'…\n');
+  const log=(s,color)=>{
+    const line=document.createElement('span');
+    if(color)line.style.color=color;
+    line.textContent=s+'\n';
+    out.appendChild(line);
+    out.scrollTop=out.scrollHeight;
+  };
+  out.innerHTML='';
+  log('=== SUPABASE DIAGNOSTICS ===\n');
+  log('URL: '+_SUPA_URL);
+  log('Key: '+_SUPA_KEY.substring(0,28)+'…');
+  log('_SUPA_ONLINE: '+_SUPA_ONLINE+'\n');
 
-  const tables=['projects','employees','staffing','fixed_costs','sick_leave','external_costs','cashflow_months','vacations','invoices','bank_transactions'];
+  // Step 1: Raw fetch test — bypass _supaReq to see true HTTP status
+  log('--- 1. Raw connectivity test ---');
+  try{
+    const resp=await fetch(_SUPA_URL+'/rest/v1/employees?select=id&limit=1',{
+      headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json'}
+    });
+    const txt=await resp.text();
+    if(resp.ok) log('✅ GET employees HTTP '+resp.status+' — connected','#4ade80');
+    else log('❌ GET employees HTTP '+resp.status+': '+txt,'#f87171');
+  }catch(e){log('❌ Network error: '+e.message,'#f87171');}
+
+  // Step 2: Check each critical table
+  log('\n--- 2. Table READ access ---');
+  const tables=['projects','employees','staffing','fixed_costs','sick_leave','external_costs','cashflow_months','vacations','invoices','settings'];
   for(const t of tables){
-    const r=await _supaReq('GET',t,null,'?select=id&limit=1');
-    if(r===null) log(`❌ GET ${t} → FAILED (null)`);
-    else log(`✅ GET ${t} → OK (${Array.isArray(r)?r.length:'obj'} rows)`);
+    try{
+      const resp=await fetch(`${_SUPA_URL}/rest/v1/${t}?select=id&limit=1`,{
+        headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY}
+      });
+      const txt=await resp.text();
+      if(resp.ok){
+        const rows=JSON.parse(txt);
+        log(`✅ ${t}: OK (${rows.length} rows)  `,`#4ade80`);
+      } else {
+        log(`❌ ${t}: HTTP ${resp.status} → ${txt.substring(0,80)}`,`#f87171`);
+      }
+    }catch(e){log(`❌ ${t}: ${e.message}`,'#f87171');}
   }
 
-  // Test INSERT on sick_leave
-  log('\n--- Write test: sick_leave ---');
-  const testSL={employee_id:1,start_date:'2099-01-01',end_date:'2099-01-01',days:1,notes:'DIAG_TEST'};
-  const ins=await _supaReq('POST','sick_leave',testSL);
-  if(!ins||!ins.id) log('❌ INSERT sick_leave → FAILED (RLS blocked or schema error)');
-  else{
-    log('✅ INSERT sick_leave → OK id='+ins.id);
-    // Clean up test row
-    await _supaReq('DELETE','sick_leave',null,'?id=eq.'+ins.id);
-    log('✅ DELETE test row OK');
+  // Step 3: Test INSERT on sick_leave
+  log('\n--- 3. sick_leave WRITE test ---');
+  const emp=S.employees[0];
+  if(!emp){log('⚠ No employees loaded — skipping','#fbbf24');}else{
+    const testRow={employee_id:emp.id,start_date:'2099-12-01',end_date:'2099-12-01',days:1,notes:'DIAG_TEST_DELETE_ME'};
+    log('Sending: '+JSON.stringify(testRow));
+    try{
+      const resp=await fetch(`${_SUPA_URL}/rest/v1/sick_leave`,{
+        method:'POST',
+        headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json','Prefer':'return=representation'},
+        body:JSON.stringify(testRow)
+      });
+      const txt=await resp.text();
+      if(resp.ok){
+        const rows=JSON.parse(txt);
+        const newId=rows[0]?.id;
+        log('✅ INSERT OK — id='+newId,'#4ade80');
+        // Clean up
+        if(newId){
+          await fetch(`${_SUPA_URL}/rest/v1/sick_leave?id=eq.${newId}`,{
+            method:'DELETE',headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY}
+          });
+          log('✅ DELETE cleanup OK','#4ade80');
+        }
+      } else {
+        log('❌ INSERT FAILED HTTP '+resp.status,'#f87171');
+        log('   '+txt.substring(0,200),'#fbbf24');
+        if(resp.status===403||resp.status===401) log('   → RLS is blocking writes. Fix: Supabase dashboard → sick_leave → RLS → add INSERT policy for anon','#fbbf24');
+        if(resp.status===400) log('   → Column mismatch. Check schema.','#fbbf24');
+        if(resp.status===404) log('   → Table does not exist!','#fbbf24');
+      }
+    }catch(e){log('❌ Exception: '+e.message,'#f87171');}
   }
 
-  // Test INSERT on external_costs
-  log('\n--- Write test: external_costs ---');
+  // Step 4: Test INSERT on external_costs
+  log('\n--- 4. external_costs WRITE test ---');
   const proj=S.projects.find(p=>p.status==='confirmed');
-  if(!proj){log('⚠ No confirmed project to test with — skipping');} else {
-    const testEC={project_id:proj.id,vendor:'DIAG_TEST',description:'test',amount:1};
-    const ins2=await _supaReq('POST','external_costs',testEC);
-    if(!ins2||!ins2.id) log('❌ INSERT external_costs → FAILED (RLS blocked or schema error)');
-    else{
-      log('✅ INSERT external_costs → OK id='+ins2.id);
-      await _supaReq('DELETE','external_costs',null,'?id=eq.'+ins2.id);
-      log('✅ DELETE test row OK');
-    }
+  if(!proj){log('⚠ No confirmed project — skipping','#fbbf24');}else{
+    const testEC={project_id:proj.id,vendor:'DIAG_TEST',description:'auto-test delete me',amount:0.01};
+    log('Sending: '+JSON.stringify(testEC));
+    try{
+      const resp=await fetch(`${_SUPA_URL}/rest/v1/external_costs`,{
+        method:'POST',
+        headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json','Prefer':'return=representation'},
+        body:JSON.stringify(testEC)
+      });
+      const txt=await resp.text();
+      if(resp.ok){
+        const rows=JSON.parse(txt);
+        const newId=rows[0]?.id;
+        log('✅ INSERT OK — id='+newId,'#4ade80');
+        if(newId){
+          await fetch(`${_SUPA_URL}/rest/v1/external_costs?id=eq.${newId}`,{
+            method:'DELETE',headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY}
+          });
+          log('✅ DELETE cleanup OK','#4ade80');
+        }
+      } else {
+        log('❌ INSERT FAILED HTTP '+resp.status,'#f87171');
+        log('   '+txt.substring(0,200),'#fbbf24');
+        if(resp.status===403||resp.status===401) log('   → RLS blocking. Fix: Supabase → external_costs → RLS → INSERT policy for anon','#fbbf24');
+        if(resp.status===404) log('   → Table does not exist! Create it in Supabase.','#fbbf24');
+      }
+    }catch(e){log('❌ Exception: '+e.message,'#f87171');}
   }
 
-  log('\n--- Current S.* data ---');
-  log('S.sickLeave: '+S.sickLeave.length+' rows');
-  log('S.externalCosts: '+S.externalCosts.length+' rows');
-  log('S.projects: '+S.projects.length+' rows');
-  log('S.fixedCosts: '+S.fixedCosts.length+' rows');
-  log('\nDone.');
+  log('\n--- 5. Current data counts ---');
+  log('projects: '+S.projects.length);
+  log('employees: '+S.employees.length);
+  log('staffing: '+S.staffing.length);
+  log('fixedCosts: '+S.fixedCosts.length);
+  log('sickLeave: '+S.sickLeave.length);
+  log('externalCosts: '+S.externalCosts.length);
+  log('\n=== DONE ===');
 }
 
 function openChangePinModal(){
