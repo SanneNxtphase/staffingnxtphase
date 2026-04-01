@@ -3865,8 +3865,29 @@ function renderStaffing(){
   const view=S.staffingView;
 
   let emps=S.employees.filter(e=>(!filterEmpId||e.id===filterEmpId)&&!_STAFFING_GRID_EXCLUDE.has(e.name));
-  const confProjs=S.projects.filter(p=>p.status==='confirmed'&&(!filterProjId||p.id===filterProjId));
-  const draftProjs=S.projects.filter(p=>p.status==='draft'&&(!filterProjId||p.id===filterProjId));
+  // Exclude projects that ended before the first day of the earliest shown week
+  const _firstWkMonday=wkMonday(weeks[0]||toWeekKey(new Date()));
+  const confProjs=S.projects.filter(p=>{
+    if(p.status!=='confirmed')return false;
+    if(filterProjId&&p.id!==filterProjId)return false;
+    // If project has an end_date and it's before the start of the current view → hide
+    if(p.end_date){
+      const[ey,em,ed]=p.end_date.split('-').map(Number);
+      const endD=new Date(Date.UTC(ey,em-1,ed));
+      if(endD<_firstWkMonday)return false;
+    }
+    return true;
+  });
+  const draftProjs=S.projects.filter(p=>{
+    if(p.status!=='draft')return false;
+    if(filterProjId&&p.id!==filterProjId)return false;
+    if(p.end_date){
+      const[ey,em,ed]=p.end_date.split('-').map(Number);
+      const endD=new Date(Date.UTC(ey,em-1,ed));
+      if(endD<_firstWkMonday)return false;
+    }
+    return true;
+  });
 
   // Header row
   let thead=`<thead><tr><th style="min-width:170px">Employee / Project</th>`;
@@ -3889,7 +3910,7 @@ function renderStaffing(){
         totalDays+=dayTotal;
         // Always show editable cell — clicking opens Assign Full Project modal
         if(!inRange){
-          td+=`<td class="center cell-zero" style="opacity:.3;cursor:not-allowed;background:var(--bg2)" title="Outside project dates — adjust start/end date to enable staffing">${dayTotal||'—'}</td>`;
+          td+=`<td class="center" style="opacity:.6;cursor:not-allowed;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — adjust start/end date to enable staffing">🔒</td>`;
         } else {
           td+=`<td class="center editable" style="${isDraft?'color:var(--amber)':''}" onclick="sfProjectCellClick(${p.id},'${wk}',this)" title="Click to assign staffing">${dayTotal||''}</td>`;
         }
@@ -3990,7 +4011,7 @@ function renderStaffing(){
             pTotalDays+=d;
             const _note=entry?.note||'';
             if(!inRange){
-              return`<td class="center cell-zero" style="opacity:.3;cursor:not-allowed;background:var(--bg2)" title="Outside project dates — adjust start/end date to enable staffing">—</td>`;
+              return`<td class="center" style="opacity:.6;cursor:not-allowed;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — adjust start/end date to enable staffing">🔒</td>`;
             }
             return`<td class="center editable${_note?' has-note':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_note?esc(_note):'Click to edit'}">${d||''}${_note?`<span style="font-size:7px;color:var(--blue);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_note)}</span>`:''}</td>`;
           }).join('');
@@ -4015,7 +4036,7 @@ function renderStaffing(){
               pTotalDays+=d;
               const _dnote=entry?.note||'';
               if(!inRange){
-                return`<td class="center cell-zero" style="opacity:.3;cursor:not-allowed;background:var(--bg2)" title="Outside project dates — adjust start/end date to enable staffing">—</td>`;
+                return`<td class="center" style="opacity:.6;cursor:not-allowed;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — adjust start/end date to enable staffing">🔒</td>`;
               }
               return`<td class="center editable${_dnote?' has-note':''}" style="color:var(--amber)" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_dnote?esc(_dnote):'Click to edit'}">${d||''}${_dnote?`<span style="font-size:7px;color:var(--amber);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_dnote)}</span>`:''}</td>`;
             }).join('');
