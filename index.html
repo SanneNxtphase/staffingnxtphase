@@ -1812,23 +1812,18 @@ async function pushAllToSupabase() {
 // PULL FROM SUPABASE — force reload all data from cloud
 async function pullFromSupabase(){
   try{
-    showToast('Pulling from Supabase…','info');
-    var online=await _supaCheckOnline();
-    if(!online){showToast('Cannot reach Supabase','error');return;}
-    // Force fresh load: clear cached store so _gs() re-reads
-    DB._store=null;
-    var ok=await supaLoadAll();
-    if(ok){
-      await loadData();
+    showToast('Loading live data from Supabase…','info');
+    await loadData();
+    if(_SUPA_ONLINE){
       renderDashboard&&renderDashboard();
       renderInvoices&&renderInvoices();
       renderPartner&&renderPartner();
       renderProjects&&renderProjects();
-      showToast('Pulled latest data from Supabase','success');
+      showToast('✓ Live data loaded from Supabase','success');
       var dsEl=document.getElementById('nav-data-source');
       if(dsEl)dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">&#x25CF; Supabase live</span>';
     } else {
-      showToast('Pull failed — Supabase may be empty','warning');
+      showToast('Cannot reach Supabase — check internet connection','error');
     }
   }catch(e){
     console.error('Pull failed:',e);
@@ -2409,8 +2404,7 @@ function navigate(page,el){
   } else if(page==='financial'){
     // Always pull fresh from Supabase for financial page so bank data is current on mobile
     (async()=>{
-      // Load all data fresh from Supabase (mobile may have stale localStorage)
-      try{ await supaLoadAll(); }catch(e){}
+      // loadData() already reads live from Supabase — just call it directly
       await loadData();
       // Then fetch cashflow_months directly — do NOT let loadData overwrite this
       try{
@@ -2470,23 +2464,22 @@ function navigate(page,el){
     })();
   } else if(page==='extcosts'){
     (async()=>{
-      renderPage(page);
+      // Load from Supabase FIRST, then render — prevent showing stale/empty data
       try{
         const [prR,ecR]=await Promise.all([
           _supaReq('GET','projects',null,'?select=*&order=id.asc'),
           _supaReq('GET','external_costs',null,'?select=*&order=id.asc')
         ]);
-        let changed=false;
-        if(prR&&prR.length>0){S.projects=prR;changed=true;}
-        if(ecR&&ecR.length>0){S.externalCosts=ecR.map(e=>({...e,id:parseInt(e.id)||e.id,project_id:parseInt(e.project_id)||e.project_id}));changed=true;}
-        if(changed){
+        if(prR&&prR.length>0){ S.projects=prR.map(p=>({...p,id:parseInt(p.id)||p.id})); }
+        if(ecR&&ecR.length>0){ S.externalCosts=ecR.map(e=>({...e,id:parseInt(e.id)||e.id,project_id:parseInt(e.project_id)||e.project_id})); }
+        if((prR&&prR.length>0)||(ecR&&ecR.length>0)){
           const st=DB._gs();
-          if(prR&&prR.length>0)st.projects=prR;
+          if(prR&&prR.length>0)st.projects=S.projects;
           if(ecR&&ecR.length>0)st.external_costs=ecR;
           DB._sv();DB._store=null;
-          renderPage(page);
         }
-      }catch(e){console.warn('extcosts load:',e);}
+      }catch(e){ console.warn('[extcosts] Supabase load failed:',e); await loadData(); }
+      renderPage(page);
     })();
   } else if(page==='staffing'||page==='schedule'||page==='projects'||page==='employees'){
     (async()=>{
@@ -2538,7 +2531,41 @@ function navigate(page,el){
   } else if(page==='bankplanner'){
     loadData().then(()=>{ renderPage(page); setTimeout(initBankPlanner,100); });
   } else {
-    loadData().then(()=>renderPage(page));
+    // Default: load from localStorage then refresh from Supabase in background
+    (async()=>{
+      await loadData();
+      renderPage(page);
+      // Refresh relevant tables from Supabase based on page
+      const pageTableMap={
+        sickleave:['sick_leave'],
+        vacation:['vacations','employees'],
+        invoices:['invoices','projects'],
+        partner:['partner_invoices','projects'],
+        cashflow:['cashflow_months'],
+        forecast:['future_costs','projects'],
+        history:['projects','employees','staffing','invoices'],
+      };
+      const tables=pageTableMap[page]||[];
+      if(!tables.length||location.protocol==='file:') return;
+      try{
+        const results=await Promise.all(tables.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null)));
+        const tableToS={sick_leave:'sickLeave',vacations:'vacations',employees:'employees',
+          invoices:'invoices',projects:'projects',partner_invoices:'partnerInvoices',
+          cashflow_months:'cashflowMonths',future_costs:'futureCosts',staffing:'staffing'};
+        const store=DB._gs();
+        let changed=false;
+        tables.forEach((t,i)=>{
+          const rows=results[i];
+          if(!rows||!rows.length)return;
+          const sKey=tableToS[t];
+          // Normalize IDs
+          const norm=rows.map(r=>({...r,id:parseInt(r.id)||r.id}));
+          if(sKey&&S[sKey]!==undefined){ S[sKey]=norm; changed=true; }
+          store[t]=norm;
+        });
+        if(changed){ DB._sv(); DB._store=null; renderPage(page); }
+      }catch(e){ console.warn('[navigate] '+page+' refresh failed:',e); }
+    })();
   }
 }
 function mobileNav(el){
@@ -2552,42 +2579,117 @@ function renderPage(name){
     fixedcosts:renderFixedCosts,extcosts:renderExtCosts,history:renderHistory}[name]||function(){})();
 }
 async function loadData(){
+  // Always try Supabase first — it is the single source of truth
+  // localStorage is only used as offline fallback, never as primary source
+  const TABLES=['projects','employees','staffing','vacations','fixed_costs',
+    'bank_transactions','invoices','future_costs','partner_invoices',
+    'cashflow_months','sick_leave','external_costs'];
+
+  if(location.protocol!=='file:'){
+    try{
+      const results=await Promise.all(
+        TABLES.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null))
+      );
+      const get=t=>results[TABLES.indexOf(t)];
+      let anyLoaded=false;
+
+      // Only write tables where Supabase returned actual data
+      // If a table returns null (network error) keep existing S.* value
+      const pr=get('projects'), em=get('employees'), st=get('staffing');
+      const va=get('vacations'), fc=get('fixed_costs'), tx=get('bank_transactions');
+      const inv=get('invoices'), fut=get('future_costs'), pi=get('partner_invoices');
+      const cfm=get('cashflow_months'), sl=get('sick_leave'), ec=get('external_costs');
+
+      if(pr!==null){S.projects=(pr||[]).map(p=>({...p,id:parseInt(p.id)||p.id,is_partner:p.is_partner||0,recurring_amount:p.recurring_amount||0,recurring_freq:p.recurring_freq||'monthly'}));anyLoaded=true;}
+      if(em!==null){S.employees=(em||[]).map(e=>({...e,id:parseInt(e.id)||e.id}));anyLoaded=true;}
+      if(va!==null){S.vacations=(va||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));anyLoaded=true;}
+      if(sl!==null){S.sickLeave=(sl||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));anyLoaded=true;}
+      if(fc!==null){S.fixedCosts=fc||[];_normFixedCosts(S.fixedCosts);anyLoaded=true;}
+      if(tx!==null){S.transactions=(tx||[]).map(t=>({...t,id:parseInt(t.id)||t.id}));anyLoaded=true;}
+      if(inv!==null){S.invoices=(inv||[]).map(i=>({...i,id:parseInt(i.id)||i.id,project_id:parseInt(i.project_id)||i.project_id}));anyLoaded=true;}
+      if(fut!==null){S.futureCosts=(fut||[]).map(f=>({...f,id:parseInt(f.id)||f.id}));anyLoaded=true;}
+      if(pi!==null){S.partnerInvoices=(pi||[]).map(p=>({...p,id:parseInt(p.id)||p.id}));anyLoaded=true;}
+      if(cfm!==null){S.cashflowMonths=cfm||[];_parseCFNotes(S.cashflowMonths);anyLoaded=true;}
+      if(ec!==null){S.externalCosts=(ec||[]).map(e=>({...e,id:parseInt(e.id)||e.id,project_id:parseInt(e.project_id)||e.project_id}));anyLoaded=true;}
+
+      if(st!==null){
+        // Deduplicate staffing: keep latest row per employee+project+week
+        const rawStaff=(st||[]).map(s=>({...s,id:parseInt(s.id)||s.id,employee_id:parseInt(s.employee_id)||s.employee_id,project_id:parseInt(s.project_id)||s.project_id}));
+        const staffMap=new Map();
+        rawStaff.forEach(s=>{
+          const key=s.employee_id+'__'+s.project_id+'__'+s.week_key;
+          const ex=staffMap.get(key);
+          if(!ex||s.id>ex.id)staffMap.set(key,s);
+        });
+        S.staffing=Array.from(staffMap.values());
+        anyLoaded=true;
+      }
+
+      // Merge staffing notes from Supabase settings
+      try{
+        const snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=value');
+        if(snSet&&snSet[0]){
+          const sn=JSON.parse(snSet[0].value||'{}');
+          S.staffing.forEach(s=>{const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;if(sn[k])s.note=sn[k];});
+        }
+      }catch(e){}
+
+      // Starting balance from settings
+      try{
+        const sb=await _supaReq('GET','settings',null,'?key=eq.starting_balance&select=value');
+        if(sb&&sb[0]) S.startingBalance=parseFloat(sb[0].value)||0;
+      }catch(e){}
+
+      if(anyLoaded){
+        _SUPA_ONLINE=true;
+        // Write to localStorage as cache for offline fallback only
+        try{
+          const store=DB._gs();
+          TABLES.forEach(t=>{
+            const map={projects:'projects',employees:'employees',staffing:'staffing',
+              vacations:'vacations',fixed_costs:'fixed_costs',bank_transactions:'bank_transactions',
+              invoices:'invoices',future_costs:'future_costs',partner_invoices:'partner_invoices',
+              cashflow_months:'cashflow_months',sick_leave:'sick_leave',external_costs:'external_costs'};
+            const sKey=map[t];
+            const data=get(t);
+            if(data!==null&&sKey) store[sKey]=data;
+          });
+          DB._sv(); DB._store=null;
+        }catch(e){}
+        // Update nav indicator — live
+        try{const d=document.getElementById('nav-data-source');if(d)d.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';}catch(e){}
+        console.log('[loadData] Live — projects:'+S.projects.length+' staffing:'+S.staffing.length+' fc:'+S.fixedCosts.length);
+        return;
+      }
+    }catch(e){
+      console.error('[loadData] Supabase error:',e);
+    }
+  }
+
+  // Offline fallback: read from localStorage cache
+  console.warn('[loadData] Supabase unavailable — using localStorage cache');
+  try{const d=document.getElementById('nav-data-source');if(d&&!d.innerHTML.includes('live'))d.innerHTML='<span style="color:rgba(255,130,50,.7)">● Offline — cached</span><br><span style="font-size:8px;cursor:pointer;text-decoration:underline;opacity:.7" onclick="loadData().then(()=>{const p=document.querySelector(\'.page.active\');if(p)renderPage(p.id.replace(\'page-\',\'\'))})">Retry</span>';}catch(e){}
   const[pr,em,st,va,fc,tx,inv,fut,pi,cfm,sl,ec]=await Promise.all([
     DB.select('projects'),DB.select('employees'),DB.select('staffing'),DB.select('vacations'),
     DB.select('fixed_costs'),DB.select('bank_transactions'),DB.select('invoices'),DB.select('future_costs'),
     DB.select('partner_invoices'),DB.select('cashflow_months'),DB.select('sick_leave'),DB.select('external_costs')]);
-  S.projects=pr||[];S.employees=em||[];S.vacations=va||[];S.sickLeave=sl||[];
-  S.fixedCosts=fc||[];S.transactions=tx||[];S.invoices=inv||[];S.futureCosts=fut||[];
-  // Normalize active field
-  _normFixedCosts(S.fixedCosts);
-  S.partnerInvoices=pi||[];S.cashflowMonths=cfm||[];S.externalCosts=ec||[];_parseCFNotes(S.cashflowMonths);
-  // Normalize all IDs to integers to prevent === type-mismatch bugs
-  S.employees.forEach(e=>{e.id=parseInt(e.id)||e.id;});
-  S.projects.forEach(p=>{p.id=parseInt(p.id)||p.id;});
-  S.invoices.forEach(i=>{i.id=parseInt(i.id)||i.id;i.project_id=parseInt(i.project_id)||i.project_id;});
-  S.vacations.forEach(v=>{v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
-  S.sickLeave.forEach(v=>{v.id=parseInt(v.id)||v.id;v.employee_id=parseInt(v.employee_id)||v.employee_id;});
-  S.externalCosts.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
-  // Deduplicate staffing: keep only the latest row (highest ID) per employee+project+week
-  // Duplicate rows cause team view to show inflated day counts
+  S.projects=(pr||[]).map(p=>({...p,id:parseInt(p.id)||p.id}));
+  S.employees=(em||[]).map(e=>({...e,id:parseInt(e.id)||e.id}));
+  S.vacations=(va||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));
+  S.sickLeave=(sl||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));
+  S.fixedCosts=fc||[];_normFixedCosts(S.fixedCosts);
+  S.transactions=(tx||[]).map(t=>({...t,id:parseInt(t.id)||t.id}));
+  S.invoices=(inv||[]).map(i=>({...i,id:parseInt(i.id)||i.id,project_id:parseInt(i.project_id)||i.project_id}));
+  S.futureCosts=fut||[];
+  S.partnerInvoices=pi||[];
+  S.cashflowMonths=cfm||[];_parseCFNotes(S.cashflowMonths);
+  S.externalCosts=(ec||[]).map(e=>({...e,id:parseInt(e.id)||e.id,project_id:parseInt(e.project_id)||e.project_id}));
   const rawStaff=(st||[]).map(s=>({...s,id:parseInt(s.id)||s.id,employee_id:parseInt(s.employee_id)||s.employee_id,project_id:parseInt(s.project_id)||s.project_id}));
   const staffMap=new Map();
-  rawStaff.forEach(s=>{
-    const key=s.employee_id+'__'+s.project_id+'__'+s.week_key;
-    const existing=staffMap.get(key);
-    if(!existing||s.id>existing.id) staffMap.set(key,s);
-  });
+  rawStaff.forEach(s=>{const key=s.employee_id+'__'+s.project_id+'__'+s.week_key;const ex=staffMap.get(key);if(!ex||s.id>ex.id)staffMap.set(key,s);});
   S.staffing=Array.from(staffMap.values());
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
-  try{const ov=localStorage.getItem('sp-vat-overrides');if(ov)Object.assign(S.vatOverrides,JSON.parse(ov));}catch(e){}
-  // Merge staffing notes from localStorage into S.staffing rows
-  try{
-    const _sn=JSON.parse(localStorage.getItem('sp-staff-notes')||'{}');
-    S.staffing.forEach(s=>{
-      const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;
-      if(_sn[k]) s.note=_sn[k];
-    });
-  }catch(e){}
+  try{const sn=JSON.parse(localStorage.getItem('sp-staff-notes')||'{}');S.staffing.forEach(s=>{const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;if(sn[k])s.note=sn[k];});}catch(e){}
 }
 function saveVatOverrides(){try{localStorage.setItem('sp-vat-overrides',JSON.stringify(S.vatOverrides));}catch(e){}}
 
@@ -9475,7 +9577,6 @@ function authSubmit(){
       document.querySelector('.app').style.display='none';
       document.getElementById('employee-view').classList.add('ev-visible');
       (async()=>{
-        try{await supaLoadAll();}catch(e){}
         await loadData();
         renderEmployeeView();
       })();
@@ -9578,40 +9679,20 @@ async function init(){
   const _dsEl=document.getElementById('nav-data-source');
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
 
-  DB._store=null;
-  let _supaOk=false;
+  // loadData() now always reads directly from Supabase (localStorage = offline cache only)
+  await loadData();
 
-  // Try supaLoadAll up to 3 times — it has critical ID-remapping logic
-  // Retry handles Supabase cold-start (free tier wakes up slowly)
-  for(let attempt=0; attempt<3 && !_supaOk; attempt++){
-    if(attempt>0){
-      console.log(`[init] supaLoadAll attempt ${attempt+1}/3...`);
-      await new Promise(r=>setTimeout(r,1200)); // wait before retry
-    }
-    try{ _supaOk=await supaLoadAll(); }
-    catch(e){ console.warn('[init] supaLoadAll attempt '+(attempt+1)+' failed:',e); }
-  }
-
-  if(_supaOk){
-    // supaLoadAll already saved everything to localStorage and set _SUPA_ONLINE=true
-    // Just load into S.* from the now-populated localStorage
-    await loadData();
-    _normFixedCosts(S.fixedCosts||[]);
-    if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
+  if(_SUPA_ONLINE){
     if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
-    console.log('[init] Loaded from Supabase. Projects:',S.projects.length,'Employees:',S.employees.length,'FC:',S.fixedCosts.length);
+    console.log('[init] Live — projects:'+S.projects.length+' staff:'+S.staffing.length+' fc:'+S.fixedCosts.length);
   } else {
-    // All retries failed — still load whatever is in localStorage (offline fallback)
-    await loadData();
-    _normFixedCosts(S.fixedCosts||[]);
-    if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
-    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Offline — local data only</span>'
-      +'<br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry connection</span>';
-    console.warn('[init] Could not reach Supabase after 3 attempts. Using local data.');
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Offline</span>'
+      +'<br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry</span>';
+    console.warn('[init] Supabase unavailable — showing cached data');
   }
 
-  // Patch missing categories silently (background)
-  if(_supaOk&&S.fixedCosts.length){
+  // Fix missing categories silently
+  if(_SUPA_ONLINE&&S.fixedCosts.length){
     S.fixedCosts.filter(c=>!c.category||c.category.trim()===''||c.category==='Uncategorised')
       .forEach(c=>{
         c.category='Loonkosten';
@@ -9619,7 +9700,6 @@ async function init(){
       });
   }
 
-  // Background tasks (non-blocking)
   cleanOrphanedStaffing(false).catch(()=>{});
   if(S.staffing&&S.staffing.some(s=>s.note)) _staffingNotesPush();
 
@@ -9844,17 +9924,8 @@ ${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
 async function retrySupabaseConnection(){
   const _dsEl=document.getElementById('nav-data-source');
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
-  DB._store=null;
-  let ok=false;
-  for(let i=0;i<3&&!ok;i++){
-    if(i>0) await new Promise(r=>setTimeout(r,1000));
-    try{ ok=await supaLoadAll(); }catch(e){}
-  }
-  if(ok){
-    _SUPA_ONLINE=true;
-    await loadData();
-    _normFixedCosts(S.fixedCosts||[]);
-    if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
+  await loadData();
+  if(_SUPA_ONLINE){
     if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
     const activePage=document.querySelector('.page.active')?.id?.replace('page-','');
     if(activePage) renderPage(activePage);
@@ -10313,9 +10384,7 @@ function wkFmtLabel(mon,fri){
     if(saved==='employee'){
       document.querySelector('.app').style.display='none';
       document.getElementById('employee-view').classList.add('ev-visible');
-      // Load from Supabase first so staffing data is fresh
       (async()=>{
-        try{await supaLoadAll();}catch(e){}
         await loadData();
         renderEmployeeView();
       })();
