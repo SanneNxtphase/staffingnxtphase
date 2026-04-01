@@ -1315,7 +1315,7 @@ function _supaUrl(table, qs) {
   return _SUPA_URL + '/rest/v1/' + table + (qs || '');
 }
 
-async function _supaReq(method, table, body, qs) {
+async function _supaReq(method, table, body, qs, suppressToast) {
   // Skip all Supabase calls when running locally via file:// (CORS blocked)
   if(location.protocol==='file:') return null;
   try {
@@ -1349,7 +1349,7 @@ async function _supaReq(method, table, body, qs) {
         else if(r.status===404) hint=' — tabel niet gevonden';
         else if(r.status===422) hint=' — ongeldige data';
         else if(r.status===409) hint=' — conflict (duplicate)';
-        showToast('⚠ Opslaan mislukt HTTP '+r.status+hint,'error');
+        if(!suppressToast) showToast('⚠ Opslaan mislukt HTTP '+r.status+hint,'error');
       }
       return null;
     }
@@ -2509,8 +2509,7 @@ function navigate(page,el){
     })();
   } else if(page==='staffing'||page==='schedule'||page==='projects'||page==='employees'){
     (async()=>{
-      renderPage(page); // render immediately with current data
-      // Also load fresh from Supabase in background
+      // Load fresh from Supabase BEFORE rendering (projects must be complete)
       try{
         const [prR,emR,stR]=await Promise.all([
           _supaReq('GET','projects',null,'?select=*&order=id.asc'),
@@ -2518,10 +2517,13 @@ function navigate(page,el){
           _supaReq('GET','staffing',null,'?select=*&order=id.asc')
         ]);
         let changed=false;
-        if(prR&&prR.length>0){S.projects=prR.map(p=>({...p,id:parseInt(p.id)||p.id}));changed=true;}
+        if(prR&&prR.length>0){
+          S.projects=prR.map(p=>({...p,id:parseInt(p.id)||p.id,
+            is_partner:p.is_partner||0,recurring_amount:p.recurring_amount||0,recurring_freq:p.recurring_freq||'monthly'}));
+          changed=true;
+        }
         if(emR&&emR.length>0){S.employees=emR.map(e=>({...e,id:parseInt(e.id)||e.id}));changed=true;}
         if(stR&&stR.length>0){
-          // Deduplicate staffing
           const staffMap=new Map();
           stR.forEach(s=>{
             const ns={...s,id:parseInt(s.id)||s.id,employee_id:parseInt(s.employee_id)||s.employee_id,project_id:parseInt(s.project_id)||s.project_id};
@@ -2538,7 +2540,7 @@ function navigate(page,el){
           if(emR&&emR.length>0)st.employees=S.employees;
           if(stR&&stR.length>0)st.staffing=S.staffing;
           DB._sv();DB._store=null;
-          // Also load staffing notes
+          // Load staffing notes
           if(page==='schedule'||page==='staffing'){
             try{
               const snSet=await _supaReq('GET','settings',null,'?key=eq.staffing_notes&select=key,value');
@@ -2548,9 +2550,9 @@ function navigate(page,el){
               }
             }catch(e){}
           }
-          renderPage(page);
         }
-      }catch(e){console.warn(page+' Supabase load:',e);}
+      }catch(e){console.warn('[navigate] '+page+' Supabase load failed:',e);}
+      renderPage(page);
     })();
   } else if(page==='bankplanner'){
     loadData().then(()=>{ renderPage(page); setTimeout(initBankPlanner,100); });
@@ -7221,46 +7223,54 @@ async function saveFixedCost(id){
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
 
-  // Build payload — ONLY columns that exist in Supabase fixed_costs table
-  // start_month/end_month are NOT Supabase columns — they are encoded in notes (||SM:||EM:||)
-  // frequency/frequency_month are NOT Supabase columns — encoded in notes (||FREQ:||FREQM:||)
+  // Full payload (tries vat_type/vat_pct columns)
   const _patchPayload={
-    name:data.name,
-    category:data.category,
-    amount:data.amount,
-    vat_pct:data.vat_pct,
-    vat_type:data.vat_type,
-    active:data.active,
+    name:data.name, category:data.category, amount:data.amount,
+    vat_pct:data.vat_pct, vat_type:data.vat_type, active:data.active,
     notes:notesEncoded
   };
+  // Safe payload: only guaranteed columns (VAT stored in notes as ||VT:..||||VP:..||)
+  const _safePayload={
+    name:data.name, category:data.category, amount:data.amount,
+    active:data.active, notes:notesEncoded
+  };
 
-  console.log('[FC SAVE]', {id, name, vatType:data.vat_type, vatPct:data.vat_pct, SUPA_ONLINE:_SUPA_ONLINE});
+  console.log('[FC SAVE] id='+id+' vat_type='+data.vat_type+' vat_pct='+data.vat_pct);
 
   if(id){
     const numId=parseInt(id);
-    // Always try direct Supabase PATCH first (doesn't depend on _SUPA_ONLINE flag)
-    const patchResult=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+numId);
-    if(patchResult===null){
-      console.warn('[FC SAVE] Direct PATCH failed, trying via DB.update...');
-      // Fallback: DB.update goes through _supaWrapDB which may have different auth handling
-      await DB.update('fixed_costs',numId,_patchPayload);
+    // Try full PATCH — _supaReq handles timeout/errors, returns {} on success, null on fail
+    let r=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+numId,true); // suppress toast — we have fallback
+    if(r===null){
+      // HTTP 400 usually means vat_type/vat_pct columns don't exist in this deployment
+      // VAT is already encoded in notes — safe payload will work
+      console.warn('[FC SAVE] Full PATCH failed, retrying with safe payload');
+      r=await _supaReq('PATCH','fixed_costs',_safePayload,'?id=eq.'+numId);
+      if(r!==null){
+        console.log('[FC SAVE] Safe PATCH OK — VAT stored in notes field');
+      }
+    } else {
+      console.log('[FC SAVE] Full PATCH OK');
     }
+
     // Always update localStorage regardless of Supabase result
     try{
       const store=DB._gs();
       const li=(store.fixed_costs||[]).findIndex(c=>parseInt(c.id)===numId);
       if(li>=0) Object.assign(store.fixed_costs[li],_patchPayload);
+      else store.fixed_costs.push({..._patchPayload, id:numId});
       DB._sv(); DB._store=null;
-    }catch(e){}
+      console.log('[FC SAVE] localStorage updated');
+    }catch(e){ console.error('[FC SAVE] localStorage failed:',e); }
+
   } else {
-    // New entry: insert via DB (handles ID assignment) + direct POST
-    const insertResult=await DB.insert('fixed_costs',_patchPayload);
-    // DB.insert via _supaWrapDB already handles Supabase POST
-    // If _SUPA_ONLINE was false, also try direct POST
-    if(!_SUPA_ONLINE){
-      await _supaReq('POST','fixed_costs',_patchPayload).catch(()=>{});
-    }
-    if(insertResult&&insertResult.lastInsertRowid) data.id=insertResult.lastInsertRowid;
+    // New entry: try full POST then safe POST
+    let r=await _supaReq('POST','fixed_costs',_patchPayload,'?select=id',true);
+    if(r===null) r=await _supaReq('POST','fixed_costs',_safePayload,'?select=id');
+    if(r&&Array.isArray(r)&&r[0]&&r[0].id) data.id=parseInt(r[0].id)||r[0].id;
+    // Insert into localStorage
+    const ins=await DB.insert('fixed_costs',_patchPayload);
+    if(ins&&ins.lastInsertRowid) data.id=data.id||ins.lastInsertRowid;
   }
 
   // Step 2: Update in memory immediately with the exact values the user set
@@ -9460,44 +9470,39 @@ async function init(){
   const _dsEl=document.getElementById('nav-data-source');
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
 
-  // Step 1: Try supaLoadAll — this has critical ID remapping logic
-  // (local project/employee IDs get remapped to Supabase IDs so staffing matches)
   DB._store=null;
   let _supaOk=false;
-  try{ _supaOk=await supaLoadAll(); }catch(e){ console.warn('[init] supaLoadAll failed:',e); }
 
-  // Step 2: If supaLoadAll failed, try loading each table directly
-  if(!_supaOk && location.protocol!=='file:'){
-    try{
-      const TABLES=['projects','employees','staffing','fixed_costs','vacations',
-        'sick_leave','bank_transactions','invoices','future_costs',
-        'partner_invoices','cashflow_months','external_costs'];
-      const results=await Promise.all(
-        TABLES.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null))
-      );
-      const get=t=>results[TABLES.indexOf(t)];
-      const store=DB._gs();
-      let anyLoaded=false;
-      TABLES.forEach(t=>{
-        const rows=get(t);
-        // Only overwrite if Supabase returned actual rows (never wipe with null/empty)
-        if(rows!==null&&Array.isArray(rows)&&rows.length>0){
-          store[t]=rows; anyLoaded=true;
-        }
-      });
-      if(anyLoaded){
-        _supaOk=true; _SUPA_ONLINE=true;
-        DB._sv(); DB._store=null;
-      }
-    }catch(e){ console.error('[init] direct load failed:',e); }
+  // Try supaLoadAll up to 3 times — it has critical ID-remapping logic
+  // Retry handles Supabase cold-start (free tier wakes up slowly)
+  for(let attempt=0; attempt<3 && !_supaOk; attempt++){
+    if(attempt>0){
+      console.log(`[init] supaLoadAll attempt ${attempt+1}/3...`);
+      await new Promise(r=>setTimeout(r,1200)); // wait before retry
+    }
+    try{ _supaOk=await supaLoadAll(); }
+    catch(e){ console.warn('[init] supaLoadAll attempt '+(attempt+1)+' failed:',e); }
   }
 
-  // Step 3: Load from localStorage into S.*
-  await loadData();
-  _normFixedCosts(S.fixedCosts||[]);
-  if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
+  if(_supaOk){
+    // supaLoadAll already saved everything to localStorage and set _SUPA_ONLINE=true
+    // Just load into S.* from the now-populated localStorage
+    await loadData();
+    _normFixedCosts(S.fixedCosts||[]);
+    if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
+    console.log('[init] Loaded from Supabase. Projects:',S.projects.length,'Employees:',S.employees.length,'FC:',S.fixedCosts.length);
+  } else {
+    // All retries failed — still load whatever is in localStorage (offline fallback)
+    await loadData();
+    _normFixedCosts(S.fixedCosts||[]);
+    if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Offline — local data only</span>'
+      +'<br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry connection</span>';
+    console.warn('[init] Could not reach Supabase after 3 attempts. Using local data.');
+  }
 
-  // Step 4: Patch missing categories silently
+  // Patch missing categories silently (background)
   if(_supaOk&&S.fixedCosts.length){
     S.fixedCosts.filter(c=>!c.category||c.category.trim()===''||c.category==='Uncategorised')
       .forEach(c=>{
@@ -9506,17 +9511,7 @@ async function init(){
       });
   }
 
-  // Step 5: Update nav indicator
-  if(_dsEl){
-    if(_supaOk){
-      _dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
-    }else{
-      _dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Local data only</span>'
-        +'<br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry connection</span>';
-    }
-  }
-
-  // Step 6: Background tasks
+  // Background tasks (non-blocking)
   cleanOrphanedStaffing(false).catch(()=>{});
   if(S.staffing&&S.staffing.some(s=>s.note)) _staffingNotesPush();
 
@@ -9615,7 +9610,10 @@ async function retrySupabaseConnection(){
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
   DB._store=null;
   let ok=false;
-  try{ ok=await supaLoadAll(); }catch(e){}
+  for(let i=0;i<3&&!ok;i++){
+    if(i>0) await new Promise(r=>setTimeout(r,1000));
+    try{ ok=await supaLoadAll(); }catch(e){}
+  }
   if(ok){
     _SUPA_ONLINE=true;
     await loadData();
@@ -9626,8 +9624,8 @@ async function retrySupabaseConnection(){
     if(activePage) renderPage(activePage);
     showToast('✓ Verbonden met Supabase');
   }else{
-    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Nog steeds offline</span><br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Opnieuw proberen</span>';
-    showToast('Kan Supabase niet bereiken','error');
+    if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Offline</span><br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Opnieuw proberen</span>';
+    showToast('Kan Supabase niet bereiken — check internet verbinding','error');
   }
 }
 
