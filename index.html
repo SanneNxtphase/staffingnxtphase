@@ -10831,3 +10831,210 @@ function initBankPlanner(){
 
 </body>
 </html>
+/* ===============================
+   VAT + PROJECT STAFFING PATCH
+   =============================== */
+
+function round2(n){
+  return Math.round((Number(n)||0)*100)/100
+}
+
+/* ---------- VAT ENGINE ---------- */
+
+function calcVAT(amount, vatPct, vatType){
+
+  const amt = Number(amount)||0
+  const pct = Number(vatPct)||0
+  const type = vatType||"incl"
+
+  if(type==="none"||pct===0){
+    return {
+      net:round2(amt),
+      vat:0,
+      gross:round2(amt)
+    }
+  }
+
+  if(type==="excl"){
+
+    const net = round2(amt)
+    const vat = round2(net*(pct/100))
+    const gross = round2(net+vat)
+
+    return {net,vat,gross}
+
+  }
+
+  const gross = round2(amt)
+  const net = round2(gross/(1+pct/100))
+  const vat = round2(gross-net)
+
+  return {net,vat,gross}
+}
+
+/* ---------- VAT PREVIEW ---------- */
+
+function fcUpdateVATPreview(){
+
+  const amount =
+    parseFloat(document.getElementById("f-amount")?.value)||0
+
+  const vat =
+    parseFloat(document.getElementById("f-vat")?.value)||21
+
+  const vatType =
+    document.querySelector("input[name='fc-vat-type']:checked")?.value||"incl"
+
+  const res = calcVAT(amount,vat,vatType)
+
+  const g=document.getElementById("prev-gross")
+  const v=document.getElementById("prev-vat")
+  const n=document.getElementById("prev-net")
+
+  if(g) g.textContent = amount ? fmt(res.gross) : "—"
+  if(v) v.textContent = amount ? fmt(res.vat) : "—"
+  if(n) n.textContent = amount ? fmt(res.net) : "—"
+}
+
+/* ---------- SAVE FIXED COST ---------- */
+
+async function fcSaveEntry(id){
+
+  const name =
+    document.getElementById("f-name")?.value?.trim()
+
+  const category =
+    document.getElementById("f-cat")?.value || "General"
+
+  const amount =
+    parseFloat(document.getElementById("f-amount")?.value)||0
+
+  const vatPct =
+    parseFloat(document.getElementById("f-vat")?.value)||21
+
+  const vatType =
+    document.querySelector("input[name='fc-vat-type']:checked")?.value||"incl"
+
+  const active =
+    document.getElementById("f-active")?.checked ? 1 : 0
+
+  if(!name) return alert("Name required")
+
+  const payload={
+    name,
+    category,
+    amount:round2(amount),
+    vat_pct:vatPct,
+    vat_type:vatType,
+    active
+  }
+
+  try{
+
+    if(id){
+
+      await _supaReq(
+        "PATCH",
+        "fixed_costs",
+        payload,
+        `?id=eq.${id}`
+      )
+
+    }else{
+
+      await _supaReq(
+        "POST",
+        "fixed_costs",
+        payload
+      )
+
+    }
+
+    await loadData()
+
+    renderFixedCosts()
+    renderDashboard()
+    renderFinancial()
+
+    showToast("Saved")
+
+  }catch(e){
+
+    console.error(e)
+    showToast("Save failed","error")
+
+  }
+
+}
+
+/* ---------- STAFF WHOLE PROJECT ---------- */
+
+async function staffWholeProject(employeeId, projectId, days){
+
+  const emp=parseInt(employeeId)
+  const proj=parseInt(projectId)
+  const d=round2(days)
+
+  if(!emp) return alert("Select employee")
+  if(!proj) return alert("Select project")
+
+  const project=(S.projects||[]).find(p=>p.id==proj)
+
+  if(!project) return alert("Project not found")
+
+  let start=new Date(project.start_date)
+  let end=new Date(project.end_date)
+
+  const weeks=[]
+
+  while(start<=end){
+
+    weeks.push(toWeekKey(start))
+    start.setDate(start.getDate()+7)
+
+  }
+
+  for(const wk of weeks){
+
+    const existing=await _supaReq(
+      "GET",
+      "staffing",
+      null,
+      `?employee_id=eq.${emp}&project_id=eq.${proj}&week_key=eq.${wk}&select=id`
+    )
+
+    if(existing&&existing.length){
+
+      await _supaReq(
+        "PATCH",
+        "staffing",
+        {days:d},
+        `?id=eq.${existing[0].id}`
+      )
+
+    }else{
+
+      await _supaReq(
+        "POST",
+        "staffing",
+        {
+          employee_id:emp,
+          project_id:proj,
+          week_key:wk,
+          days:d
+        }
+      )
+
+    }
+
+  }
+
+  await loadData()
+
+  renderStaffing()
+  renderProjects()
+  renderDashboard()
+
+  showToast("Project staffing updated")
+
+}
