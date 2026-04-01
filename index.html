@@ -477,6 +477,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <div id="nav-data-source" style="padding:6px 10px;font-size:9px;color:rgba(255,255,255,.3);line-height:1.4">&#9679; Loading…</div>
     <div class="nav-item" id="nav-changepin" style="display:none" onclick="openChangePinModal()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M11 10l1 1 2-2"/></svg>Change PINs</div>
     <div class="nav-item" onclick="openShareableView()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="4" r="2"/><circle cx="4" cy="8" r="2"/><circle cx="12" cy="12" r="2"/><path d="M6 7l4-2M6 9l4 2"/></svg>Share / Snapshot</div>
+    <div class="nav-item" onclick="openMonthlyPDFModal()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 5h6M5 8h6M5 11h3"/><path d="M10 10l1.5 1.5L13 9" stroke-width="1.5"/></svg>Monthly Report PDF</div>
     <div class="nav-item" id="nav-supa-push" onclick="pushAllToSupabase()" style="color:rgba(80,200,120,.85)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 11V3M5 6l3-3 3 3M2 12v1a1 1 0 001 1h10a1 1 0 001-1v-1"/></svg>Push to Supabase</div>
     <div class="nav-item" id="nav-supa-pull" onclick="pullFromSupabase()" style="color:rgba(100,160,255,.85)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 5v8M5 10l3 3 3-3M2 3v1a1 1 0 001 1h10a1 1 0 001-1V3"/></svg>Pull from Supabase</div>
     <div class="nav-item" onclick="exportAllExcel()"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 7l2 2 2-2M9 7l2 2 2-2M8 5v4M8 12h.01"/></svg>Export to Excel</div>
@@ -3705,26 +3706,51 @@ function renderProjects(){
     </tr>`;
   };
 
-  // Build rows with separator between active and completed
-  const buildRows=(arr,label)=>{
-    const active=arr.filter(p=>!isCompleted(p));
-    const completed=arr.filter(p=>isCompleted(p));
-    let rows=active.map(p=>mkRow(p,false)).join('');
-    if(completed.length){
-      rows+=`<tr><td colspan="11" style="padding:4px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
-        ↓ Completed ${label} (${completed.length})
-      </td></tr>`;
-      rows+=completed.map(p=>mkRow(p,true)).join('');
-    }
-    return rows;
-  };
+  const today2=new Date().toISOString().split('T')[0];
+  const isFuture=p=>p.start_date&&p.start_date>today2&&(!p.end_date||p.end_date>today2);
 
-  // Show stopped projects too, with a section
-  document.getElementById('confirmed-tbody').innerHTML=buildRows(conf,'confirmed')||'<tr><td colspan="11" class="empty">No confirmed projects yet.</td></tr>';
-  document.getElementById('draft-tbody').innerHTML=buildRows(drft,'draft')||'<tr><td colspan="11" class="empty">No draft projects yet.</td></tr>';
-  // Add stopped row below draft table if any stopped exist
+  // ── Section separator row ──
+  const sectionDiv=(label,count,color='var(--t3)')=>
+    `<tr><td colspan="11" style="padding:5px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
+      ${label} (${count})
+    </td></tr>`;
+
+  // CONFIRMED: split into active/upcoming, then completed at very bottom
+  const confActive=conf.filter(p=>!isCompleted(p)&&!isFuture(p));
+  const confUpcoming=conf.filter(p=>isFuture(p));
+  const confCompleted=conf.filter(p=>isCompleted(p));
+
+  let confRows='';
+  if(confActive.length) confRows+=confActive.map(p=>mkRow(p,false)).join('');
+  if(confUpcoming.length){
+    confRows+=sectionDiv('↓ Upcoming — not yet started',confUpcoming.length,'var(--blue)');
+    confRows+=confUpcoming.map(p=>mkRow(p,false)).join('');
+  }
+  if(confCompleted.length){
+    confRows+=sectionDiv('↓ Completed confirmed',confCompleted.length);
+    confRows+=confCompleted.map(p=>mkRow(p,true)).join('');
+  }
+  document.getElementById('confirmed-tbody').innerHTML=confRows||'<tr><td colspan="11" class="empty">No confirmed projects yet.</td></tr>';
+
+  // DRAFT: split into active/upcoming + completed
+  const draftActive=drft.filter(p=>!isCompleted(p)&&!isFuture(p));
+  const draftUpcoming=drft.filter(p=>isFuture(p));
+  const draftCompleted=drft.filter(p=>isCompleted(p));
+  let draftRows='';
+  if(draftActive.length) draftRows+=draftActive.map(p=>mkRow(p,false)).join('');
+  if(draftUpcoming.length){
+    draftRows+=sectionDiv('↓ Upcoming draft',draftUpcoming.length,'var(--amber)');
+    draftRows+=draftUpcoming.map(p=>mkRow(p,false)).join('');
+  }
+  if(draftCompleted.length){
+    draftRows+=sectionDiv('↓ Completed draft',draftCompleted.length);
+    draftRows+=draftCompleted.map(p=>mkRow(p,true)).join('');
+  }
+  document.getElementById('draft-tbody').innerHTML=draftRows||'<tr><td colspan="11" class="empty">No draft projects yet.</td></tr>';
+
+  // STOPPED
   const stopEl=document.getElementById('stopped-tbody');
-  if(stopEl)stopEl.innerHTML=stop.map(mkRow).join('')||'<tr><td colspan="11" class="empty">No stopped projects.</td></tr>';
+  if(stopEl)stopEl.innerHTML=stop.map(p=>mkRow(p,true)).join('')||'<tr><td colspan="11" class="empty">No stopped projects.</td></tr>';
   // Year overview
   renderProjectYearOverview();
 }
@@ -4035,10 +4061,8 @@ function renderStaffing(){
               const d=entry?entry.days:0;
               pTotalDays+=d;
               const _dnote=entry?.note||'';
-              if(!inRange){
-                return`<td class="center" style="opacity:.6;cursor:not-allowed;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — adjust start/end date to enable staffing">🔒</td>`;
-              }
-              return`<td class="center editable${_dnote?' has-note':''}" style="color:var(--amber)" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_dnote?esc(_dnote):'Click to edit'}">${d||''}${_dnote?`<span style="font-size:7px;color:var(--amber);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_dnote)}</span>`:''}</td>`;
+              // Draft projects: always editable for forward planning
+              return`<td class="center editable${_dnote?' has-note':''}" style="color:var(--amber)${!inRange?';opacity:.7':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_dnote?esc(_dnote):(inRange?'Click to edit':'Draft — click to plan ahead')}">${d||''}${_dnote?`<span style="font-size:7px;color:var(--amber);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_dnote)}</span>`:''}</td>`;
             }).join('');
             const pCost=S.staffing.filter(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>s+emp.daily_cost*x.days,0);
             tbody+=`<tr class="row-proj">
@@ -9689,6 +9713,134 @@ async function doDeleteStaffingEntries(){
 }
 
 // Retry Supabase connection — called from nav indicator when offline
+function openMonthlyPDFModal(){
+  const now=new Date();
+  const m=document.getElementById('modal-content');
+  document.getElementById('modal-overlay').classList.add('open');
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  let moOpts='';
+  for(let yr=2025;yr<=2027;yr++){
+    for(let mo=1;mo<=12;mo++){
+      const val=yr+'-'+String(mo).padStart(2,'0');
+      const sel=(yr===now.getFullYear()&&mo===now.getMonth()+1)?' selected':'';
+      moOpts+=`<option value="${val}"${sel}>${months[mo-1]} ${yr}</option>`;
+    }
+  }
+  m.innerHTML=`
+    <div class="modal-header"><div class="modal-title">📄 Monthly Report PDF</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-lbl">Select Month</label>
+        <select class="form-input" id="pdf-month-sel">${moOpts}</select>
+      </div>
+      <div style="font-size:12px;color:var(--t3);margin-top:8px">Includes: Revenue · Staff Costs · Fixed Costs · Margin · Bank/Cashflow · Active Projects</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="generateMonthlyPDF()">Generate & Print</button>
+    </div>`;
+}
+function generateMonthlyPDF(){
+  const sel=document.getElementById('pdf-month-sel')?.value;
+  if(!sel)return;
+  const[y,m]=[parseInt(sel.split('-')[0]),parseInt(sel.split('-')[1])];
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const moLabel=months[m-1]+' '+y;
+  const moStr=sel;
+  const confRev=revForMonth(y,m,'confirmed');
+  const draftRev=revForMonth(y,m,'draft');
+  const staffCost=staffCostMonth(y,m);
+  const fixedCost=fixedMonthly(y,m);
+  const extCost=totalExtCostMonth(moStr);
+  const totalCost=staffCost+fixedCost+extCost;
+  const margin=confRev-totalCost;
+  const marginPct=confRev>0?(margin/confRev*100):0;
+  const cf=getCFEntryForMonth(moStr);
+  const cfOpening=cf?parseFloat(cf.opening||0):null;
+  const cfClosing=cf?parseFloat(cf.closing||0):null;
+  const cfNet=cfClosing!==null&&cfOpening!==null?cfClosing-cfOpening:null;
+  const wksM=getWeeksInMonth(y,m);
+  const activeProjs=S.projects.filter(p=>{
+    if(p.status!=='confirmed')return false;
+    const ms=(p.start_date||'0000-00').substring(0,7);
+    const me=(p.end_date||'9999-99').substring(0,7);
+    return ms<=moStr&&me>=moStr;
+  });
+  const empCosts=S.employees.map(e=>{
+    const days=S.staffing.filter(s=>s.employee_id===e.id&&wksM.includes(s.week_key)).reduce((s,x)=>s+parseFloat(x.days||0),0);
+    return{name:e.name,days,cost:days*(e.daily_cost||0)};
+  }).filter(e=>e.days>0).sort((a,b)=>b.cost-a.cost);
+  const fcBycat={};
+  S.fixedCosts.filter(c=>c.active&&fcInDateRange(c,y,m)).forEach(c=>{
+    const cat=c.category||'Other';
+    if(!fcBycat[cat])fcBycat[cat]=0;
+    fcBycat[cat]+=fcMonthlyAmount(c);
+  });
+  const f=v=>'€'+Math.round(v).toLocaleString('nl-NL');
+  const pct=v=>(v>=0?'+':'')+v.toFixed(1)+'%';
+  const clr=v=>v>=0?'#16a34a':'#dc2626';
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NXT Phase AI — ${moLabel}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a2e;background:#fff;padding:28px 32px}
+h1{font-size:22px;font-weight:800;color:#1a1a2e;margin-bottom:2px}.sub{font-size:12px;color:#6b7280;margin-bottom:20px}.logo{font-size:10px;font-weight:700;letter-spacing:1px;color:#3D2B1F;text-transform:uppercase;margin-bottom:4px}
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}.kpi{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;background:#f9fafb}.kpi-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;margin-bottom:4px}.kpi-val{font-size:20px;font-weight:800}.kpi-sub{font-size:9px;color:#9ca3af;margin-top:2px}
+.section{margin-bottom:18px}.section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;border-bottom:2px solid #e5e7eb;padding-bottom:4px;margin-bottom:8px}
+table{width:100%;border-collapse:collapse;font-size:11px}th{text-align:left;padding:5px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#6b7280;border-bottom:1px solid #e5e7eb}td{padding:5px 8px;border-bottom:1px solid #f3f4f6}.right{text-align:right}.bold{font-weight:700}
+.total-row td{font-weight:700;border-top:2px solid #e5e7eb;border-bottom:none;padding-top:7px}.green{color:#16a34a}.red{color:#dc2626}.blue{color:#1d4ed8}.amber{color:#d97706}
+.cf-box{border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.cf-item .lbl{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700}.cf-item .val{font-size:18px;font-weight:800;margin-top:2px}
+.footer{margin-top:24px;font-size:9px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:10px;display:flex;justify-content:space-between}
+@media print{body{padding:14px 18px}@page{margin:12mm 14mm;size:A4}}</style></head><body>
+<div class="logo">NXT Phase AI · Confidential</div>
+<h1>${moLabel}</h1>
+<div class="sub">Generated ${new Date().toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric'})}</div>
+<div class="kpi-row">
+  <div class="kpi" style="border-color:#1d4ed8"><div class="kpi-lbl">Confirmed Revenue</div><div class="kpi-val blue">${f(confRev)}</div><div class="kpi-sub">${draftRev>0?'+ '+f(draftRev)+' draft':' '}</div></div>
+  <div class="kpi" style="border-color:#dc2626"><div class="kpi-lbl">Total Costs</div><div class="kpi-val red">${f(totalCost)}</div><div class="kpi-sub">Staff + Fixed + External</div></div>
+  <div class="kpi" style="border-color:${clr(margin)}"><div class="kpi-lbl">Net Margin</div><div class="kpi-val" style="color:${clr(margin)}">${f(margin)}</div><div class="kpi-sub">${pct(marginPct)} of revenue</div></div>
+  <div class="kpi" style="border-color:#d97706"><div class="kpi-lbl">Fixed Costs</div><div class="kpi-val amber">${f(fixedCost)}</div><div class="kpi-sub">Excl. VAT · ${Object.keys(fcBycat).length} categories</div></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
+  <div class="section"><div class="section-title">Staffing Costs</div>
+    <table><thead><tr><th>Team Member</th><th class="right">Days</th><th class="right">Cost</th></tr></thead><tbody>
+    ${empCosts.map(e=>`<tr><td>${e.name}</td><td class="right">${e.days}d</td><td class="right">${f(e.cost)}</td></tr>`).join('')}
+    <tr class="total-row"><td class="bold">Total</td><td class="right bold">${empCosts.reduce((s,e)=>s+e.days,0)}d</td><td class="right bold red">${f(staffCost)}</td></tr>
+    </tbody></table>
+  </div>
+  <div class="section"><div class="section-title">Fixed Costs by Category</div>
+    <table><thead><tr><th>Category</th><th class="right">Monthly (excl. VAT)</th></tr></thead><tbody>
+    ${Object.entries(fcBycat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`<tr><td>${cat}</td><td class="right">${f(amt)}</td></tr>`).join('')}
+    ${extCost>0?`<tr><td>External Project Costs</td><td class="right">${f(extCost)}</td></tr>`:''}
+    <tr class="total-row"><td class="bold">Total</td><td class="right bold red">${f(fixedCost+extCost)}</td></tr>
+    </tbody></table>
+  </div>
+</div>
+<div class="section"><div class="section-title">Active Projects (${activeProjs.length})</div>
+  <table><thead><tr><th>Client</th><th>Project</th><th class="right">Revenue</th><th class="right">Staff Cost</th><th class="right">Ext Cost</th><th class="right">Margin</th></tr></thead><tbody>
+  ${activeProjs.map(p=>{
+    const sc=S.staffing.filter(s=>s.project_id===p.id&&wksM.includes(s.week_key)).reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
+    const ec=totalExtCostMonth(moStr,p.id)||0;
+    const rev=revForMonth(y,m,'confirmed',[p.id])||0;
+    const mg=p.revenue>0?((p.revenue-sc-ec)/p.revenue*100):0;
+    return`<tr><td>${p.client_name}</td><td>${p.name}</td><td class="right blue">${p.revenue>0?f(p.revenue):'—'}</td><td class="right">${sc>0?f(sc):'—'}</td><td class="right">${ec>0?f(ec):'—'}</td><td class="right bold" style="color:${clr(p.revenue-sc-ec)}">${p.revenue>0?pct(mg):'—'}</td></tr>`;
+  }).join('')}
+  </tbody></table>
+</div>
+${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
+  <div class="cf-box">
+    <div class="cf-item"><div class="lbl">Opening Balance</div><div class="val">${f(cfOpening)}</div></div>
+    <div class="cf-item"><div class="lbl">Net Movement</div><div class="val" style="color:${clr(cfNet)}">${cfNet>=0?'+':''}${f(cfNet)}</div></div>
+    <div class="cf-item"><div class="lbl">Closing Balance</div><div class="val" style="color:${clr(cfClosing)}">${f(cfClosing)}</div></div>
+  </div>
+</div>`:`<div class="section"><div class="section-title">Bank / Cashflow</div><p style="color:#9ca3af;font-size:11px;padding:8px 0">No cashflow data for this month. Enter data in the Cashflow module.</p></div>`}
+<div class="footer"><span>NXT Phase AI · staffingnxtphase.vercel.app</span><span>Monthly Report ${moLabel}</span></div>
+</body></html>`;
+  closeModal();
+  const win=window.open('','_blank','width=960,height=720');
+  if(!win){alert('Pop-up blocked — please allow pop-ups for this site');return;}
+  win.document.write(html);
+  win.document.close();
+  setTimeout(()=>win.print(),500);
+}
+
 async function retrySupabaseConnection(){
   const _dsEl=document.getElementById('nav-data-source');
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
