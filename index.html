@@ -1153,9 +1153,9 @@ const DB={
     }
     if(!this._store){
       this._store={projects:[],employees:[],staffing:[],vacations:[],sick_leave:[],
-        fixed_costs:[],bank_transactions:[],invoices:[],future_costs:[],partner_invoices:[],cashflow_months:[],
+        fixed_costs:[],bank_transactions:[],invoices:[],future_costs:[],partner_invoices:[],cashflow_months:[],external_costs:[],
         settings:[{key:'starting_balance',value:'0'}],
-        _ids:{projects:1,employees:1,staffing:1,vacations:1,sick_leave:1,fixed_costs:1,bank_transactions:1,invoices:1,future_costs:1,partner_invoices:1,cashflow_months:1}};
+        _ids:{projects:1,employees:1,staffing:1,vacations:1,sick_leave:1,fixed_costs:1,bank_transactions:1,invoices:1,future_costs:1,partner_invoices:1,cashflow_months:1,external_costs:1}};
     }
     // Ensure all tables exist
     ['projects','employees','staffing','vacations','sick_leave','fixed_costs','bank_transactions',
@@ -1745,7 +1745,8 @@ async function pushAllToSupabase() {
     localStorage.setItem('sp-v5', JSON.stringify(store0));
 
     var tables = ['projects','employees','fixed_costs','invoices','future_costs',
-      'partner_invoices','bank_transactions','vacations','staffing','cashflow_months'];
+      'partner_invoices','bank_transactions','vacations','staffing','cashflow_months',
+      'external_costs','sick_leave'];
     var pushed = 0;
     var errors = 0;
 
@@ -3070,9 +3071,8 @@ async function saveExtCost(id){
   const startWk=document.getElementById('ec-week-key')?.value||null;
   const endWk=document.getElementById('ec-week-key-end')?.value||startWk;
 
-  // Build list of weeks between start and end
   const weeks=[];
-  if(startWk&&typeof wkMonday==='function'){
+  if(startWk){
     let d=new Date(wkMonday(startWk));
     const endD=endWk?new Date(wkMonday(endWk)):new Date(d);
     endD.setDate(endD.getDate()+6);
@@ -3093,23 +3093,32 @@ async function saveExtCost(id){
     usd_rate:parseFloat(document.getElementById('ec-usd-rate')?.value)||null
   };
 
-  if(id){
-    // Edit: update single entry with new total and week range
-    const data={...baseData,amount:totalAmount,week_key:startWk,week_count:weekCount};
-    await DB.update('external_costs',id,data);
-    showToast('External cost updated');
-  } else if(weeks.length>1){
-    // Multi-week: one entry per week, amount spread evenly
-    for(const wk of weeks){
-      await DB.insert('external_costs',{...baseData,amount:perWk,week_key:wk,week_count:weekCount});
-    }
-    showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk — total ${fmt(totalAmount)}`);
-  } else {
-    // Single week or no week
-    await DB.insert('external_costs',{...baseData,amount:totalAmount,week_key:startWk||null,week_count:1});
-    showToast('External cost added');
-  }
   closeModal();
+  let ok=false;
+  try{
+    if(id){
+      const payload={...baseData,amount:totalAmount,week_key:startWk,week_count:weekCount};
+      const r=await _supaReq('PATCH','external_costs',payload,'?id=eq.'+id);
+      ok=(r!==null);
+      if(ok) showToast('External cost updated');
+    } else if(weeks.length>1){
+      let allOk=true;
+      for(const wk of weeks){
+        const r=await _supaReq('POST','external_costs',{...baseData,amount:perWk,week_key:wk,week_count:weekCount});
+        if(!r) allOk=false;
+      }
+      ok=allOk;
+      if(ok) showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk — total ${fmt(totalAmount)}`);
+    } else {
+      const r=await _supaReq('POST','external_costs',{...baseData,amount:totalAmount,week_key:startWk||null,week_count:1});
+      ok=(r!==null);
+      if(ok) showToast('External cost added');
+    }
+  }catch(e){
+    console.error('[saveExtCost]',e);
+    ok=false;
+  }
+  if(!ok) showToast('⚠ Opslaan mislukt — check je verbinding','error');
   await loadData();
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
@@ -3118,12 +3127,17 @@ async function saveExtCost(id){
 
 async function deleteExtCost(id){
   if(!confirm('Delete this external cost entry?'))return;
-  await DB.delete('external_costs',id);
+  try{
+    const r=await _supaReq('DELETE','external_costs',null,'?id=eq.'+id);
+    if(r===null) showToast('⚠ Verwijderen mislukt','error');
+    else showToast('External cost deleted');
+  }catch(e){
+    showToast('⚠ Verwijderen mislukt','error');
+  }
   await loadData();
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
   renderDashboard&&renderDashboard();
-  showToast('External cost deleted');
 }
 
 // ── External Project Costs helpers ──────────────────────────────────────────
@@ -4948,20 +4962,29 @@ async function saveSickLeave(id){
   const sd=document.getElementById('f-sl-start').value;
   if(!sd)return alert('Start date required.');
   const edVal=document.getElementById('f-sl-end').value;
-  const ed=edVal||sd; // default end = start if not yet known
+  const ed=edVal||sd;
   if(ed<sd)return alert('End date must be after start date.');
   let days=parseFloat(document.getElementById('f-sl-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
   const data={employee_id:parseInt(document.getElementById('f-sl-emp').value),start_date:sd,end_date:ed,days,note:document.getElementById('f-sl-note').value};
-  if(id)await DB.update('sick_leave',id,data);else await DB.insert('sick_leave',data);
-  closeModal();await loadData();renderSickLeave();renderPage('schedule');
-  showToast(id?'Sick leave updated':'Sick leave registered');
+  closeModal();
+  try{
+    let r;
+    if(id) r=await _supaReq('PATCH','sick_leave',data,'?id=eq.'+id);
+    else r=await _supaReq('POST','sick_leave',data);
+    if(!r) showToast('⚠ Opslaan mislukt','error');
+    else showToast(id?'Sick leave updated':'Sick leave registered');
+  }catch(e){showToast('⚠ Opslaan mislukt','error');}
+  await loadData();renderSickLeave();renderPage('schedule');
 }
 async function deleteSickLeave(id){
   if(!confirm('Delete this sick leave entry?'))return;
-  await DB.delete('sick_leave',id);
+  try{
+    const r=await _supaReq('DELETE','sick_leave',null,'?id=eq.'+id);
+    if(!r) showToast('⚠ Verwijderen mislukt','error');
+    else showToast('Sick leave deleted');
+  }catch(e){showToast('⚠ Verwijderen mislukt','error');}
   await loadData();renderSickLeave();renderPage('schedule');
-  showToast('Sick leave deleted');
 }
 function renderSickLeave(){
   const today=new Date().toISOString().split('T')[0];
@@ -9407,6 +9430,9 @@ async function exportReadonlySnapshot(){
     transactions:inclBank?S.transactions:[],
     futureCosts:inclFinancials?S.futureCosts:[],
     partnerInvoices:inclFinancials?S.partnerInvoices:[],
+    cashflowMonths:inclFinancials?S.cashflowMonths:[],
+    externalCosts:S.externalCosts||[],
+    sickLeave:S.sickLeave||[],
     startingBalance:inclBank?S.startingBalance:0,
     vatOverrides:S.vatOverrides
   };
@@ -9424,7 +9450,7 @@ const __SNAPSHOT_DATA__=${JSON.stringify(payload)};
 // Override DB to use injected data (read-only, no IndexedDB writes)
 const DB={
   async select(table){
-    const map={projects:'projects',employees:'employees',staffing:'staffing',vacations:'vacations',invoices:'invoices',fixed_costs:'fixedCosts',bank_transactions:'transactions',future_costs:'futureCosts',partner_invoices:'partnerInvoices'};
+    const map={projects:'projects',employees:'employees',staffing:'staffing',vacations:'vacations',invoices:'invoices',fixed_costs:'fixedCosts',bank_transactions:'transactions',future_costs:'futureCosts',partner_invoices:'partnerInvoices',cashflow_months:'cashflowMonths',external_costs:'externalCosts',sick_leave:'sickLeave'};
     return __SNAPSHOT_DATA__[map[table]||table]||[];
   },
   async insert(){return{id:0};},
