@@ -227,9 +227,6 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 .row-draft-div td:first-child{background:var(--amber-p)!important;}
 .row-cost td{background:var(--bg3)!important;border-top:2px solid var(--bdr2);}
 .row-cost td:first-child{background:var(--bg3)!important;}
-#fc-category-cards .row-proj td{background:var(--bg)!important;}
-#fc-category-cards .row-proj:hover td{background:var(--blue-bg)!important;}
-.audit-banner{margin:0 0 12px;padding:10px 12px;border:1px solid var(--amber);background:var(--amber-p);border-radius:var(--rsm);font-size:11px;color:#7a4a0a;}
 .cell-over{background:var(--red-p)!important;}
 .cell-partial{background:var(--amber-p)!important;}
 .cell-full{background:var(--green-p)!important;}
@@ -1883,11 +1880,11 @@ var _SUPA_SCHEMA = {
   projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
-  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
+  invoices: ['project_id','amount','month','billing_type','paid','invoice_sent','draft_created','invoice_number','notes'],
   vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
-  external_costs: ['project_id','vendor','description','hours','rate','amount','date','invoice_date','status','notes','week_key','week_key_end','week_count','total_amount','usd_amount','usd_rate'],
+  external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_key_end','week_count','total_amount','usd_amount','usd_rate'],
   cashflow_months: ['month','opening','closing','notes'],
   bank_transactions: ['date','description','amount','category','type','amount_excl_vat','vat_pct','counterparty','is_fixed'],
   partner_invoices: ['project_id','amount','month','paid','notes'],
@@ -2262,14 +2259,6 @@ function _parseCFNotes(entries){
   });
   return entries;
 }
-function _normalizeExtCostRow(row){
-  if(!row) return row;
-  if(!row.date && row.invoice_date) row.date=row.invoice_date;
-  if(!row.invoice_date && row.date) row.invoice_date=row.date;
-  row.project_id=parseInt(row.project_id)||row.project_id;
-  row.id=parseInt(row.id)||row.id;
-  return row;
-}
 function getCFEntryForMonth(moStr){
   return S.cashflowMonths.find(e=>e.month===moStr)||null;
 }
@@ -2448,7 +2437,6 @@ function navigate(page,el){
       // Page is already visible (navigate() called classList.add above)
       // Show loading indicator
       const cardsEl=document.getElementById('fc-category-cards');
-  const audit=window.__NXP_AUDIT__||{issueCount:0,issues:[]};
       if(cardsEl&&!S.fixedCosts.length)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading…</div>';
       else renderFixedCosts(); // show existing data immediately
 
@@ -2551,21 +2539,13 @@ function navigate(page,el){
       renderPage(page);
       // Refresh relevant tables from Supabase based on page
       const pageTableMap={
-        dashboard:['projects','employees','staffing','fixed_costs','external_costs','cashflow_months'],
-        financial:['cashflow_months','fixed_costs','invoices','staffing','future_costs','bank_transactions','external_costs','settings'],
-        projects:['projects','external_costs','staffing','invoices'],
-        staffing:['employees','projects','staffing','vacations','sick_leave','settings'],
-        schedule:['employees','projects','staffing','vacations','sick_leave','settings'],
-        sickleave:['sick_leave','employees'],
+        sickleave:['sick_leave'],
         vacation:['vacations','employees'],
-        employees:['employees','staffing','vacations','sick_leave'],
         invoices:['invoices','projects'],
         partner:['partner_invoices','projects'],
-        fixedcosts:['fixed_costs','settings'],
-        extcosts:['external_costs','projects'],
-        cashflow:['cashflow_months','settings'],
+        cashflow:['cashflow_months'],
         forecast:['future_costs','projects'],
-        history:['projects','employees','staffing','invoices','fixed_costs','external_costs','cashflow_months'],
+        history:['projects','employees','staffing','invoices'],
       };
       const tables=pageTableMap[page]||[];
       if(!tables.length||location.protocol==='file:') return;
@@ -2573,17 +2553,15 @@ function navigate(page,el){
         const results=await Promise.all(tables.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null)));
         const tableToS={sick_leave:'sickLeave',vacations:'vacations',employees:'employees',
           invoices:'invoices',projects:'projects',partner_invoices:'partnerInvoices',
-          cashflow_months:'cashflowMonths',future_costs:'futureCosts',staffing:'staffing',
-          fixed_costs:'fixedCosts',external_costs:'externalCosts',bank_transactions:'transactions'};
+          cashflow_months:'cashflowMonths',future_costs:'futureCosts',staffing:'staffing'};
         const store=DB._gs();
         let changed=false;
         tables.forEach((t,i)=>{
           const rows=results[i];
-          if(rows===null||rows===undefined)return;
+          if(!rows||!rows.length)return;
           const sKey=tableToS[t];
-          let norm=(rows||[]).map(r=>({...r,id:parseInt(r.id)||r.id}));
-          if(t==='fixed_costs') norm=_normFixedCosts(norm);
-          if(t==='external_costs') norm=norm.map(_normalizeExtCostRow);
+          // Normalize IDs
+          const norm=rows.map(r=>({...r,id:parseInt(r.id)||r.id}));
           if(sKey&&S[sKey]!==undefined){ S[sKey]=norm; changed=true; }
           store[t]=norm;
         });
@@ -2634,7 +2612,7 @@ async function loadData(){
       if(fut!==null){S.futureCosts=(fut||[]).map(f=>({...f,id:parseInt(f.id)||f.id}));anyLoaded=true;}
       if(pi!==null){S.partnerInvoices=(pi||[]).map(p=>({...p,id:parseInt(p.id)||p.id}));anyLoaded=true;}
       if(cfm!==null){S.cashflowMonths=cfm||[];_parseCFNotes(S.cashflowMonths);anyLoaded=true;}
-      if(ec!==null){S.externalCosts=(ec||[]).map(e=>_normalizeExtCostRow({...e}));anyLoaded=true;}
+      if(ec!==null){S.externalCosts=(ec||[]).map(e=>({...e,id:parseInt(e.id)||e.id,project_id:parseInt(e.project_id)||e.project_id}));anyLoaded=true;}
 
       if(st!==null){
         // Deduplicate staffing: keep latest row per employee+project+week
@@ -2683,7 +2661,6 @@ async function loadData(){
         // Update nav indicator — live
         try{const d=document.getElementById('nav-data-source');if(d)d.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';}catch(e){}
         console.log('[loadData] Live — projects:'+S.projects.length+' staffing:'+S.staffing.length+' fc:'+S.fixedCosts.length);
-        try{ runDataIntegrityAudit(); }catch(e){}
         return;
       }
     }catch(e){
@@ -2815,7 +2792,7 @@ function renderExtCosts(){
 
   let rows=S.externalCosts||[];
   if(filterProj) rows=rows.filter(e=>e.project_id==filterProj);
-  rows=[...rows].map(e=>_normalizeExtCostRow({...e})).sort((a,b)=>((b.date||b.invoice_date||'').localeCompare(a.date||a.invoice_date||'')));
+  rows=[...rows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 
   // KPIs
   const total=rows.reduce((s,e)=>s+parseFloat(e.amount||0),0);
@@ -2847,7 +2824,7 @@ function renderExtCosts(){
       <td class="right text-muted">${e.rate?fmt(e.rate):'—'}</td>
       <td class="right bold" style="color:var(--orange,#f97316)">${fmt(parseFloat(e.amount||0))}${e.usd_amount?`<div style="font-size:9px;color:var(--t3);font-weight:400">$${parseFloat(e.usd_amount).toFixed(0)} @ ${parseFloat(e.usd_rate||0.92).toFixed(4)}</div>`:''}</td>
       <td>${weekLbl}</td>
-      <td class="text-muted" style="font-size:11px">${e.date||e.invoice_date||'—'}</td>
+      <td class="text-muted" style="font-size:11px">${e.date||'—'}</td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('extcost',${e.id})">Edit</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteExtCost(${e.id})">Delete</button>
@@ -3111,9 +3088,6 @@ async function saveExtCost(id){
     hours:parseFloat(document.getElementById('ec-hours')?.value)||null,
     rate:parseFloat(document.getElementById('ec-rate')?.value)||null,
     date:document.getElementById('ec-date')?.value||null,
-    invoice_date:document.getElementById('ec-date')?.value||null,
-    status:'open',
-    notes:(document.getElementById('ec-desc')?.value||'').trim(),
     total_amount:totalAmount,
     week_key_end:endWk||startWk||null,
     usd_amount:parseFloat(document.getElementById('ec-usd')?.value)||null,
@@ -3179,11 +3153,11 @@ function toggleProjectDetail(id, pid){
   const margin = p.revenue - cost - extTotal;
   const mg = p.revenue>0?(margin/p.revenue*100):0;
   const mc = mg>40?'var(--green)':mg>10?'var(--blue)':'var(--red)';
-  const extRows = extCosts.length ? extCosts.map(e=>_normalizeExtCostRow({...e})).sort((a,b)=>((b.date||b.invoice_date||'').localeCompare(a.date||a.invoice_date||''))).map(e=>`
+  const extRows = extCosts.length ? extCosts.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(e=>`
     <tr style="background:var(--bg2);font-size:11px">
       <td style="padding:5px 8px 5px 32px;color:var(--orange,#f97316)">${esc(e.vendor||'—')}</td>
       <td style="padding:5px 8px;color:var(--t2)">${esc(e.description||'—')}</td>
-      <td style="padding:5px 8px;color:var(--t3)">${e.date||e.invoice_date||'—'}</td>
+      <td style="padding:5px 8px;color:var(--t3)">${e.date||'—'}</td>
       <td style="padding:5px 8px;text-align:right;font-weight:600;color:var(--orange,#f97316)">${fmt(parseFloat(e.amount||0))}</td>
       <td style="padding:5px 8px"><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('extcost',${e.id})">Edit</button>
@@ -3255,16 +3229,14 @@ function projExtCostMonth(pid,mStr){
   // mStr = 'YYYY-MM'
   return (S.externalCosts||[]).filter(e=>{
     if(e.project_id!==pid&&e.project_id!=pid)return false;
-    const d=e.date||e.invoice_date;
-    if(!d)return true; // no date = always counts
-    return d.substring(0,7)===mStr;
+    if(!e.date)return true; // no date = always counts
+    return e.date.substring(0,7)===mStr;
   }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function totalExtCostMonth(mStr){
   return (S.externalCosts||[]).filter(e=>{
-    const d=e.date||e.invoice_date;
-    if(!d)return false;
-    return d.substring(0,7)===mStr;
+    if(!e.date)return false;
+    return e.date.substring(0,7)===mStr;
   }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function renderDashboard(){
@@ -3291,7 +3263,7 @@ function renderDashboard(){
     <div class="kpi ${profit>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${profit>=0?'green':'red'}">${fmtS(profit)}</div><div class="kpi-sub">Rev − Staff${extCostThisMonth>0?' − Ext':''}</div></div>
     <div class="kpi an"><div class="kpi-lbl">Active Projects</div><div class="kpi-val">${S.projects.filter(p=>{if(p.status!=='confirmed')return false;const weeks=getWeeksInMonth(y,m);return projectWkKeys(p).some(w=>weeks.includes(w));}).length}</div><div class="kpi-sub">${monthLbl(y,m)}</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Fixed Costs /mo</div><div class="kpi-val amber">${fmtS(fc)}</div><div class="kpi-sub">Excl. VAT · See Company Dashboard</div></div>
-    <div class="kpi ${margin>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin %</div><div class="kpi-val ${margin>=0?'green':'red'}">${margin.toFixed(1)}%</div><div class="kpi-sub">Revenue vs staffing${extCostThisMonth>0?' + ext costs':''}</div></div>`;
+    <div class="kpi ${profit>=0?'ag':'ar'}"><div class="kpi-lbl">Project Margin</div><div class="kpi-val ${profit>=0?'green':'red'}">${fmtS(profit)}</div><div class="kpi-sub">Rev − staffing only · ${margin.toFixed(1)}%</div></div>`;
   document.getElementById('dash-draft-kpis').innerHTML=draftRev>0||allDraftRev>0?`
     <div class="draft-kpi"><div class="kpi-lbl">Draft Rev (this month)</div><div class="kpi-val amber">${fmtS(draftRev)}</div></div>
     <div class="draft-kpi"><div class="kpi-lbl">All Draft Projects</div><div class="kpi-val">${fmtS(allDraftRev)}</div><div class="kpi-sub">Total pipeline</div></div>
@@ -4461,7 +4433,7 @@ function openBulkStaffModal(){
           </div>
           <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:2px">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--t2)">
-              <input type="checkbox" id="bs-overwrite" onchange="bulkStaffPreview()" style="width:14px;height:14px">
+              <input type="checkbox" id="bs-overwrite" checked onchange="bulkStaffPreview()" style="width:14px;height:14px">
               Overwrite existing
             </label>
           </div>
@@ -4553,11 +4525,10 @@ function bulkStaffPreview(){
     btn.disabled=true;return;
   }
 
-  const emp=S.employees.find(e=>e.id===empId);
-  const proj=S.projects.find(p=>p.id===projId);
+  const emp=S.employees.find(e=>parseInt(e.id)===empId);
+  const proj=S.projects.find(p=>parseInt(p.id)===projId);
   if(!emp||!proj){preview.innerHTML='Not found.';btn.disabled=true;return;}
 
-  // Convert input week (YYYY-Www) to our week key format (YYYY-Www)
   const startWk=startWkInput;
   const allProjWks=projectWkKeys(proj);
   const weeksToFill=allProjWks.filter(wk=>wk>=startWk);
@@ -4567,12 +4538,11 @@ function bulkStaffPreview(){
     btn.disabled=true;return;
   }
 
-  // Check existing staffing
   const existing=weeksToFill.filter(wk=>
-    S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
+    S.staffing.some(s=>parseInt(s.employee_id)===empId&&parseInt(s.project_id)===projId&&s.week_key===wk&&parseFloat(s.days||0)>0)
   );
   const toWrite=overwrite?weeksToFill:weeksToFill.filter(wk=>
-    !S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
+    !S.staffing.some(s=>parseInt(s.employee_id)===empId&&parseInt(s.project_id)===projId&&s.week_key===wk&&parseFloat(s.days||0)>0)
   );
 
   const weekBadges=toWrite.slice(0,12).map(wk=>`<span class="bulk-week-badge">W${wk.split('-W')[1]}</span>`).join('');
@@ -4580,17 +4550,17 @@ function bulkStaffPreview(){
 
   preview.innerHTML=`
     <div><strong>${esc(emp.name)}</strong> → <strong>${esc(proj.client_name+' / '+proj.name)}</strong></div>
-    <div style="margin-top:4px"><strong>${days}</strong> days/week &bull; <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
-      ${existing.length&&!overwrite?`<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>`:''}
+    <div style="margin-top:4px"><strong>${days}</strong> days/week &bull; <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} ${overwrite?'to write':'new week'+(toWrite.length!==1?'s':'')}
+      ${existing.length&&!overwrite?`<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped — turn on overwrite to replace them)</span>`:''}
       ${existing.length&&overwrite?`<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>`:''}
     </div>
     <div style="margin-top:6px">${weekBadges}${more}</div>
     <div style="margin-top:6px;color:var(--t3);font-size:10px">
-      Project end: ${proj.end_date} &bull; Cost: ${fmt(emp.daily_cost*days*toWrite.length)}
+      Project end: ${proj.end_date||'—'} &bull; Cost: ${fmt((parseFloat(emp.daily_cost)||0)*days*toWrite.length)}
     </div>`;
 
   btn.disabled=toWrite.length===0;
-  btn.textContent=toWrite.length===0?'Nothing to assign':`Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
+  btn.textContent=overwrite?`Assign / Overwrite ${toWrite.length} Week${toWrite.length!==1?'s':''}`:(toWrite.length===0?'Nothing to assign':`Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`);
 }
 
 async function bulkStaffConfirm(){
@@ -4601,31 +4571,43 @@ async function bulkStaffConfirm(){
   const overwrite=document.getElementById('bs-overwrite')?.checked;
   if(!empId||!projId||!days||!startWkInput)return;
 
-  const proj=S.projects.find(p=>p.id===projId);
+  const proj=S.projects.find(p=>parseInt(p.id)===projId);
   if(!proj)return;
 
   const startWk=startWkInput;
   const allProjWks=projectWkKeys(proj);
   const weeksToFill=allProjWks.filter(wk=>wk>=startWk);
   const toWrite=overwrite?weeksToFill:weeksToFill.filter(wk=>
-    !S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
+    !S.staffing.some(s=>parseInt(s.employee_id)===empId&&parseInt(s.project_id)===projId&&s.week_key===wk&&parseFloat(s.days||0)>0)
   );
 
   if(!toWrite.length){showToast('Nothing to assign','warning');return;}
 
-  // Disable button, show progress
   const btn=document.getElementById('bs-confirm-btn');
   if(btn){btn.disabled=true;btn.textContent='Assigning…';}
-
-  // Add progress bar
   const preview=document.getElementById('bs-preview');
-  if(preview){
+  if(preview && !document.getElementById('bs-prog-wrap')){
     preview.innerHTML+=`<div class="bulk-progress" id="bs-prog-wrap"><div class="bulk-progress-bar" id="bs-prog-bar" style="width:0%"></div></div>`;
   }
 
-  let done=0;
+  let done=0, failed=0;
   for(const wk of toWrite){
-    await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days});
+    try{
+      await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days});
+      if(_SUPA_ONLINE){
+        const ex=await _supaReq('GET','staffing',null,`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`,true);
+        if(ex&&ex.length>0){
+          const r=await _supaReq('PATCH','staffing',{days},'?id=eq.'+ex[0].id,true);
+          if(r===null) failed++;
+        } else {
+          const r=await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days},'',true);
+          if(r===null) failed++;
+        }
+      }
+    }catch(e){
+      console.error('[bulkStaffConfirm]',wk,e);
+      failed++;
+    }
     done++;
     const pct=Math.round(done/toWrite.length*100);
     const bar=document.getElementById('bs-prog-bar');
@@ -4635,7 +4617,10 @@ async function bulkStaffConfirm(){
   closeModal();
   await loadData();
   renderStaffing();
-  showToast(`Assigned ${toWrite.length} week${toWrite.length!==1?'s':''} to ${S.employees.find(e=>e.id===empId)?.name||'employee'}`,'success');
+  if(typeof renderProjects==='function')renderProjects();
+  if(typeof renderSchedule==='function')renderSchedule();
+  if(typeof renderDashboard==='function')renderDashboard();
+  showToast(failed?`Assigned ${toWrite.length-failed}/${toWrite.length} weeks — ${failed} failed`:`Assigned ${toWrite.length} week${toWrite.length!==1?'s':''} to ${S.employees.find(e=>parseInt(e.id)===empId)?.name||'employee'}`,failed?'warning':'success');
 }
 // ══ END BULK STAFFING ═════════════════════════════════════════════
 
@@ -5919,7 +5904,6 @@ function fixedMonthlySplit(){
 async function fcForceReload(){
   showToast('Force reloading from Supabase…','info');
   const cardsEl=document.getElementById('fc-category-cards');
-  const audit=window.__NXP_AUDIT__||{issueCount:0,issues:[]};
   if(cardsEl)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading from Supabase…</div>';
   try{
     const url=_SUPA_URL+'/rest/v1/fixed_costs?select=*&order=id.asc';
@@ -6143,7 +6127,6 @@ function renderFixedCosts(){
   };
 
   const cardsEl=document.getElementById('fc-category-cards');
-  const audit=window.__NXP_AUDIT__||{issueCount:0,issues:[]};
   if(!cardsEl)return; // page not visible
 
   if(!sorted.length){
@@ -6952,35 +6935,6 @@ async function deleteCFMonth(id){
   showToast('Month deleted');
 }
 
-function runDataIntegrityAudit(){
-  const issues=[];
-  const projIds=new Set((S.projects||[]).map(p=>String(p.id)));
-  const empIds=new Set((S.employees||[]).map(e=>String(e.id)));
-  const staffSeen=new Set();
-  (S.staffing||[]).forEach(s=>{
-    const key=[s.employee_id,s.project_id,s.week_key].join('__');
-    if(staffSeen.has(key)) issues.push('Duplicate staffing row for '+key);
-    staffSeen.add(key);
-    if(!empIds.has(String(s.employee_id))) issues.push('Staffing row without employee '+s.employee_id);
-    if(!projIds.has(String(s.project_id))) issues.push('Staffing row without project '+s.project_id);
-  });
-  (S.invoices||[]).forEach(i=>{ if(i.project_id!=null && !projIds.has(String(i.project_id))) issues.push('Invoice '+i.id+' references missing project '+i.project_id); });
-  (S.partnerInvoices||[]).forEach(i=>{ if(i.project_id!=null && !projIds.has(String(i.project_id))) issues.push('Partner invoice '+i.id+' references missing project '+i.project_id); });
-  (S.externalCosts||[]).forEach(e=>{ if(e.project_id!=null && !projIds.has(String(e.project_id))) issues.push('External cost '+e.id+' references missing project '+e.project_id); });
-  (S.vacations||[]).forEach(v=>{ if(v.employee_id!=null && !empIds.has(String(v.employee_id))) issues.push('Vacation '+v.id+' references missing employee '+v.employee_id); });
-  (S.sickLeave||[]).forEach(v=>{ if(v.employee_id!=null && !empIds.has(String(v.employee_id))) issues.push('Sick leave '+v.id+' references missing employee '+v.employee_id); });
-  const cf=[...(S.cashflowMonths||[])].sort((a,b)=>(a.month||'').localeCompare(b.month||''));
-  for(let i=1;i<cf.length;i++){
-    const prev=parseFloat(cf[i-1].closing||0), cur=parseFloat(cf[i].opening||0);
-    if(Math.abs(prev-cur)>0.01) issues.push('Cashflow continuity mismatch: '+cf[i-1].month+' closing != '+cf[i].month+' opening');
-  }
-  const fcMismatches=(S.fixedCosts||[]).filter(c=>Math.abs(fcEntryIncl(c)-fcEntryExcl(c)-fcEntryVatAmt(c))>0.02);
-  fcMismatches.forEach(c=>issues.push('Fixed cost VAT mismatch on '+(c.name||('id '+c.id))));
-  window.__NXP_AUDIT__={runAt:new Date().toISOString(), issueCount:issues.length, issues};
-  console[issues.length?'warn':'info']('[NXTPhase audit]', window.__NXP_AUDIT__);
-  return window.__NXP_AUDIT__;
-}
-
 function renderHistory(){
   const yearSel=document.getElementById('hist-year');
   // Populate year dropdown from data
@@ -7285,12 +7239,31 @@ function modalInvoice(inv,preselectedProjectId){
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveInvoice(${inv?.id||''})">Save</button></div>`;
 }
 async function saveInvoice(id){
-  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:parseFloat(document.getElementById('f-amount').value)||0,month:document.getElementById('f-month').value,billing_type:document.getElementById('f-billing').value,draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
-  if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
-  closeModal();await loadData();renderInvoices();
-  // Also refresh Partner page if this is a partner project
-  const savedProj=S.projects.find(p=>p.id===data.project_id);
-  if(savedProj&&savedProj.is_partner&&typeof renderPartner==='function')renderPartner();
+  const data={
+    project_id:parseInt(document.getElementById('f-proj')?.value)||0,
+    amount:parseFloat(document.getElementById('f-amount')?.value)||0,
+    month:(document.getElementById('f-month')?.value||'').trim(),
+    billing_type:document.getElementById('f-billing')?.value||'one-time',
+    draft_created:document.getElementById('f-draft')?.checked?1:0,
+    invoice_sent:document.getElementById('f-sent')?.checked?1:0,
+    paid:document.getElementById('f-paid')?.checked?1:0
+  };
+  if(!data.project_id)return alert('Project required.');
+  if(!data.month)return alert('Period required.');
+  try{
+    if(id) await DB.update('invoices',id,data); else await DB.insert('invoices',data);
+    closeModal();
+    await loadData();
+    if(typeof renderInvoices==='function')renderInvoices();
+    if(typeof renderPartner==='function')renderPartner();
+    if(typeof renderDashboard==='function')renderDashboard();
+    if(typeof renderFinancial==='function')renderFinancial();
+    if(typeof renderForecast==='function')renderForecast();
+    showToast(id?'Invoice updated':'Invoice added','success');
+  }catch(e){
+    console.error('[saveInvoice]',e);
+    showToast('⚠ Invoice opslaan mislukt','error');
+  }
 }
 
 function modalTransaction(t){
@@ -8121,8 +8094,8 @@ function renderFinancial(){
   ];
   Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows,txRows,ecRows])=>{
     // Apply fetched data into S (only override if we got real data)
-    if(cfRows){S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);}
-    if(fcRows){
+    if(cfRows&&cfRows.length>0){S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);}
+    if(fcRows&&fcRows.length>0){
       // Supabase is the single source of truth for all fields.
       // No localStorage override - stale cache must never corrupt live data.
       // Parse start/end month from notes field
@@ -8158,8 +8131,8 @@ function renderFinancial(){
       }catch(e){}
       S.fixedCosts=fcRows;
     }
-    if(invRows) S.invoices=invRows;
-    if(stRows){
+    if(invRows&&invRows.length>0) S.invoices=invRows;
+    if(stRows&&stRows.length>0){
       try{
         const snSet=setRows&&setRows.find(s=>s.key==='staffing_notes');
         if(snSet){const sn=JSON.parse(snSet.value||'{}');
@@ -8171,10 +8144,10 @@ function renderFinancial(){
       stRows.forEach(r=>{r.id=parseInt(r.id)||r.id;r.employee_id=parseInt(r.employee_id)||r.employee_id;r.project_id=parseInt(r.project_id)||r.project_id;const k=r.employee_id+'__'+r.project_id+'__'+r.week_key;const ex=_sm.get(k);if(!ex||r.id>ex.id)_sm.set(k,r);});
       S.staffing=Array.from(_sm.values());
     }
-    if(futRows) S.futureCosts=futRows;
-    if(txRows) S.transactions=txRows;
-    if(ecRows){
-      ecRows=ecRows.map(e=>_normalizeExtCostRow({...e}));
+    if(futRows&&futRows.length>0) S.futureCosts=futRows;
+    if(txRows&&txRows.length>0) S.transactions=txRows;
+    if(ecRows&&ecRows.length>0){
+      ecRows.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
       S.externalCosts=ecRows;
     }
     _renderFinancialActual();
@@ -8277,7 +8250,6 @@ function _renderFinancialActual(){
     months.push({mo,moStr,revenue,confRev,draftRev,fixedCosts,forecastCosts,staffingCosts,extCosts,totalOpCosts,opResult,opMargin,bankIn,bankOut,netCash,openBal,closeBal,cfEntry,activeConf,isCurrent,isPast});
   }
   _finData={months,year};
-  try{ runDataIntegrityAudit(); }catch(e){};
 
   // ── Bank balance from Cashflow module (single source of truth) ───────────
   // Starting balance = earliest opening balance in cashflow entries
@@ -8584,10 +8556,27 @@ function modalFutureCost(c){
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveFutureCost(${c?.id||''})">Save</button></div>`;
 }
 async function saveFutureCost(id){
-  const data={description:document.getElementById('f-desc').value.trim(),month:document.getElementById('f-month').value,amount:parseFloat(document.getElementById('f-amount').value)||0,category:document.getElementById('f-cat').value.trim(),recurring:document.getElementById('f-recurring').checked?1:0};
+  const data={
+    description:(document.getElementById('f-desc')?.value||'').trim(),
+    month:document.getElementById('f-month')?.value||'',
+    amount:parseFloat(document.getElementById('f-amount')?.value)||0,
+    category:(document.getElementById('f-cat')?.value||'').trim(),
+    recurring:document.getElementById('f-recurring')?.checked?1:0
+  };
   if(!data.description)return alert('Description required.');
-  if(id)await DB.update('future_costs',id,data);else await DB.insert('future_costs',data);
-  closeModal();await loadData();renderForecast();
+  if(!data.month)return alert('Month required.');
+  try{
+    if(id) await DB.update('future_costs',id,data); else await DB.insert('future_costs',data);
+    closeModal();
+    await loadData();
+    if(typeof renderForecast==='function')renderForecast();
+    if(typeof renderFinancial==='function')renderFinancial();
+    if(typeof renderDashboard==='function')renderDashboard();
+    showToast(id?'Future manual cost updated':'Future manual cost added','success');
+  }catch(e){
+    console.error('[saveFutureCost]',e);
+    showToast('⚠ Future manual cost opslaan mislukt','error');
+  }
 }
 
 // ══ IMPORT CSV ══
@@ -10831,210 +10820,3 @@ function initBankPlanner(){
 
 </body>
 </html>
-/* ===============================
-   VAT + PROJECT STAFFING PATCH
-   =============================== */
-
-function round2(n){
-  return Math.round((Number(n)||0)*100)/100
-}
-
-/* ---------- VAT ENGINE ---------- */
-
-function calcVAT(amount, vatPct, vatType){
-
-  const amt = Number(amount)||0
-  const pct = Number(vatPct)||0
-  const type = vatType||"incl"
-
-  if(type==="none"||pct===0){
-    return {
-      net:round2(amt),
-      vat:0,
-      gross:round2(amt)
-    }
-  }
-
-  if(type==="excl"){
-
-    const net = round2(amt)
-    const vat = round2(net*(pct/100))
-    const gross = round2(net+vat)
-
-    return {net,vat,gross}
-
-  }
-
-  const gross = round2(amt)
-  const net = round2(gross/(1+pct/100))
-  const vat = round2(gross-net)
-
-  return {net,vat,gross}
-}
-
-/* ---------- VAT PREVIEW ---------- */
-
-function fcUpdateVATPreview(){
-
-  const amount =
-    parseFloat(document.getElementById("f-amount")?.value)||0
-
-  const vat =
-    parseFloat(document.getElementById("f-vat")?.value)||21
-
-  const vatType =
-    document.querySelector("input[name='fc-vat-type']:checked")?.value||"incl"
-
-  const res = calcVAT(amount,vat,vatType)
-
-  const g=document.getElementById("prev-gross")
-  const v=document.getElementById("prev-vat")
-  const n=document.getElementById("prev-net")
-
-  if(g) g.textContent = amount ? fmt(res.gross) : "—"
-  if(v) v.textContent = amount ? fmt(res.vat) : "—"
-  if(n) n.textContent = amount ? fmt(res.net) : "—"
-}
-
-/* ---------- SAVE FIXED COST ---------- */
-
-async function fcSaveEntry(id){
-
-  const name =
-    document.getElementById("f-name")?.value?.trim()
-
-  const category =
-    document.getElementById("f-cat")?.value || "General"
-
-  const amount =
-    parseFloat(document.getElementById("f-amount")?.value)||0
-
-  const vatPct =
-    parseFloat(document.getElementById("f-vat")?.value)||21
-
-  const vatType =
-    document.querySelector("input[name='fc-vat-type']:checked")?.value||"incl"
-
-  const active =
-    document.getElementById("f-active")?.checked ? 1 : 0
-
-  if(!name) return alert("Name required")
-
-  const payload={
-    name,
-    category,
-    amount:round2(amount),
-    vat_pct:vatPct,
-    vat_type:vatType,
-    active
-  }
-
-  try{
-
-    if(id){
-
-      await _supaReq(
-        "PATCH",
-        "fixed_costs",
-        payload,
-        `?id=eq.${id}`
-      )
-
-    }else{
-
-      await _supaReq(
-        "POST",
-        "fixed_costs",
-        payload
-      )
-
-    }
-
-    await loadData()
-
-    renderFixedCosts()
-    renderDashboard()
-    renderFinancial()
-
-    showToast("Saved")
-
-  }catch(e){
-
-    console.error(e)
-    showToast("Save failed","error")
-
-  }
-
-}
-
-/* ---------- STAFF WHOLE PROJECT ---------- */
-
-async function staffWholeProject(employeeId, projectId, days){
-
-  const emp=parseInt(employeeId)
-  const proj=parseInt(projectId)
-  const d=round2(days)
-
-  if(!emp) return alert("Select employee")
-  if(!proj) return alert("Select project")
-
-  const project=(S.projects||[]).find(p=>p.id==proj)
-
-  if(!project) return alert("Project not found")
-
-  let start=new Date(project.start_date)
-  let end=new Date(project.end_date)
-
-  const weeks=[]
-
-  while(start<=end){
-
-    weeks.push(toWeekKey(start))
-    start.setDate(start.getDate()+7)
-
-  }
-
-  for(const wk of weeks){
-
-    const existing=await _supaReq(
-      "GET",
-      "staffing",
-      null,
-      `?employee_id=eq.${emp}&project_id=eq.${proj}&week_key=eq.${wk}&select=id`
-    )
-
-    if(existing&&existing.length){
-
-      await _supaReq(
-        "PATCH",
-        "staffing",
-        {days:d},
-        `?id=eq.${existing[0].id}`
-      )
-
-    }else{
-
-      await _supaReq(
-        "POST",
-        "staffing",
-        {
-          employee_id:emp,
-          project_id:proj,
-          week_key:wk,
-          days:d
-        }
-      )
-
-    }
-
-  }
-
-  await loadData()
-
-  renderStaffing()
-  renderProjects()
-  renderDashboard()
-
-  showToast("Project staffing updated")
-
-}
