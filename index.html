@@ -7104,27 +7104,30 @@ async function saveFixedCost(id){
   notesEncoded+='||VP:'+data.vat_pct+'||';
   data.notes=notesEncoded;
 
-  console.log('[FC SAVE] Starting save:', {id, name, vatType:data.vat_type, vatPct:data.vat_pct, amount:data.amount});
-
-  // Step 1: Update Supabase directly (bypassing DB wrapper to ensure correct data)
+  // Build payload — only Supabase-schema columns (frequency stored in notes)
   const _patchPayload={
     name:data.name, category:data.category, amount:data.amount,
     vat_pct:data.vat_pct, vat_type:data.vat_type, active:data.active,
     notes:notesEncoded, start_month:data.start_month||null, end_month:data.end_month||null
   };
+
+  console.log('[FC SAVE] Saving:', {id, name, vatType:data.vat_type, vatPct:data.vat_pct});
+
   if(id){
-    console.log('[FC SAVE] Sending PATCH to Supabase, id='+parseInt(id), _patchPayload);
+    // PATCH Supabase
     const patchResult=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
-    console.log('[FC SAVE] PATCH result:', patchResult, '(null=failed, {}=success)');
     if(patchResult===null){
-      console.warn('[FC SAVE] First PATCH failed, retrying...');
-      const retry=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
-      console.log('[FC SAVE] Retry result:', retry);
+      console.warn('[FC SAVE] PATCH failed, retrying...');
+      await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+parseInt(id));
     }
+    console.log('[FC SAVE] PATCH done, result:', patchResult);
   } else {
-    console.log('[FC SAVE] Sending POST to Supabase', _patchPayload);
     const postResult=await _supaReq('POST','fixed_costs',_patchPayload,'?select=id');
-    console.log('[FC SAVE] POST result:', postResult);
+    console.log('[FC SAVE] POST done, result:', postResult);
+    // If Supabase returned the new id, use it
+    if(postResult&&postResult.length>0&&postResult[0].id){
+      data.id=postResult[0].id;
+    }
   }
 
   // Step 2: Update in memory immediately with the exact values the user set
@@ -9321,69 +9324,78 @@ async function init(){
   if(!AUTH.isAuthenticated())return;
   if(AUTH.isEmployee()||AUTH.isStaffOnly())return;
 
-  DB._store=null;
   const _dsEl=document.getElementById('nav-data-source');
   if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,180,50,.6)">● Connecting…</span>';
 
-  // ── Load ALL tables directly from Supabase in parallel ──────────────────────
-  // Skip supaLoadAll (too complex, too many failure points).
-  // Direct _supaReq calls work reliably from the browser.
-  const TABLES=['fixed_costs','projects','employees','staffing','vacations',
-    'sick_leave','bank_transactions','invoices','future_costs',
-    'partner_invoices','cashflow_months','external_costs','settings'];
+  // Step 1: Load existing localStorage data first so S.* is never empty
+  DB._store=null;
+  await loadData();
+  _normFixedCosts(S.fixedCosts||[]);
+  if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
 
+  // Step 2: Load ALL tables from Supabase in parallel
+  // Each table is independent — one failure never affects others
   let _supaOk=false;
   if(location.protocol!=='file:'){
     try{
+      const TABLES=['fixed_costs','projects','employees','staffing','vacations',
+        'sick_leave','bank_transactions','invoices','future_costs',
+        'partner_invoices','cashflow_months','external_costs','settings'];
+
       const results=await Promise.all(
         TABLES.map(t=>_supaReq('GET',t,null,'?select=*&order=id.asc').catch(()=>null))
       );
-      const idx=(t)=>TABLES.indexOf(t);
-      const get=(t)=>results[idx(t)];
+      const get=(t)=>results[TABLES.indexOf(t)];
 
-      // Check if at least fixed_costs or projects came through
-      _supaOk=!!(get('fixed_costs')||get('projects')||get('employees'));
+      // Only write tables where Supabase returned actual data (non-null, non-empty)
+      // NEVER overwrite existing data with null or empty — Supabase empty ≠ "data deleted"
+      const storeMap={
+        fixed_costs:'fixed_costs', projects:'projects', employees:'employees',
+        staffing:'staffing', vacations:'vacations', sick_leave:'sick_leave',
+        bank_transactions:'bank_transactions', invoices:'invoices',
+        future_costs:'future_costs', partner_invoices:'partner_invoices',
+        cashflow_months:'cashflow_months', external_costs:'external_costs'
+      };
 
-      if(_supaOk){
-        _SUPA_ONLINE=true;
-        // Write all results to localStorage AND S.* in one shot
-        const store=DB._gs();
-        const map={
-          fixed_costs:'fixed_costs', projects:'projects', employees:'employees',
-          staffing:'staffing', vacations:'vacations', sick_leave:'sick_leave',
-          bank_transactions:'bank_transactions', invoices:'invoices',
-          future_costs:'future_costs', partner_invoices:'partner_invoices',
-          cashflow_months:'cashflow_months', external_costs:'external_costs'
-        };
-        Object.entries(map).forEach(([table,storeKey])=>{
-          const rows=get(table);
-          if(rows&&rows.length>0) store[storeKey]=rows;
-        });
-        DB._sv(); DB._store=null;
+      let anyLoaded=false;
+      // Get store ONCE and update in-place (no DB._store=null until end)
+      const store=DB._gs();
 
-        // Handle settings separately (fc_date_overrides, starting_balance)
-        const settings=get('settings')||[];
-        if(settings.length>0&&store.settings){
-          settings.forEach(s=>{
-            const idx2=store.settings.findIndex(x=>x.key===s.key);
-            if(idx2>=0)store.settings[idx2].value=s.value;
-            else store.settings.push(s);
-          });
-          DB._sv(); DB._store=null;
+      Object.entries(storeMap).forEach(([supTable,lsKey])=>{
+        const rows=get(supTable);
+        if(rows!==null&&Array.isArray(rows)&&rows.length>0){
+          store[lsKey]=rows;
+          anyLoaded=true;
         }
+        // If rows===null: Supabase call failed → keep existing localStorage data
+        // If rows===[] : Supabase says table is empty → keep existing (could be RLS issue)
+      });
+
+      if(anyLoaded){
+        _supaOk=true;
+        _SUPA_ONLINE=true;
+        // Settings merge (never overwrite, just add/update keys)
+        const settings=get('settings')||[];
+        settings.forEach(s=>{
+          if(!store.settings)store.settings=[];
+          const i=store.settings.findIndex(x=>x.key===s.key);
+          if(i>=0)store.settings[i].value=s.value;
+          else store.settings.push(s);
+        });
+        // Persist updated store to localStorage
+        DB._sv();
+        DB._store=null; // clear cache so loadData() re-reads the updated store
+        // Reload into S.*
+        await loadData();
+        _normFixedCosts(S.fixedCosts||[]);
+        if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
       }
     }catch(e){
-      console.error('[init] Supabase load failed:',e);
+      console.error('[init] Supabase load error:',e);
     }
   }
 
-  // Load from localStorage into S.*
-  await loadData();
-
-  // Normalize fixed_costs
-  _normFixedCosts(S.fixedCosts||[]);
-
-  // Patch missing categories silently
+  // Step 3: Patch missing categories silently (never force vat_type)
   if(_supaOk&&S.fixedCosts.length){
     S.fixedCosts.filter(c=>!c.category||c.category.trim()===''||c.category==='Uncategorised')
       .forEach(c=>{
@@ -9392,15 +9404,7 @@ async function init(){
       });
   }
 
-  // Persist fixed_costs to localStorage if loaded from Supabase
-  if(S.fixedCosts.length){
-    try{const st=DB._gs();st.fixed_costs=S.fixedCosts;DB._sv();DB._store=null;}catch(e){}
-  }
-
-  // Parse cashflow notes
-  if(S.cashflowMonths) _parseCFNotes(S.cashflowMonths);
-
-  // Update nav indicator
+  // Step 4: Update nav indicator
   if(_dsEl){
     if(_supaOk){
       _dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
@@ -9410,7 +9414,7 @@ async function init(){
     }
   }
 
-  // Background tasks
+  // Step 5: Background tasks (non-blocking)
   cleanOrphanedStaffing(false).catch(()=>{});
   if(S.staffing&&S.staffing.some(s=>s.note)) _staffingNotesPush();
 
