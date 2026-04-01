@@ -2219,8 +2219,11 @@ function staffCostMonth(y,m){
   const weeks=getWeeksInMonth(y,m);let c=0;
   S.staffing.filter(s=>weeks.includes(s.week_key)).forEach(s=>{
     const e=S.employees.find(e=>e.id==s.employee_id);// == handles string/int mismatch
-    if(e&&e.daily_cost)c+=parseFloat(e.daily_cost)*parseFloat(s.days||0);
-  });return c;
+    const daily=e?parseFloat(e.daily_cost||0):0;
+    const days=Math.max(0,parseFloat(s.days||0));
+    if(daily>0&&days>0)c+=daily*days;
+  });
+  return Math.round(c*100)/100;
 }
 // ── FIXED COST CALCULATION — Unified Bank + Manual ───────────────────────
 // Fixed Costs total = sum of two distinct sources:
@@ -4058,7 +4061,7 @@ function renderStaffing(){
           td+=`<td class="center editable" style="${isDraft?'color:var(--amber)':''}" onclick="sfProjectCellClick(${p.id},'${wk}',this)" title="Click to assign staffing">${dayTotal||''}</td>`;
         }
       });
-      const cost=S.staffing.filter(s=>s.project_id===p.id&&weeks.includes(s.week_key)).reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
+      const cost=staffingCostForProjectWeeks(p.id,weeks);
       tbody+=`<tr class="row-emp${isDraft?' row-draft-proj':''}">
         <td style="${isDraft?'color:var(--amber)':'color:var(--navy);font-weight:700'}">
           ${isDraft?'<span class="badge badge-draft" style="margin-right:4px;font-size:8px">draft</span>':'<span style="display:inline-block;width:3px;height:14px;background:#1d4ed8;border-radius:2px;margin-right:6px;vertical-align:middle;opacity:.7"></span>'}
@@ -4525,10 +4528,11 @@ function bulkStaffPreview(){
     btn.disabled=true;return;
   }
 
-  const emp=S.employees.find(e=>parseInt(e.id)===empId);
-  const proj=S.projects.find(p=>parseInt(p.id)===projId);
+  const emp=S.employees.find(e=>e.id===empId);
+  const proj=S.projects.find(p=>p.id===projId);
   if(!emp||!proj){preview.innerHTML='Not found.';btn.disabled=true;return;}
 
+  // Convert input week (YYYY-Www) to our week key format (YYYY-Www)
   const startWk=startWkInput;
   const allProjWks=projectWkKeys(proj);
   const weeksToFill=allProjWks.filter(wk=>wk>=startWk);
@@ -4538,11 +4542,12 @@ function bulkStaffPreview(){
     btn.disabled=true;return;
   }
 
+  // Check existing staffing
   const existing=weeksToFill.filter(wk=>
-    S.staffing.some(s=>parseInt(s.employee_id)===empId&&parseInt(s.project_id)===projId&&s.week_key===wk&&parseFloat(s.days||0)>0)
+    S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
   );
   const toWrite=overwrite?weeksToFill:weeksToFill.filter(wk=>
-    !S.staffing.some(s=>parseInt(s.employee_id)===empId&&parseInt(s.project_id)===projId&&s.week_key===wk&&parseFloat(s.days||0)>0)
+    !S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&s.days>0)
   );
 
   const weekBadges=toWrite.slice(0,12).map(wk=>`<span class="bulk-week-badge">W${wk.split('-W')[1]}</span>`).join('');
@@ -4550,60 +4555,65 @@ function bulkStaffPreview(){
 
   preview.innerHTML=`
     <div><strong>${esc(emp.name)}</strong> → <strong>${esc(proj.client_name+' / '+proj.name)}</strong></div>
-    <div style="margin-top:4px"><strong>${days}</strong> days/week &bull; <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} ${overwrite?'to write':'new week'+(toWrite.length!==1?'s':'')}
-      ${existing.length&&!overwrite?`<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped — turn on overwrite to replace them)</span>`:''}
+    <div style="margin-top:4px"><strong>${days}</strong> days/week &bull; <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
+      ${existing.length&&!overwrite?`<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>`:''}
       ${existing.length&&overwrite?`<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>`:''}
     </div>
     <div style="margin-top:6px">${weekBadges}${more}</div>
     <div style="margin-top:6px;color:var(--t3);font-size:10px">
-      Project end: ${proj.end_date||'—'} &bull; Cost: ${fmt((parseFloat(emp.daily_cost)||0)*days*toWrite.length)}
+      Project end: ${proj.end_date} &bull; Cost: ${fmt(emp.daily_cost*days*toWrite.length)}
     </div>`;
 
   btn.disabled=toWrite.length===0;
-  btn.textContent=overwrite?`Assign / Overwrite ${toWrite.length} Week${toWrite.length!==1?'s':''}`:(toWrite.length===0?'Nothing to assign':`Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`);
+  btn.textContent=toWrite.length===0?'Nothing to assign':`Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
 }
 
 async function bulkStaffConfirm(){
   const empId=parseInt(document.getElementById('bs-emp')?.value);
   const projId=parseInt(document.getElementById('bs-proj')?.value);
-  const days=parseFloat(document.getElementById('bs-days')?.value)||0;
+  const days=Math.max(0,parseFloat(document.getElementById('bs-days')?.value)||0);
   const startWkInput=document.getElementById('bs-start-wk')?.value;
   const overwrite=document.getElementById('bs-overwrite')?.checked;
   if(!empId||!projId||!days||!startWkInput)return;
 
-  const proj=S.projects.find(p=>parseInt(p.id)===projId);
+  const proj=S.projects.find(p=>p.id===projId);
   if(!proj)return;
 
   const startWk=startWkInput;
   const allProjWks=projectWkKeys(proj);
   const weeksToFill=allProjWks.filter(wk=>wk>=startWk);
   const toWrite=overwrite?weeksToFill:weeksToFill.filter(wk=>
-    !S.staffing.some(s=>parseInt(s.employee_id)===empId&&parseInt(s.project_id)===projId&&s.week_key===wk&&parseFloat(s.days||0)>0)
+    !S.staffing.some(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk&&parseFloat(s.days||0)>0)
   );
 
   if(!toWrite.length){showToast('Nothing to assign','warning');return;}
 
   const btn=document.getElementById('bs-confirm-btn');
   if(btn){btn.disabled=true;btn.textContent='Assigning…';}
+
   const preview=document.getElementById('bs-preview');
   if(preview && !document.getElementById('bs-prog-wrap')){
     preview.innerHTML+=`<div class="bulk-progress" id="bs-prog-wrap"><div class="bulk-progress-bar" id="bs-prog-bar" style="width:0%"></div></div>`;
   }
 
-  let done=0, failed=0;
+  let done=0,failed=0;
   for(const wk of toWrite){
     try{
       await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days});
-      if(_SUPA_ONLINE){
-        const ex=await _supaReq('GET','staffing',null,`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`,true);
-        if(ex&&ex.length>0){
-          const r=await _supaReq('PATCH','staffing',{days},'?id=eq.'+ex[0].id,true);
-          if(r===null) failed++;
-        } else {
-          const r=await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days},'',true);
-          if(r===null) failed++;
+      const ex=await _supaReq('GET','staffing',null,`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`);
+      const payload=_supaFilter('staffing',{employee_id:empId,project_id:projId,week_key:wk,days,note:''});
+      let ok=false;
+      if(ex&&ex.length>0){
+        const r=await _supaReq('PATCH','staffing',payload,'?id=eq.'+ex[0].id);
+        ok=(r!==null);
+        if(ok && ex.length>1){
+          for(let i=1;i<ex.length;i++) await _supaReq('DELETE','staffing',null,'?id=eq.'+ex[i].id);
         }
+      } else {
+        const r=await _supaReq('POST','staffing',payload);
+        ok=(r!==null);
       }
+      if(!ok) failed++;
     }catch(e){
       console.error('[bulkStaffConfirm]',wk,e);
       failed++;
@@ -4616,12 +4626,26 @@ async function bulkStaffConfirm(){
 
   closeModal();
   await loadData();
-  renderStaffing();
-  if(typeof renderProjects==='function')renderProjects();
-  if(typeof renderSchedule==='function')renderSchedule();
-  if(typeof renderDashboard==='function')renderDashboard();
-  showToast(failed?`Assigned ${toWrite.length-failed}/${toWrite.length} weeks — ${failed} failed`:`Assigned ${toWrite.length} week${toWrite.length!==1?'s':''} to ${S.employees.find(e=>parseInt(e.id)===empId)?.name||'employee'}`,failed?'warning':'success');
+  renderStaffing&&renderStaffing();
+  renderProjects&&renderProjects();
+  renderDashboard&&renderDashboard();
+  renderFinancial&&renderFinancial();
+
+  if(failed){
+    showToast(`⚠ ${toWrite.length-failed}/${toWrite.length} weken toegewezen`,'warning');
+  } else {
+    showToast(`Assigned ${toWrite.length} week${toWrite.length!==1?'s':''} to ${S.employees.find(e=>e.id===empId)?.name||'employee'}`,'success');
+  }
 }
+function staffingCostForProjectWeeks(projectId,weeks){
+  return Math.round(((S.staffing||[]).filter(s=>s.project_id===projectId && weeks.includes(s.week_key)).reduce((sum,s)=>{
+    const emp=(S.employees||[]).find(e=>e.id==s.employee_id);
+    const daily=emp?parseFloat(emp.daily_cost||0):0;
+    const days=Math.max(0,parseFloat(s.days||0));
+    return sum + (daily>0 && days>0 ? daily*days : 0);
+  },0))*100)/100;
+}
+
 // ══ END BULK STAFFING ═════════════════════════════════════════════
 
 async function editCell(empId,projId,wk,cell){
@@ -4660,56 +4684,59 @@ async function editCell(empId,projId,wk,cell){
 async function editCellSave(empId,projId,wk,days,note){
   empId=parseInt(empId)||empId;
   projId=parseInt(projId)||projId;
-  days=parseFloat(days)||0;
+  days=Math.max(0,parseFloat(days)||0);
   note=String(note||'').trim();
 
   console.log('[STAFFING SAVE] emp='+empId+' proj='+projId+' wk='+wk+' days='+days);
 
   closeModal();
 
-  // Step 1: Save to localStorage immediately (optimistic update)
   await DB.upsertStaffing({employee_id:empId, project_id:projId, week_key:wk, days, note});
-
-  // Step 2: Save note separately (settings table — survives schema changes)
   _staffNoteSave(empId, projId, wk, note);
 
-  // Step 3: Save days to Supabase directly (single authoritative write)
-  // NOTE: DB.upsertStaffing via _supaWrapDB also tries Supabase but doesn't handle notes
-  // We override here with full control
   let supaOk = false;
   try{
     const qs=`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`;
     const ex=await _supaReq('GET','staffing',null,qs);
-    if(days===0){
+
+    if(days<=0){
       if(ex&&ex.length>0){
-        const r=await _supaReq('DELETE','staffing',null,'?id=eq.'+ex[0].id);
-        supaOk=(r!==null);
+        for(const row of ex){
+          const r=await _supaReq('DELETE','staffing',null,'?id=eq.'+row.id);
+          if(r!==null) supaOk=true;
+        }
       } else {
-        supaOk=true; // nothing to delete
-      }
-    } else if(ex&&ex.length>0){
-      const r=await _supaReq('PATCH','staffing',{days},'?id=eq.'+ex[0].id);
-      supaOk=(r!==null);
-      if(!supaOk){
-        console.error('[STAFFING SAVE] PATCH failed for id='+ex[0].id);
-        showToast('⚠ Staffing opslaan mislukt','error');
+        supaOk=true;
       }
     } else {
-      const r=await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days});
-      supaOk=(r!==null);
-      if(!supaOk){
-        console.error('[STAFFING SAVE] POST failed emp='+empId+' proj='+projId+' wk='+wk);
-        showToast('⚠ Staffing opslaan mislukt','error');
+      const payload=_supaFilter('staffing',{employee_id:empId,project_id:projId,week_key:wk,days,note});
+      if(ex&&ex.length>0){
+        const first=ex[0];
+        const r=await _supaReq('PATCH','staffing',payload,'?id=eq.'+first.id);
+        supaOk=(r!==null);
+        if(supaOk && ex.length>1){
+          for(let i=1;i<ex.length;i++) await _supaReq('DELETE','staffing',null,'?id=eq.'+ex[i].id);
+        }
+      } else {
+        const r=await _supaReq('POST','staffing',payload);
+        supaOk=(r!==null);
       }
     }
-    if(supaOk) console.log('[STAFFING SAVE] Supabase OK days='+days);
+
+    if(!supaOk){
+      console.error('[STAFFING SAVE] Supabase save failed');
+      showToast('⚠ Staffing opslaan mislukt','error');
+    }
   }catch(e){
     console.error('[STAFFING SAVE] Exception:',e);
     showToast('⚠ Staffing opslaan mislukt (network error)','error');
   }
 
-  // Step 4: Re-render with current in-memory data (fast, no reload needed)
-  renderStaffing();
+  await loadData();
+  renderStaffing&&renderStaffing();
+  renderProjects&&renderProjects();
+  renderDashboard&&renderDashboard();
+  renderFinancial&&renderFinancial();
 }
 
 // Staffing notes stored in settings — survives Supabase sync without schema changes
@@ -7240,26 +7267,30 @@ function modalInvoice(inv,preselectedProjectId){
 }
 async function saveInvoice(id){
   const data={
-    project_id:parseInt(document.getElementById('f-proj')?.value)||0,
-    amount:parseFloat(document.getElementById('f-amount')?.value)||0,
-    month:(document.getElementById('f-month')?.value||'').trim(),
-    billing_type:document.getElementById('f-billing')?.value||'one-time',
-    draft_created:document.getElementById('f-draft')?.checked?1:0,
-    invoice_sent:document.getElementById('f-sent')?.checked?1:0,
-    paid:document.getElementById('f-paid')?.checked?1:0
+    project_id:parseInt(document.getElementById('f-proj').value),
+    amount:parseFloat(document.getElementById('f-amount').value)||0,
+    month:document.getElementById('f-month').value,
+    billing_type:document.getElementById('f-billing').value,
+    draft_created:document.getElementById('f-draft').checked?1:0,
+    invoice_sent:document.getElementById('f-sent').checked?1:0,
+    paid:document.getElementById('f-paid').checked?1:0
   };
-  if(!data.project_id)return alert('Project required.');
-  if(!data.month)return alert('Period required.');
+  if(!data.project_id) return alert('Select a project.');
+  if(!data.month) return alert('Select a month.');
+  if(!(data.amount>=0)) return alert('Enter a valid amount.');
+
   try{
     if(id) await DB.update('invoices',id,data); else await DB.insert('invoices',data);
     closeModal();
     await loadData();
-    if(typeof renderInvoices==='function')renderInvoices();
-    if(typeof renderPartner==='function')renderPartner();
-    if(typeof renderDashboard==='function')renderDashboard();
-    if(typeof renderFinancial==='function')renderFinancial();
-    if(typeof renderForecast==='function')renderForecast();
-    showToast(id?'Invoice updated':'Invoice added','success');
+    renderInvoices&&renderInvoices();
+    renderProjects&&renderProjects();
+    renderDashboard&&renderDashboard();
+    renderFinancial&&renderFinancial();
+    renderForecast&&renderForecast();
+    const savedProj=S.projects.find(p=>p.id===data.project_id);
+    if(savedProj&&savedProj.is_partner&&typeof renderPartner==='function')renderPartner();
+    showToast('Invoice saved','success');
   }catch(e){
     console.error('[saveInvoice]',e);
     showToast('⚠ Invoice opslaan mislukt','error');
@@ -8557,25 +8588,24 @@ function modalFutureCost(c){
 }
 async function saveFutureCost(id){
   const data={
-    description:(document.getElementById('f-desc')?.value||'').trim(),
-    month:document.getElementById('f-month')?.value||'',
-    amount:parseFloat(document.getElementById('f-amount')?.value)||0,
-    category:(document.getElementById('f-cat')?.value||'').trim(),
-    recurring:document.getElementById('f-recurring')?.checked?1:0
+    description:document.getElementById('f-desc').value.trim(),
+    month:document.getElementById('f-month').value,
+    amount:parseFloat(document.getElementById('f-amount').value)||0,
+    category:(document.getElementById('f-cat').value||'').trim(),
+    recurring:document.getElementById('f-recurring').checked?1:0
   };
   if(!data.description)return alert('Description required.');
   if(!data.month)return alert('Month required.');
   try{
-    if(id) await DB.update('future_costs',id,data); else await DB.insert('future_costs',data);
-    closeModal();
-    await loadData();
-    if(typeof renderForecast==='function')renderForecast();
-    if(typeof renderFinancial==='function')renderFinancial();
-    if(typeof renderDashboard==='function')renderDashboard();
-    showToast(id?'Future manual cost updated':'Future manual cost added','success');
+    if(id)await DB.update('future_costs',id,data);else await DB.insert('future_costs',data);
+    closeModal();await loadData();
+    renderForecast&&renderForecast();
+    renderFinancial&&renderFinancial();
+    renderDashboard&&renderDashboard();
+    showToast('Future cost saved','success');
   }catch(e){
     console.error('[saveFutureCost]',e);
-    showToast('⚠ Future manual cost opslaan mislukt','error');
+    showToast('⚠ Future cost opslaan mislukt','error');
   }
 }
 
@@ -10110,7 +10140,7 @@ table{width:100%;border-collapse:collapse;font-size:11px}th{text-align:left;padd
 <div class="section"><div class="section-title">Active Projects (${activeProjs.length})</div>
   <table><thead><tr><th>Client</th><th>Project</th><th class="right">Revenue</th><th class="right">Staff Cost</th><th class="right">Ext Cost</th><th class="right">Margin</th></tr></thead><tbody>
   ${activeProjs.map(p=>{
-    const sc=S.staffing.filter(s=>s.project_id===p.id&&wksM.includes(s.week_key)).reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
+    const sc=staffingCostForProjectWeeks(p.id,wksM);
     const ec=totalExtCostMonth(moStr,p.id)||0;
     const rev=revForMonth(y,m,'confirmed',[p.id])||0;
     const mg=p.revenue>0?((p.revenue-sc-ec)/p.revenue*100):0;
