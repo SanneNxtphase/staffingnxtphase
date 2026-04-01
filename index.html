@@ -888,6 +888,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>
     <span>Red cells in the staffing grid show sick days — deducted from available capacity. This page is <strong>admin only</strong> and never shown in the employee view.</span>
   </div>
+  <div id="sl-sync-banner"></div>
   <div class="kpi-row" id="sl-kpis"></div>
   <div id="sl-emp-summary"></div>
   <div class="card"><div class="table-wrap"><table>
@@ -2609,7 +2610,7 @@ async function loadData(){
       if(pr!==null){S.projects=(pr||[]).map(p=>({...p,id:parseInt(p.id)||p.id,is_partner:p.is_partner||0,recurring_amount:p.recurring_amount||0,recurring_freq:p.recurring_freq||'monthly'}));anyLoaded=true;}
       if(em!==null){S.employees=(em||[]).map(e=>({...e,id:parseInt(e.id)||e.id}));anyLoaded=true;}
       if(va!==null){S.vacations=(va||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));anyLoaded=true;}
-      if(sl!==null){S.sickLeave=(sl||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));anyLoaded=true;}
+      if(sl!==null){S.sickLeave=(sl||[]).map(normalizeSickLeaveRow);anyLoaded=true;}
       if(fc!==null){S.fixedCosts=fc||[];_normFixedCosts(S.fixedCosts);anyLoaded=true;}
       if(tx!==null){S.transactions=(tx||[]).map(t=>({...t,id:parseInt(t.id)||t.id}));anyLoaded=true;}
       if(inv!==null){S.invoices=(inv||[]).map(i=>({...i,id:parseInt(i.id)||i.id,project_id:parseInt(i.project_id)||i.project_id}));anyLoaded=true;}
@@ -2682,7 +2683,7 @@ async function loadData(){
   S.projects=(pr||[]).map(p=>({...p,id:parseInt(p.id)||p.id}));
   S.employees=(em||[]).map(e=>({...e,id:parseInt(e.id)||e.id}));
   S.vacations=(va||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));
-  S.sickLeave=(sl||[]).map(v=>({...v,id:parseInt(v.id)||v.id,employee_id:parseInt(v.employee_id)||v.employee_id}));
+  S.sickLeave=(sl||[]).map(normalizeSickLeaveRow);
   S.fixedCosts=fc||[];_normFixedCosts(S.fixedCosts);
   S.transactions=(tx||[]).map(t=>({...t,id:parseInt(t.id)||t.id}));
   S.invoices=(inv||[]).map(i=>({...i,id:parseInt(i.id)||i.id,project_id:parseInt(i.project_id)||i.project_id}));
@@ -2696,6 +2697,31 @@ async function loadData(){
   S.staffing=Array.from(staffMap.values());
   const b=await DB.getSetting('starting_balance');S.startingBalance=parseFloat(b)||0;
   try{const sn=JSON.parse(localStorage.getItem('sp-staff-notes')||'{}');S.staffing.forEach(s=>{const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;if(sn[k])s.note=sn[k];});}catch(e){}
+}
+var _AUTO_SYNC_TIMER=null;
+var _AUTO_SYNC_BUSY=false;
+async function autoSyncActivePage(force){
+  if(_AUTO_SYNC_BUSY||location.protocol==='file:') return;
+  const active=document.querySelector('.page.active');
+  if(!active) return;
+  const page=active.id.replace('page-','');
+  const syncPages=new Set(['sickleave','vacation','staffing','schedule','employees','projects','invoices','partner','cashflow','forecast','fixedcosts','extcosts','history','dashboard','financial']);
+  if(!syncPages.has(page)) return;
+  _AUTO_SYNC_BUSY=true;
+  try{
+    await loadData();
+    renderPage(page);
+  }catch(e){
+    console.warn('[autoSync] '+page+' failed:',e);
+  }finally{
+    _AUTO_SYNC_BUSY=false;
+  }
+}
+function startAutoSync(){
+  if(_AUTO_SYNC_TIMER||location.protocol==='file:') return;
+  _AUTO_SYNC_TIMER=setInterval(function(){ autoSyncActivePage(false); }, 15000);
+  window.addEventListener('focus', function(){ autoSyncActivePage(true); });
+  document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') autoSyncActivePage(true); });
 }
 function saveVatOverrides(){try{localStorage.setItem('sp-vat-overrides',JSON.stringify(S.vatOverrides));}catch(e){}}
 
@@ -5032,6 +5058,39 @@ function slCalcDays(){
   const s=document.getElementById('f-sl-start')?.value,e=document.getElementById('f-sl-end')?.value;
   if(s&&e){const d=countWorkdays(s,e);const el=document.getElementById('f-sl-days');if(el&&!el.value)el.value=d;}
 }
+function normalizeSickLeaveRow(v){
+  if(!v) return v;
+  const row={...v};
+  row.id=parseInt(row.id)||row.id;
+  if(row.employee_id!=null&&row.employee_id!==''){
+    row.employee_id=parseInt(row.employee_id)||row.employee_id;
+  }else if(row.employee){
+    const emp=S.employees.find(e=>(e.name||'').trim().toLowerCase()===String(row.employee).trim().toLowerCase());
+    row.employee_id=emp?emp.id:null;
+  }
+  row.start_date=row.start_date||row.date||'';
+  row.end_date=row.end_date||row.start_date||row.date||'';
+  row.notes=row.notes??row.note??null;
+  if(row.days==null||row.days===''){
+    row.days=(row.start_date&&row.end_date)?countWorkdays(row.start_date,row.end_date):1;
+  }
+  return row;
+}
+async function saveSickLeaveRemote(id,data){
+  const primary=_supaFilter('sick_leave',data);
+  let r=null;
+  if(id) r=await _supaReq('PATCH','sick_leave',primary,'?id=eq.'+id,true);
+  else r=await _supaReq('POST','sick_leave',primary,null,true);
+  if(r) return {ok:true,mode:'primary',result:r};
+
+  const emp=S.employees.find(e=>e.id===data.employee_id||e.id==data.employee_id);
+  const legacy={employee:emp?.name||'',start_date:data.start_date,end_date:data.end_date,note:data.notes||null};
+  if(id) r=await _supaReq('PATCH','sick_leave',legacy,'?id=eq.'+id,true);
+  else r=await _supaReq('POST','sick_leave',legacy,null,true);
+  if(r) return {ok:true,mode:'legacy',result:r};
+
+  return {ok:false};
+}
 async function saveSickLeave(id){
   const sd=document.getElementById('f-sl-start').value;
   if(!sd)return alert('Start date required.');
@@ -5043,16 +5102,13 @@ async function saveSickLeave(id){
   const data={employee_id:parseInt(document.getElementById('f-sl-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-sl-note').value||null};
   closeModal();
   try{
-    const payload=_supaFilter('sick_leave',data);
-    console.log('[saveSickLeave] payload:', JSON.stringify(payload));
-    let r=null;
+    let remote=null;
     if(!isSickLeaveTableMissing() && location.protocol!=='file:'){
-      if(id) r=await _supaReq('PATCH','sick_leave',payload,'?id=eq.'+id,true);
-      else r=await _supaReq('POST','sick_leave',payload,null,true);
+      remote=await saveSickLeaveRemote(id,data);
     }
-    if(r){
-      console.log('[saveSickLeave] result:', JSON.stringify(r));
-      showToast(id?'Sick leave updated':'Sick leave registered');
+    if(remote&&remote.ok){
+      if(remote.mode==='legacy') showToast(id?'Sick leave updated':'Sick leave registered');
+      else showToast(id?'Sick leave updated':'Sick leave registered');
     } else {
       await saveSickLeaveLocal(id,data);
       showToast((id?'Sick leave locally updated':'Sick leave locally saved')+' — run the SQL file once in Supabase to enable cloud sync','warning');
@@ -5062,7 +5118,7 @@ async function saveSickLeave(id){
     await saveSickLeaveLocal(id,data);
     showToast('Sick leave lokaal opgeslagen — Supabase sync failed','warning');
   }
-  await loadData();renderSickLeave();renderPage('schedule');
+  await loadData();renderSickLeave();renderPage('sickleave');
 }
 async function deleteSickLeave(id){
   if(!confirm('Delete this sick leave entry?'))return;
@@ -5081,7 +5137,7 @@ async function deleteSickLeave(id){
     await deleteSickLeaveLocal(id);
     showToast('Sick leave lokaal verwijderd — Supabase sync failed','warning');
   }
-  await loadData();renderSickLeave();renderPage('schedule');
+  await loadData();renderSickLeave();renderPage('sickleave');
 }
 function renderSickLeave(){
   const today=new Date().toISOString().split('T')[0];
@@ -10830,6 +10886,7 @@ function initBankPlanner(){
   bpAutoLoad();
   runBankPlan();
 }
+startAutoSync();
 </script>
 <!-- ═══════════════════════════════════════════════════════════
      EMPLOYEE STAFFING VIEW — shown instead of main app for 'employee' role
