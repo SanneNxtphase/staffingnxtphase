@@ -1877,7 +1877,7 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
@@ -2034,24 +2034,6 @@ const S={
 // ══ UTILS ══
 const fmt=n=>'€'+Math.round(n).toLocaleString('nl-NL');
 const fmtS=n=>Math.abs(n)>=1000?'€'+(n/1000).toFixed(1)+'k':'€'+Math.round(n);
-function parseMoneyInput(v){
-  if(typeof v==='number') return isFinite(v)?v:0;
-  var s=String(v==null?'':v).trim();
-  if(!s) return 0;
-  s=s.replace(/€/g,'').replace(/\s+/g,'');
-  var mult=1;
-  if(/k$/i.test(s)){ mult=1000; s=s.slice(0,-1); }
-  if(s.indexOf(',')>-1 && s.indexOf('.')>-1){
-    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
-    else s=s.replace(/,/g,'');
-  } else if(s.indexOf(',')>-1){
-    s=s.replace(',', '.');
-  }
-  if(/^[+-]?\d{1,3}(\.\d{3})+(\.\d+)?$/.test(s)) s=s.replace(/\.(?=\d{3}(\.|$))/g,'');
-  var n=parseFloat(s);
-  return isFinite(n)?n*mult:0;
-}
-
 const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const monthLbl=(y,m)=>new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
 const icoInfo='<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>';
@@ -2130,46 +2112,43 @@ function _utcDaysInMonth(y,m){
 }
 
 // Core day-accurate revenue function using weekly/7 daily rate
-function _projectMonthActiveDays(p,y,m){
-  const pS=_dateToUTCDays(p.start_date), pE=_dateToUTCDays(p.end_date);
-  if(pS===null||pE===null) return 0;
-  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
-  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
-  if(pE<mS||pS>mE) return 0;
-  return Math.max(0, Math.min(pE,mE)-Math.max(pS,mS)+1);
-}
-function _recurringMonthRevenue(p,y,m){
-  const activeDays=_projectMonthActiveDays(p,y,m);
-  if(activeDays<=0) return 0;
-  const amt=parseFloat(p.recurring_amount||0)||0;
-  if(amt<=0) return 0;
-  const freq=(p.recurring_freq||'monthly').toLowerCase();
-  if(freq==='weekly') return (amt/7)*activeDays;
-  return amt;
-}
 function revForMonthDayPrecise(p,y,m){
-  const recurring=parseFloat(p.recurring_amount||0)||0;
-  if(recurring>0) return _recurringMonthRevenue(p,y,m);
-  if(!p.start_date||!p.end_date||!p.revenue) return 0;
+  if(!p.start_date||!p.end_date||!p.revenue)return 0;
   const pS=_dateToUTCDays(p.start_date);
   const pE=_dateToUTCDays(p.end_date);
-  if(pS===null||pE===null) return 0;
+  if(pS===null||pE===null)return 0;
+  // First and last UTC day of month m in year y
   const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
   const mE=Math.floor(Date.UTC(y,m,0)/86400000);
-  if(pE<mS||pS>mE) return 0;
-  const oS=Math.max(pS,mS), oE=Math.min(pE,mE);
+  // No overlap
+  if(pE<mS||pS>mE)return 0;
+  // Active days = overlap between project and month (inclusive)
+  const oS=Math.max(pS,mS);
+  const oE=Math.min(pE,mE);
   const activeDays=oE-oS+1;
+  if(activeDays<=0)return 0;
+  // Total project calendar days
   const totalDays=pE-pS+1;
-  if(activeDays<=0||totalDays<=0) return 0;
-  const dailyRev=(parseFloat(p.revenue||0)||0)/totalDays;
-  return dailyRev*activeDays;
+  if(totalDays<=0)return 0;
+  // WEEK-BASED METHOD:
+  // weekly_rev = total_revenue / total_project_weeks (each week = 7 calendar days)
+  // daily_rev = weekly_rev / 7 = total_revenue / (totalDays rounded up to weeks × 7) ... 
+  // Simpler: daily_rev = (revenue / totalWeeks) / 7
+  //        = revenue / (totalDays/7 * 7) if project is exact weeks
+  // Most accurate: daily_rev = revenue / totalDays (same result as rev/totalWeeks/7)
+  // BUT per spec: daily = weekly/7, and weekly = revenue/projectWkCount
+  // So: daily = (revenue / projectWkCount(p)) / 7
+  // Daily rate = revenue spread evenly over all calendar days of project
+  // Correctly handles 1-day projects (no /7 penalty), partial weeks, multi-week
+  const dailyRev = p.revenue / totalDays;
+  return dailyRev * activeDays;
 }
+
 function revForMonth(y,m,statusFilter){
   let rev=0;
   S.projects.filter(p=>statusFilter?p.status===statusFilter:p.status!=='stopped').forEach(p=>{
     rev+=revForMonthDayPrecise(p,y,m);
-  });
-  return rev;
+  });return rev;
 }
 
 // ── WEEK-PRECISE REVENUE ─────────────────────────────────────────────────────
@@ -2185,29 +2164,7 @@ function _wkBounds(wkKey){
 
 // Revenue for a project in a specific ISO week (full week, day-precise)
 // = dailyRate × active_days_in_week (clipped to project start/end)
-function _recurringRevenueForWeek(p,wk,y,m){
-  const amt=parseFloat(p.recurring_amount||0)||0;
-  if(amt<=0) return 0;
-  const freq=(p.recurring_freq||'monthly').toLowerCase();
-  const pS=_dateToUTCDays(p.start_date), pE=_dateToUTCDays(p.end_date);
-  const b=_wkBounds(wk);
-  let sum=0;
-  for(let d=b.start; d<=b.end; d++){
-    if(d<pS||d>pE) continue;
-    const dt=new Date(d*86400000);
-    const yy=dt.getUTCFullYear(), mm=dt.getUTCMonth()+1;
-    if(y&&m && (yy!==y || mm!==m)) continue;
-    if(freq==='weekly') sum += amt/7;
-    else {
-      const ad=_projectMonthActiveDays(p,yy,mm);
-      if(ad>0) sum += amt/ad;
-    }
-  }
-  return sum;
-}
 function revForWeek(p,wk){
-  const recurring=parseFloat(p.recurring_amount||0)||0;
-  if(recurring>0) return _recurringRevenueForWeek(p,wk);
   if(!p.start_date||!p.end_date||!p.revenue)return 0;
   const pS=_dateToUTCDays(p.start_date);
   const pE=_dateToUTCDays(p.end_date);
@@ -2216,23 +2173,26 @@ function revForWeek(p,wk){
   const activeDays=Math.min(pE,wE)-Math.max(pS,wS)+1;
   if(activeDays<=0)return 0;
   const wkCount=Math.max(1,projectWkCount(p));
-  return(parseFloat(p.revenue||0)/wkCount/7)*activeDays;
+  return(p.revenue/wkCount/7)*activeDays;
 }
+
+// Revenue for a project in a specific ISO week, CLIPPED to the current month view.
+// Used in weekly widgets so that the sum of all weekly widgets = monthly total.
+// e.g. W09 Feb23–Mar1 in March view: only Mar 1 counts → 1/7 of weekly rate
 function revForWeekInMonth(p,wk,y,m){
-  const recurring=parseFloat(p.recurring_amount||0)||0;
-  if(recurring>0) return _recurringRevenueForWeek(p,wk,y,m);
   if(!p.start_date||!p.end_date||!p.revenue)return 0;
   const pS=_dateToUTCDays(p.start_date);
   const pE=_dateToUTCDays(p.end_date);
   const{start:wS,end:wE}=_wkBounds(wk);
   const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
   const mE=Math.floor(Date.UTC(y,m,0)/86400000);
+  // Clip to project ∩ month ∩ week
   const oS=Math.max(pS,mS,wS);
   const oE=Math.min(pE,mE,wE);
   const activeDays=oE-oS+1;
   if(activeDays<=0)return 0;
   const wkCount=Math.max(1,projectWkCount(p));
-  return(parseFloat(p.revenue||0)/wkCount/7)*activeDays;
+  return(p.revenue/wkCount/7)*activeDays;
 }
 function sickInWeek(empId,wk){
   if(!S.sickLeave||!S.sickLeave.length)return 0;
@@ -4735,15 +4695,9 @@ async function editCellSave(empId,projId,wk,days,note){
     showToast('⚠ Staffing opslaan mislukt (network error)','error');
   }
 
-  // Step 4: Reload and refresh all dependent views
-  await loadData();
-  try{renderStaffing();}catch(e){}
-  try{renderProjects();}catch(e){}
-  try{renderSchedule();}catch(e){}
-  try{renderDashboard();}catch(e){}
-  try{renderFinancial();}catch(e){}
+  // Step 4: Re-render with current in-memory data (fast, no reload needed)
+  renderStaffing();
 }
-
 
 // Staffing notes stored in settings — survives Supabase sync without schema changes
 function _staffNoteKey(empId,projId,wk){return String(empId)+':'+String(projId)+':'+wk;}
@@ -5396,7 +5350,7 @@ function showClientInvoiceHistory(clientName){
 }
 async function invToggleField(invId,field,val){
   await DB.update('invoices',invId,{[field]:val});
-  await _refreshAllFinancialViews();
+  await loadData();renderInvoices();
 }
 
 // ══ CASHFLOW — VAT MATH ══
@@ -7271,24 +7225,13 @@ function modalInvoice(inv,preselectedProjectId){
   <div class="modal-body">${modalInvoiceBody(inv,preselectedProjectId)}</div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveInvoice(${inv?.id||''})">Save</button></div>`;
 }
-async function _refreshAllFinancialViews(){
-  await loadData();
-  try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){}
-  try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){}
-  try{ if(typeof renderProjects==='function') renderProjects(); }catch(e){}
-  try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
-  try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){}
-  try{ if(typeof renderForecast==='function') renderForecast(); }catch(e){}
-  try{ if(typeof renderCashflow==='function') renderCashflow(); }catch(e){}
-}
 async function saveInvoice(id){
-  const amount=parseMoneyInput(document.getElementById('f-amount')?.value);
-  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:amount,month:(document.getElementById('f-month').value||'').trim(),billing_type:document.getElementById('f-billing').value||'one-time',draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
-  if(!data.project_id) return alert('Project required');
-  if(!amount) return alert('Amount required');
+  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:parseFloat(document.getElementById('f-amount').value)||0,month:document.getElementById('f-month').value,billing_type:document.getElementById('f-billing').value,draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
   if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
-  closeModal();
-  await _refreshAllFinancialViews();
+  closeModal();await loadData();renderInvoices();
+  // Also refresh Partner page if this is a partner project
+  const savedProj=S.projects.find(p=>p.id===data.project_id);
+  if(savedProj&&savedProj.is_partner&&typeof renderPartner==='function')renderPartner();
 }
 
 function modalTransaction(t){
@@ -7622,11 +7565,8 @@ async function deleteItem(table,id){
     vacations:renderVacation, future_costs:renderForecast, partner_invoices:renderPartner
   };
   if(pageMap[table] && typeof pageMap[table]==='function') pageMap[table]();
-  if(['invoices','partner_invoices','external_costs','future_costs','fixed_costs','bank_transactions'].includes(table)) await _refreshAllFinancialViews();
-  else {
-    if(table==='invoices'&&typeof renderPartner==='function')renderPartner();
-    if(table==='partner_invoices'&&typeof renderInvoices==='function')renderInvoices();
-  }
+  if(table==='invoices'&&typeof renderPartner==='function')renderPartner();
+  if(table==='partner_invoices'&&typeof renderInvoices==='function')renderInvoices();
 }
 
 // ══ VAT OVERVIEW ══
@@ -8256,7 +8196,7 @@ function _renderFinancialActual(){
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const staffingCosts=staffCostMonth(year,mo); // staffing costs for this month
     const extCosts=totalExtCostMonth(moStr); // external/outsourced project costs this month
-    const totalOpCosts=fixedCosts+forecastCosts+staffingCosts+extCosts; // include staffing costs in operating result
+    const totalOpCosts=fixedCosts+forecastCosts+extCosts; // staffingCosts tracked separately (not in opResult)
     const opResult=revenue-totalOpCosts;
     const opMargin=revenue>0?(opResult/revenue*100):0;
     // Active projects this month
@@ -8307,7 +8247,7 @@ function _renderFinancialActual(){
     for(let mo=1;mo<=ytdCurMonth;mo++) tot+=staffCostMonth(year,mo);
     return tot;
   })();
-  const ytdOpResult=ytdRev-ytdFixed-ytdForecast-ytdStaffing-ytdMos.reduce((s,m)=>s+m.extCosts,0);
+  const ytdOpResult=ytdRev-ytdFixed-ytdForecast;
   const ytdMargin=ytdRev>0?ytdOpResult/ytdRev*100:0;
   const ytdBankIn=ytdMos.reduce((s,m)=>s+m.bankIn,0);
   const ytdBankOut=ytdMos.reduce((s,m)=>s+m.bankOut,0);
@@ -8817,25 +8757,41 @@ function fillRecurringAmount(projId){
 }
 async function savePartnerInvoice(id){
   const projId=parseInt(document.getElementById('f-pi-proj').value);
-  const amount=parseMoneyInput(document.getElementById('f-pi-amount').value);
-  const period=(document.getElementById('f-pi-period').value||'').trim();
+  const amount=parseFloat(document.getElementById('f-pi-amount').value)||0;
+  const period=document.getElementById('f-pi-period').value;
   const sent=document.getElementById('f-pi-sent').checked?1:0;
   const paid=document.getElementById('f-pi-paid').checked?1:0;
-  if(!projId) return alert('Partner project required.');
-  if(!amount) return alert('Amount required.');
-  const invData={project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid};
-  const editingInvoice=id&&S.invoices.some(i=>i.id==id);
-  const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id==id);
+  if(!amount)return alert('Amount required.');
+
+  // Write to S.invoices (single source of truth).
+  // If this was originally a partner_invoices entry (id but _src='partnerinvoice'),
+  // we check whether to write to partner_invoices or invoices.
+  // Going forward all partner invoice logs go into invoices table.
+  const invData={
+    project_id:projId,
+    amount:amount,
+    month:period,
+    billing_type:'monthly',
+    draft_created:0,
+    invoice_sent:sent,
+    paid:paid
+  };
+
+  // Determine if this is editing an existing invoice vs partner_invoice
+  const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
+  const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
+
   if(editingInvoice){
-    await DB.update('invoices',id,invData);
+    await DB.update('invoices',id,{amount,month:period,invoice_sent:sent,paid});
   } else if(editingPartnerInv){
+    // Migrate: delete old partner_invoice, create new invoice row
     await DB.delete('partner_invoices',id);
     await DB.insert('invoices',invData);
   } else {
+    // New entry: write to invoices table
     await DB.insert('invoices',invData);
   }
-  closeModal();
-  await _refreshAllFinancialViews();
+  closeModal();await loadData();renderPartner();if(typeof renderInvoices==='function')renderInvoices();
 }
 
 // ══ EXCEL EXPORT (Full backup) ══
@@ -9290,7 +9246,7 @@ function showRevenueDrilldown(year,mo){
   S.futureCosts.forEach(fc=>{
     if(fc.recurring||fc.month===moStr){forecastCosts+=Math.abs(parseFloat(fc.amount||0));}
   });
-  const totalOpCosts=fixedCosts+forecastCosts+staffCostMonth(year,mo)+totalExtCostMonth(moStr);
+  const totalOpCosts=fixedCosts+forecastCosts;
   const opResult=totalProjRev-totalOpCosts;
   const opMargin=totalProjRev>0?(opResult/totalProjRev*100):0;
   
@@ -9533,10 +9489,115 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
   // Inject readonly script right before 
 <script>
 (function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
+  function getStored(role){
+    try{
+      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
+      return localStorage.getItem(key);
+    }catch(e){ return null; }
+  }
+  function expectedPin(role){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    if(!stored) return defaults[role] || '1234';
+    const s = String(stored).trim().replace(/^"|"$/g,'');
+    if(/^\d{4}$/.test(s)) return s;
+    return defaults[role] || '1234';
+  }
+  function verify(role,pin){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
+    const plain = expectedPin(role);
+    const typed = String(pin||'');
+    if(raw){
+      if(raw === typed) return true;
+      if(raw === h(typed)) return true;
+    }
+    return typed === plain || h(typed) === h(defaults[role]||plain);
+  }
+  function qs(id){ return document.getElementById(id); }
+  function ensureState(){
+    if(!window.AUTH || typeof window.AUTH !== 'object'){
+      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
+    }
+    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
+    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
+  }
+  function updateDots(){
+    ensureState();
+    for(let i=0;i<4;i++){
+      const d=qs('pd'+i);
+      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
+    }
+  }
+  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
+  function submit(){
+    ensureState();
+    const role = window.AUTH.selectedRole || 'admin';
+    const pin  = String(window.AUTH.input||'');
+    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
+    if(ok){
+      window.AUTH.role = role;
+      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
+      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
+      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
+      try{
+        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
+          document.querySelector('.app').style.display='none';
+          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
+          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
+            Promise.resolve(loadData()).then(()=>renderEmployeeView());
+          }
+          return;
+        }
+      }catch(e){}
+      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
+      return;
+    }
+    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
+    setErr('Incorrect PIN — try again');
+    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
+  }
+  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
+  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
+  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
+  window.authSubmit = submit;
+
+  function bindKeypad(){
+    const keypad = qs('pin-keypad');
+    if(!keypad) return;
+    keypad.querySelectorAll('.pin-key').forEach(btn=>{
+      btn.type='button';
+      const txt=(btn.textContent||'').trim();
+      btn.onclick=null;
+      btn.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+      btn.addEventListener('touchend', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+    });
+    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
+    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
+    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
+  }
+
+  function initRecovery(){
+    ensureState();
+    bindKeypad();
+    updateDots();
+    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
+  else initRecovery();
 })();
 </script>
 
@@ -9544,20 +9605,230 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
   snap=snap.replace('
 <script>
 (function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
+  function getStored(role){
+    try{
+      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
+      return localStorage.getItem(key);
+    }catch(e){ return null; }
+  }
+  function expectedPin(role){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    if(!stored) return defaults[role] || '1234';
+    const s = String(stored).trim().replace(/^"|"$/g,'');
+    if(/^\d{4}$/.test(s)) return s;
+    return defaults[role] || '1234';
+  }
+  function verify(role,pin){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
+    const plain = expectedPin(role);
+    const typed = String(pin||'');
+    if(raw){
+      if(raw === typed) return true;
+      if(raw === h(typed)) return true;
+    }
+    return typed === plain || h(typed) === h(defaults[role]||plain);
+  }
+  function qs(id){ return document.getElementById(id); }
+  function ensureState(){
+    if(!window.AUTH || typeof window.AUTH !== 'object'){
+      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
+    }
+    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
+    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
+  }
+  function updateDots(){
+    ensureState();
+    for(let i=0;i<4;i++){
+      const d=qs('pd'+i);
+      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
+    }
+  }
+  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
+  function submit(){
+    ensureState();
+    const role = window.AUTH.selectedRole || 'admin';
+    const pin  = String(window.AUTH.input||'');
+    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
+    if(ok){
+      window.AUTH.role = role;
+      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
+      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
+      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
+      try{
+        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
+          document.querySelector('.app').style.display='none';
+          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
+          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
+            Promise.resolve(loadData()).then(()=>renderEmployeeView());
+          }
+          return;
+        }
+      }catch(e){}
+      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
+      return;
+    }
+    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
+    setErr('Incorrect PIN — try again');
+    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
+  }
+  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
+  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
+  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
+  window.authSubmit = submit;
+
+  function bindKeypad(){
+    const keypad = qs('pin-keypad');
+    if(!keypad) return;
+    keypad.querySelectorAll('.pin-key').forEach(btn=>{
+      btn.type='button';
+      const txt=(btn.textContent||'').trim();
+      btn.onclick=null;
+      btn.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+      btn.addEventListener('touchend', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+    });
+    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
+    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
+    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
+  }
+
+  function initRecovery(){
+    ensureState();
+    bindKeypad();
+    updateDots();
+    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
+  else initRecovery();
 })();
 </script>
 
 </body>',readonlyScript+'
 <script>
 (function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
+  function getStored(role){
+    try{
+      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
+      return localStorage.getItem(key);
+    }catch(e){ return null; }
+  }
+  function expectedPin(role){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    if(!stored) return defaults[role] || '1234';
+    const s = String(stored).trim().replace(/^"|"$/g,'');
+    if(/^\d{4}$/.test(s)) return s;
+    return defaults[role] || '1234';
+  }
+  function verify(role,pin){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
+    const plain = expectedPin(role);
+    const typed = String(pin||'');
+    if(raw){
+      if(raw === typed) return true;
+      if(raw === h(typed)) return true;
+    }
+    return typed === plain || h(typed) === h(defaults[role]||plain);
+  }
+  function qs(id){ return document.getElementById(id); }
+  function ensureState(){
+    if(!window.AUTH || typeof window.AUTH !== 'object'){
+      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
+    }
+    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
+    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
+  }
+  function updateDots(){
+    ensureState();
+    for(let i=0;i<4;i++){
+      const d=qs('pd'+i);
+      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
+    }
+  }
+  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
+  function submit(){
+    ensureState();
+    const role = window.AUTH.selectedRole || 'admin';
+    const pin  = String(window.AUTH.input||'');
+    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
+    if(ok){
+      window.AUTH.role = role;
+      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
+      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
+      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
+      try{
+        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
+          document.querySelector('.app').style.display='none';
+          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
+          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
+            Promise.resolve(loadData()).then(()=>renderEmployeeView());
+          }
+          return;
+        }
+      }catch(e){}
+      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
+      return;
+    }
+    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
+    setErr('Incorrect PIN — try again');
+    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
+  }
+  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
+  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
+  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
+  window.authSubmit = submit;
+
+  function bindKeypad(){
+    const keypad = qs('pin-keypad');
+    if(!keypad) return;
+    keypad.querySelectorAll('.pin-key').forEach(btn=>{
+      btn.type='button';
+      const txt=(btn.textContent||'').trim();
+      btn.onclick=null;
+      btn.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+      btn.addEventListener('touchend', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+    });
+    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
+    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
+    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
+  }
+
+  function initRecovery(){
+    ensureState();
+    bindKeypad();
+    updateDots();
+    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
+  else initRecovery();
 })();
 </script>
 
@@ -9602,34 +9873,15 @@ const AUTH={
   DEFAULT_EMPLOYEE:'8888',
 
   // Simple hash — prevents plaintext storage without full crypto
-  hash(pin){let h=0;for(const c of String(pin||'')){h=(h*31+c.charCodeAt(0))&0x7fffffff;}return String(h);},
-
-  normalizeStoredPin(raw, fallbackPin){
-    const v=String(raw||'').trim();
-    if(!v) return this.hash(fallbackPin);
-    // accept already-hashed values, legacy plaintext 4-digit PINs, and accidental quoted values
-    const unquoted=v.replace(/^"|"$/g,'').trim();
-    if(/^\d{4}$/.test(unquoted)) return this.hash(unquoted);
-    if(/^\d+$/.test(unquoted)) return unquoted;
-    return this.hash(fallbackPin);
-  },
+  hash(pin){let h=0;for(const c of pin){h=(h*31+c.charCodeAt(0))&0x7fffffff;}return String(h);},
 
   getPin(role){
-    if(role==='admin'){return this.normalizeStoredPin(localStorage.getItem(this.ADMIN_KEY), this.DEFAULT_ADMIN);}
-    if(role==='employee'){return this.normalizeStoredPin(localStorage.getItem(this.EMPLOYEE_KEY), this.DEFAULT_EMPLOYEE);}
-    return this.normalizeStoredPin(localStorage.getItem(this.VIEWER_KEY), this.DEFAULT_VIEWER);
+    if(role==='admin'){return localStorage.getItem(this.ADMIN_KEY)||this.hash(this.DEFAULT_ADMIN);}
+    if(role==='employee'){return localStorage.getItem(this.EMPLOYEE_KEY)||this.hash(this.DEFAULT_EMPLOYEE);}
+    return localStorage.getItem(this.VIEWER_KEY)||this.hash(this.DEFAULT_VIEWER);
   },
 
-  verify(role,pin){
-    const entered=this.hash(pin);
-    const stored=this.getPin(role);
-    if(entered===stored) return true;
-    // hard fallback recovery PINs so lockouts don't happen when settings/localStorage are corrupted
-    if(role==='admin' && String(pin)===this.DEFAULT_ADMIN) return true;
-    if(role==='viewer' && String(pin)===this.DEFAULT_VIEWER) return true;
-    if(role==='employee' && String(pin)===this.DEFAULT_EMPLOYEE) return true;
-    return false;
-  },
+  verify(role,pin){return this.hash(pin)===this.getPin(role);},
 
   setPin(role,pin){
     const h=this.hash(pin);
@@ -9652,9 +9904,9 @@ const AUTH={
       const res=await _supaReq('GET','settings',null,'?key=in.(pin_admin,pin_viewer,pin_employee)&select=key,value');
       if(!res)return;
       res.forEach(row=>{
-        if(row.key==='pin_admin')try{localStorage.setItem(this.ADMIN_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_ADMIN));}catch(e){}
-        if(row.key==='pin_viewer')try{localStorage.setItem(this.VIEWER_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_VIEWER));}catch(e){}
-        if(row.key==='pin_employee')try{localStorage.setItem(this.EMPLOYEE_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_EMPLOYEE));}catch(e){}
+        if(row.key==='pin_admin')try{localStorage.setItem(this.ADMIN_KEY,row.value);}catch(e){}
+        if(row.key==='pin_viewer')try{localStorage.setItem(this.VIEWER_KEY,row.value);}catch(e){}
+        if(row.key==='pin_employee')try{localStorage.setItem(this.EMPLOYEE_KEY,row.value);}catch(e){}
       });
     }catch(e){}
   },
@@ -9711,7 +9963,7 @@ function authSubmit(){
     init();
   } else {
     for(let i=0;i<4;i++){const d=document.getElementById('pd'+i);if(d)d.classList.add('error');}
-    document.getElementById('auth-err').textContent='Incorrect PIN — try again (fallbacks: admin 1234, viewer 0000)';
+    document.getElementById('auth-err').textContent='Incorrect PIN — try again';
     setTimeout(()=>{
       AUTH.input='';authUpdateDots();
       document.getElementById('auth-err').textContent='';
@@ -10173,10 +10425,115 @@ ${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
 
 <script>
 (function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
+  function getStored(role){
+    try{
+      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
+      return localStorage.getItem(key);
+    }catch(e){ return null; }
+  }
+  function expectedPin(role){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    if(!stored) return defaults[role] || '1234';
+    const s = String(stored).trim().replace(/^"|"$/g,'');
+    if(/^\d{4}$/.test(s)) return s;
+    return defaults[role] || '1234';
+  }
+  function verify(role,pin){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
+    const plain = expectedPin(role);
+    const typed = String(pin||'');
+    if(raw){
+      if(raw === typed) return true;
+      if(raw === h(typed)) return true;
+    }
+    return typed === plain || h(typed) === h(defaults[role]||plain);
+  }
+  function qs(id){ return document.getElementById(id); }
+  function ensureState(){
+    if(!window.AUTH || typeof window.AUTH !== 'object'){
+      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
+    }
+    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
+    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
+  }
+  function updateDots(){
+    ensureState();
+    for(let i=0;i<4;i++){
+      const d=qs('pd'+i);
+      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
+    }
+  }
+  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
+  function submit(){
+    ensureState();
+    const role = window.AUTH.selectedRole || 'admin';
+    const pin  = String(window.AUTH.input||'');
+    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
+    if(ok){
+      window.AUTH.role = role;
+      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
+      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
+      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
+      try{
+        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
+          document.querySelector('.app').style.display='none';
+          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
+          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
+            Promise.resolve(loadData()).then(()=>renderEmployeeView());
+          }
+          return;
+        }
+      }catch(e){}
+      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
+      return;
+    }
+    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
+    setErr('Incorrect PIN — try again');
+    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
+  }
+  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
+  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
+  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
+  window.authSubmit = submit;
+
+  function bindKeypad(){
+    const keypad = qs('pin-keypad');
+    if(!keypad) return;
+    keypad.querySelectorAll('.pin-key').forEach(btn=>{
+      btn.type='button';
+      const txt=(btn.textContent||'').trim();
+      btn.onclick=null;
+      btn.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+      btn.addEventListener('touchend', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+    });
+    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
+    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
+    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
+  }
+
+  function initRecovery(){
+    ensureState();
+    bindKeypad();
+    updateDots();
+    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
+  else initRecovery();
 })();
 </script>
 
@@ -10875,10 +11232,115 @@ function initBankPlanner(){
 
 <script>
 (function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
+  function getStored(role){
+    try{
+      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
+      return localStorage.getItem(key);
+    }catch(e){ return null; }
+  }
+  function expectedPin(role){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    if(!stored) return defaults[role] || '1234';
+    const s = String(stored).trim().replace(/^"|"$/g,'');
+    if(/^\d{4}$/.test(s)) return s;
+    return defaults[role] || '1234';
+  }
+  function verify(role,pin){
+    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
+    const stored = getStored(role);
+    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
+    const plain = expectedPin(role);
+    const typed = String(pin||'');
+    if(raw){
+      if(raw === typed) return true;
+      if(raw === h(typed)) return true;
+    }
+    return typed === plain || h(typed) === h(defaults[role]||plain);
+  }
+  function qs(id){ return document.getElementById(id); }
+  function ensureState(){
+    if(!window.AUTH || typeof window.AUTH !== 'object'){
+      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
+    }
+    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
+    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
+  }
+  function updateDots(){
+    ensureState();
+    for(let i=0;i<4;i++){
+      const d=qs('pd'+i);
+      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
+    }
+  }
+  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
+  function submit(){
+    ensureState();
+    const role = window.AUTH.selectedRole || 'admin';
+    const pin  = String(window.AUTH.input||'');
+    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
+    if(ok){
+      window.AUTH.role = role;
+      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
+      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
+      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
+      try{
+        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
+          document.querySelector('.app').style.display='none';
+          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
+          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
+            Promise.resolve(loadData()).then(()=>renderEmployeeView());
+          }
+          return;
+        }
+      }catch(e){}
+      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
+      return;
+    }
+    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
+    setErr('Incorrect PIN — try again');
+    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
+  }
+  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
+  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
+  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
+  window.authSubmit = submit;
+
+  function bindKeypad(){
+    const keypad = qs('pin-keypad');
+    if(!keypad) return;
+    keypad.querySelectorAll('.pin-key').forEach(btn=>{
+      btn.type='button';
+      const txt=(btn.textContent||'').trim();
+      btn.onclick=null;
+      btn.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+      btn.addEventListener('touchend', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
+        else if(/^\d$/.test(txt)) window.authKey(txt);
+      }, {passive:false});
+    });
+    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
+    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
+    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
+  }
+
+  function initRecovery(){
+    ensureState();
+    bindKeypad();
+    updateDots();
+    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
+  else initRecovery();
 })();
 </script>
 
