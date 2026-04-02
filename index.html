@@ -1877,7 +1877,7 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','billing_type','paid','invoice_sent','draft_created','invoice_number','notes'],
@@ -2112,61 +2112,44 @@ function _utcDaysInMonth(y,m){
 }
 
 // Core day-accurate revenue function using weekly/7 daily rate
-
-function _projectBillingMode(p){
-  if((p.is_partner||parseFloat(p.recurring_amount||0)>0) && String(p.recurring_freq||'monthly')==='weekly') return 'weekly_fixed';
-  if((p.is_partner||parseFloat(p.recurring_amount||0)>0) && String(p.recurring_freq||'monthly')!=='weekly') return 'monthly_fixed';
-  if(String(p.billing_type||'').toLowerCase()==='day_based') return 'day_based';
-  return 'contract_total';
-}
-function _projectOverlapMonth(p,y,m){
-  const mo=_monthStartEnd(y,m);
-  return _overlapStartEnd(p.start_date,p.end_date,mo.start,mo.end);
-}
-function _projectRevenueByModeForMonth(p,y,m){
-  if(!p||!p.start_date||!p.end_date) return 0;
-  const mode=_projectBillingMode(p);
-  const ov=_projectOverlapMonth(p,y,m);
-  if(!ov) return 0;
-  if(mode==='monthly_fixed'){
-    const monthWorkdays=Math.max(1,_workdaysBetween(`${y}-${String(m).padStart(2,'0')}-01`, `${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`));
-    const activeWorkdays=_workdaysBetween(ov.start,ov.end);
-    return parseFloat(p.recurring_amount||0) * (activeWorkdays/monthWorkdays);
-  }
-  if(mode==='weekly_fixed'){
-    const weeks=getWeeksInMonth(y,m);
-    let total=0;
-    weeks.forEach(wk=>{
-      const wb=_wkBounds(wk);
-      const wStart=new Date(wb.start*86400000).toISOString().slice(0,10);
-      const wEnd=new Date(wb.end*86400000).toISOString().slice(0,10);
-      const ovw=_overlapStartEnd(p.start_date,p.end_date,wStart,wEnd);
-      if(!ovw) return;
-      const ovwm=_overlapStartEnd(ovw.start,ovw.end,`${y}-${String(m).padStart(2,'0')}-01`, `${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`);
-      if(!ovwm) return;
-      const weekWorkdays=Math.max(1,_workdaysBetween(wStart,wEnd));
-      const activeWorkdays=_workdaysBetween(ovwm.start,ovwm.end);
-      total += parseFloat(p.recurring_amount||0) * (activeWorkdays/weekWorkdays);
-    });
-    return total;
-  }
-  if(mode==='day_based'){
-    const activeWorkdays=_workdaysBetween(ov.start,ov.end);
-    return parseFloat(p.revenue||0) * activeWorkdays;
-  }
-  const totalWorkdays=Math.max(1,_workdaysBetween(p.start_date,p.end_date));
-  const activeWorkdays=_workdaysBetween(ov.start,ov.end);
-  return parseFloat(p.revenue||0) * (activeWorkdays/totalWorkdays);
-}
 function revForMonthDayPrecise(p,y,m){
-  return _projectRevenueByModeForMonth(p,y,m);
+  if(!p.start_date||!p.end_date||!p.revenue)return 0;
+  const pS=_dateToUTCDays(p.start_date);
+  const pE=_dateToUTCDays(p.end_date);
+  if(pS===null||pE===null)return 0;
+  // First and last UTC day of month m in year y
+  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
+  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
+  // No overlap
+  if(pE<mS||pS>mE)return 0;
+  // Active days = overlap between project and month (inclusive)
+  const oS=Math.max(pS,mS);
+  const oE=Math.min(pE,mE);
+  const activeDays=oE-oS+1;
+  if(activeDays<=0)return 0;
+  // Total project calendar days
+  const totalDays=pE-pS+1;
+  if(totalDays<=0)return 0;
+  // WEEK-BASED METHOD:
+  // weekly_rev = total_revenue / total_project_weeks (each week = 7 calendar days)
+  // daily_rev = weekly_rev / 7 = total_revenue / (totalDays rounded up to weeks × 7) ... 
+  // Simpler: daily_rev = (revenue / totalWeeks) / 7
+  //        = revenue / (totalDays/7 * 7) if project is exact weeks
+  // Most accurate: daily_rev = revenue / totalDays (same result as rev/totalWeeks/7)
+  // BUT per spec: daily = weekly/7, and weekly = revenue/projectWkCount
+  // So: daily = (revenue / projectWkCount(p)) / 7
+  // Daily rate = revenue spread evenly over all calendar days of project
+  // Correctly handles 1-day projects (no /7 penalty), partial weeks, multi-week
+  const dailyRev = p.revenue / totalDays;
+  return dailyRev * activeDays;
 }
+
 function revForMonth(y,m,statusFilter){
   let rev=0;
-  S.projects.filter(p=>statusFilter?p.status===statusFilter:p.status!=='stopped').forEach(p=>{ rev+=revForMonthDayPrecise(p,y,m); });
-  return rev;
+  S.projects.filter(p=>statusFilter?p.status===statusFilter:p.status!=='stopped').forEach(p=>{
+    rev+=revForMonthDayPrecise(p,y,m);
+  });return rev;
 }
-
 
 // ── WEEK-PRECISE REVENUE ─────────────────────────────────────────────────────
 // Convert ISO week key to UTC epoch day bounds {start, end}
@@ -2181,57 +2164,36 @@ function _wkBounds(wkKey){
 
 // Revenue for a project in a specific ISO week (full week, day-precise)
 // = dailyRate × active_days_in_week (clipped to project start/end)
-
 function revForWeek(p,wk){
-  if(!p||!p.start_date||!p.end_date) return 0;
-  const mode=_projectBillingMode(p);
-  const wb=_wkBounds(wk);
-  const wStart=new Date(wb.start*86400000).toISOString().slice(0,10);
-  const wEnd=new Date(wb.end*86400000).toISOString().slice(0,10);
-  const ov=_overlapStartEnd(p.start_date,p.end_date,wStart,wEnd);
-  if(!ov) return 0;
-  const activeWorkdays=_workdaysBetween(ov.start,ov.end);
-  if(activeWorkdays<=0) return 0;
-  if(mode==='weekly_fixed'){
-    const weekWorkdays=Math.max(1,_workdaysBetween(wStart,wEnd));
-    return parseFloat(p.recurring_amount||0) * (activeWorkdays/weekWorkdays);
-  }
-  if(mode==='monthly_fixed'){
-    const y=new Date(wStart+'T00:00:00').getFullYear();
-    const m=new Date(wStart+'T00:00:00').getMonth()+1;
-    const monthWorkdays=Math.max(1,_workdaysBetween(`${y}-${String(m).padStart(2,'0')}-01`, `${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`));
-    return parseFloat(p.recurring_amount||0) * (activeWorkdays/monthWorkdays);
-  }
-  if(mode==='day_based') return parseFloat(p.revenue||0) * activeWorkdays;
-  const totalWorkdays=Math.max(1,_workdaysBetween(p.start_date,p.end_date));
-  return parseFloat(p.revenue||0) * (activeWorkdays/totalWorkdays);
-}
-function revForWeekInMonth(p,wk,y,m){
-  if(!p||!p.start_date||!p.end_date) return 0;
-  const wb=_wkBounds(wk);
-  const wStart=new Date(wb.start*86400000).toISOString().slice(0,10);
-  const wEnd=new Date(wb.end*86400000).toISOString().slice(0,10);
-  const mo=_monthStartEnd(y,m);
-  const ov=_overlapStartEnd(p.start_date,p.end_date,wStart,wEnd);
-  if(!ov) return 0;
-  const ovm=_overlapStartEnd(ov.start,ov.end,mo.start,mo.end);
-  if(!ovm) return 0;
-  const activeWorkdays=_workdaysBetween(ovm.start,ovm.end);
-  if(activeWorkdays<=0) return 0;
-  const mode=_projectBillingMode(p);
-  if(mode==='weekly_fixed'){
-    const weekWorkdays=Math.max(1,_workdaysBetween(wStart,wEnd));
-    return parseFloat(p.recurring_amount||0) * (activeWorkdays/weekWorkdays);
-  }
-  if(mode==='monthly_fixed'){
-    const monthWorkdays=Math.max(1,_workdaysBetween(mo.start,mo.end));
-    return parseFloat(p.recurring_amount||0) * (activeWorkdays/monthWorkdays);
-  }
-  if(mode==='day_based') return parseFloat(p.revenue||0) * activeWorkdays;
-  const totalWorkdays=Math.max(1,_workdaysBetween(p.start_date,p.end_date));
-  return parseFloat(p.revenue||0) * (activeWorkdays/totalWorkdays);
+  if(!p.start_date||!p.end_date||!p.revenue)return 0;
+  const pS=_dateToUTCDays(p.start_date);
+  const pE=_dateToUTCDays(p.end_date);
+  const{start:wS,end:wE}=_wkBounds(wk);
+  if(pE<wS||pS>wE)return 0;
+  const activeDays=Math.min(pE,wE)-Math.max(pS,wS)+1;
+  if(activeDays<=0)return 0;
+  const wkCount=Math.max(1,projectWkCount(p));
+  return(p.revenue/wkCount/7)*activeDays;
 }
 
+// Revenue for a project in a specific ISO week, CLIPPED to the current month view.
+// Used in weekly widgets so that the sum of all weekly widgets = monthly total.
+// e.g. W09 Feb23–Mar1 in March view: only Mar 1 counts → 1/7 of weekly rate
+function revForWeekInMonth(p,wk,y,m){
+  if(!p.start_date||!p.end_date||!p.revenue)return 0;
+  const pS=_dateToUTCDays(p.start_date);
+  const pE=_dateToUTCDays(p.end_date);
+  const{start:wS,end:wE}=_wkBounds(wk);
+  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
+  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
+  // Clip to project ∩ month ∩ week
+  const oS=Math.max(pS,mS,wS);
+  const oE=Math.min(pE,mE,wE);
+  const activeDays=oE-oS+1;
+  if(activeDays<=0)return 0;
+  const wkCount=Math.max(1,projectWkCount(p));
+  return(p.revenue/wkCount/7)*activeDays;
+}
 function sickInWeek(empId,wk){
   if(!S.sickLeave||!S.sickLeave.length)return 0;
   const wkS=wkMonday(wk),wkE=new Date(wkS);wkE.setDate(wkE.getDate()+4);
@@ -4733,10 +4695,9 @@ async function editCellSave(empId,projId,wk,days,note){
     showToast('⚠ Staffing opslaan mislukt (network error)','error');
   }
 
-  // Step 4: Reload and refresh all dependent views
-  await reloadAndRender(['staffing','projects','schedule','dashboard','financial']);
+  // Step 4: Re-render with current in-memory data (fast, no reload needed)
+  renderStaffing();
 }
-
 
 // Staffing notes stored in settings — survives Supabase sync without schema changes
 function _staffNoteKey(empId,projId,wk){return String(empId)+':'+String(projId)+':'+wk;}
@@ -5021,9 +4982,8 @@ async function saveSickLeave(id){
     console.error('[saveSickLeave] exception:',e);
     showToast('⚠ Opslaan mislukt: '+e.message,'error');
   }
-  await reloadAndRender(['sickleave','staffing','schedule','dashboard','financial','employees']);
+  await loadData();renderSickLeave();renderPage('schedule');
 }
-
 async function deleteSickLeave(id){
   if(!confirm('Delete this sick leave entry?'))return;
   try{
@@ -5031,9 +4991,8 @@ async function deleteSickLeave(id){
     if(!r) showToast('⚠ Verwijderen mislukt','error');
     else showToast('Sick leave deleted');
   }catch(e){showToast('⚠ Verwijderen mislukt','error');}
-  await reloadAndRender(['sickleave','staffing','schedule','dashboard','financial','employees']);
+  await loadData();renderSickLeave();renderPage('schedule');
 }
-
 function renderSickLeave(){
   const today=new Date().toISOString().split('T')[0];
   const active=S.sickLeave.filter(v=>v.start_date<=today&&v.end_date>=today);
@@ -7153,9 +7112,8 @@ async function saveProject(id){
   };
   if(!data.client_name||!data.name)return alert('Client name and project name are required.');
   if(id)await DB.update('projects',id,data);else await DB.insert('projects',data);
-  closeModal();await reloadAndRender(['projects','dashboard','financial','forecast','partner','invoices','schedule','staffing']);
+  closeModal();await loadData();renderProjects();
 }
-
 
 function modalEmployee(e){
   return`<div class="modal-header"><div class="modal-title">${e?'Edit Employee':'Add Employee'}</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
@@ -7207,6 +7165,41 @@ function modalVacation(v){
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-purple" onclick="saveVacation(${v?.id||''})">Save</button></div>`;
 }
+
+function parseMoneyInput(v){
+  if(v===null||v===undefined)return 0;
+  if(typeof v==='number') return isFinite(v)?v:0;
+  let s=String(v).trim();
+  if(!s) return 0;
+  s=s.replace(/\u00A0/g,' ').replace(/€/g,'').replace(/\s+/g,'');
+  const km=s.match(/^(-?\d+(?:[.,]\d+)?)k$/i);
+  if(km) return (parseFloat(String(km[1]).replace(',','.'))||0)*1000;
+  if(s.includes(',') && s.includes('.')){
+    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
+    else s=s.replace(/,/g,'');
+  } else if(s.includes(',')){
+    const parts=s.split(',');
+    if(parts.length===2 && parts[1].length<=2) s=parts[0].replace(/\./g,'') + '.' + parts[1];
+    else s=s.replace(/,/g,'');
+  } else if(/^[-+]?\d{1,3}(\.\d{3})+(?:\.\d+)?$/.test(s)){
+    s=s.replace(/\./g,'');
+  }
+  const n=parseFloat(s);
+  return isFinite(n)?n:0;
+}
+function rerenderAfterFinancialWrite(){
+  try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){}
+  try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){}
+  try{ if(typeof renderProjects==='function') renderProjects(); }catch(e){}
+  try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
+  try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){}
+  try{ if(typeof renderForecast==='function') renderForecast(); }catch(e){}
+  try{ if(typeof renderCashflow==='function') renderCashflow(); }catch(e){}
+  try{ if(typeof renderVacation==='function') renderVacation(); }catch(e){}
+  try{ if(typeof renderSchedule==='function') renderSchedule(); }catch(e){}
+  try{ if(typeof renderEmployees==='function') renderEmployees(); }catch(e){}
+}
+
 function vacAutoCalcDays(){
   const sd=document.getElementById('f-start')?.value;
   const ed=document.getElementById('f-end')?.value;
@@ -7228,64 +7221,11 @@ async function saveVacation(id){
   if(!days)days=countWorkdays(sd,ed);
   const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
   if(id)await DB.update('vacations',id,data);else await DB.insert('vacations',data);
-  closeModal();await reloadAndRender(['vacation','staffing','schedule','dashboard','financial','employees']);
-}
-
-
-
-function parseMoneyInput(v){
-  if(v===null||v===undefined) return 0;
-  if(typeof v==='number') return isFinite(v)?v:0;
-  let s=String(v).trim().toLowerCase();
-  if(!s) return 0;
-  let mult=1;
-  if(s.endsWith('k')){ mult=1000; s=s.slice(0,-1); }
-  s=s.replace(/€/g,'').replace(/\s+/g,'');
-  if(s.includes(',') && s.includes('.')){
-    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
-    else s=s.replace(/,/g,'');
-  } else if(s.includes(',')) {
-    const parts=s.split(',');
-    s=(parts.length===2 && parts[1].length<=2)?parts[0].replace(/\./g,'')+'.'+parts[1]:s.replace(/,/g,'');
-  }
-  const n=parseFloat(s.replace(/[^0-9.-]/g,''));
-  return isFinite(n)?Math.round(n*mult*100)/100:0;
-}
-async function reloadAndRender(pages){
+  closeModal();
   await loadData();
-  const map={
-    dashboard:typeof renderDashboard==='function'?renderDashboard:null,
-    financial:typeof renderFinancial==='function'?renderFinancial:null,
-    forecast:typeof renderForecast==='function'?renderForecast:null,
-    projects:typeof renderProjects==='function'?renderProjects:null,
-    staffing:typeof renderStaffing==='function'?renderStaffing:null,
-    schedule:typeof renderPage==='function'?()=>renderPage('schedule'):null,
-    vacation:typeof renderVacation==='function'?renderVacation:null,
-    sickleave:typeof renderSickLeave==='function'?renderSickLeave:null,
-    invoices:typeof renderInvoices==='function'?renderInvoices:null,
-    partner:typeof renderPartner==='function'?renderPartner:null,
-    extcosts:typeof renderExtCosts==='function'?renderExtCosts:null,
-    fixedcosts:typeof renderFixedCosts==='function'?renderFixedCosts:null,
-    employees:typeof renderEmployees==='function'?renderEmployees:null,
-    cashflow:typeof renderCashflow==='function'?renderCashflow:null
-  };
-  (pages||[]).forEach(k=>{ try{ if(map[k]) map[k](); }catch(e){ console.error('[reloadAndRender]',k,e); } });
+  rerenderAfterFinancialWrite();
 }
-function _workdaysBetween(startStr,endStr){
-  if(!startStr||!endStr) return 0;
-  let s=new Date(startStr+'T00:00:00');
-  let e=new Date(endStr+'T00:00:00');
-  if(isNaN(s)||isNaN(e)||e<s) return 0;
-  let c=0;
-  while(s<=e){ const d=s.getDay(); if(d!==0 && d!==6) c++; s.setDate(s.getDate()+1); }
-  return c;
-}
-function _monthStartEnd(y,m){ return { start:`${y}-${String(m).padStart(2,'0')}-01`, end:`${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}` }; }
-function _overlapStartEnd(aStart,aEnd,bStart,bEnd){
-  const s = aStart>bStart?aStart:bStart;
-  const e = aEnd<bEnd?aEnd:bEnd;
-  return e>=s ? {start:s,end:e}:null;
-}
+
 function modalInvoiceBody(inv,preselectedProjectId){
   const selProjId=parseInt(preselectedProjectId||inv?.project_id)||0;
   // Include all non-stopped projects + always include the invoice's own project (even if stopped)
@@ -7322,25 +7262,25 @@ function modalInvoice(inv,preselectedProjectId){
   <div class="modal-body">${modalInvoiceBody(inv,preselectedProjectId)}</div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveInvoice(${inv?.id||''})">Save</button></div>`;
 }
-
 async function saveInvoice(id){
+  const amount=parseMoneyInput(document.getElementById('f-amount').value);
   const data={
     project_id:parseInt(document.getElementById('f-proj').value),
-    amount:parseMoneyInput(document.getElementById('f-amount').value),
-    month:document.getElementById('f-month').value,
+    amount:amount,
+    month:(document.getElementById('f-month').value||'').trim(),
     billing_type:document.getElementById('f-billing').value,
     draft_created:document.getElementById('f-draft').checked?1:0,
     invoice_sent:document.getElementById('f-sent').checked?1:0,
     paid:document.getElementById('f-paid').checked?1:0
   };
-  if(!data.project_id) return alert('Project required.');
-  if(!data.month) return alert('Period required.');
-  if(!data.amount) return alert('Amount required.');
-  if(id) await DB.update('invoices',id,data); else await DB.insert('invoices',data);
+  if(!data.project_id)return alert('Project required.');
+  if(!(amount>0))return alert('Amount required.');
+  if(!data.month)return alert('Period required.');
+  if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
   closeModal();
-  await reloadAndRender(['invoices','partner','projects','dashboard','financial','forecast','cashflow']);
+  await loadData();
+  rerenderAfterFinancialWrite();
 }
-
 
 function modalTransaction(t){
   return`<div class="modal-header"><div class="modal-title">${t?'Edit Transaction':'Add Transaction'}</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
@@ -7675,9 +7615,7 @@ async function deleteItem(table,id){
   if(pageMap[table] && typeof pageMap[table]==='function') pageMap[table]();
   if(table==='invoices'&&typeof renderPartner==='function')renderPartner();
   if(table==='partner_invoices'&&typeof renderInvoices==='function')renderInvoices();
-  await reloadAndRender(['dashboard','financial','forecast','projects','staffing','schedule','vacation','sickleave','partner','invoices','cashflow']);
 }
-
 
 // ══ VAT OVERVIEW ══
 function renderVAT(){
@@ -8306,7 +8244,7 @@ function _renderFinancialActual(){
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const staffingCosts=staffCostMonth(year,mo); // staffing costs for this month
     const extCosts=totalExtCostMonth(moStr); // external/outsourced project costs this month
-    const totalOpCosts=fixedCosts+forecastCosts+staffingCosts+extCosts;
+    const totalOpCosts=fixedCosts+forecastCosts+extCosts; // staffingCosts tracked separately (not in opResult)
     const opResult=revenue-totalOpCosts;
     const opMargin=revenue>0?(opResult/revenue*100):0;
     // Active projects this month
@@ -8357,7 +8295,7 @@ function _renderFinancialActual(){
     for(let mo=1;mo<=ytdCurMonth;mo++) tot+=staffCostMonth(year,mo);
     return tot;
   })();
-  const ytdOpResult=ytdRev-ytdFixed-ytdForecast-ytdStaffing-ytdMos.reduce((s,m)=>s+m.extCosts,0);
+  const ytdOpResult=ytdRev-ytdFixed-ytdForecast;
   const ytdMargin=ytdRev>0?ytdOpResult/ytdRev*100:0;
   const ytdBankIn=ytdMos.reduce((s,m)=>s+m.bankIn,0);
   const ytdBankOut=ytdMos.reduce((s,m)=>s+m.bankOut,0);
@@ -8404,9 +8342,7 @@ function _renderFinancialActual(){
   const totRev=months.reduce((s,m)=>s+m.revenue,0);
   const totFixed=months.reduce((s,m)=>s+m.fixedCosts,0);
   const totForecast=months.reduce((s,m)=>s+m.forecastCosts,0);
-  const totStaff=months.reduce((s,m)=>s+m.staffingCosts,0);
-  const totExtCosts=months.reduce((s,m)=>s+m.extCosts,0);
-  const totOpCosts=totFixed+totForecast+totStaff+totExtCosts;
+  const totOpCosts=totFixed+totForecast+totExtCosts;
   const totRes=totRev-totOpCosts;
   const totMg=totRev>0?totRes/totRev*100:0;
   const totIn=months.reduce((s,m)=>s+m.bankIn,0);
@@ -8702,17 +8638,14 @@ async function _doImportXLSX(file){
 
 // ══ PARTNER INVOICING ══
 function getPartnerInvoiced(projectId){
-  // Primary lookup by project_id
   var directInvs=S.invoices.filter(function(i){return i.project_id===projectId||i.project_id==projectId;});
   if(directInvs.length>0){
-    return directInvs.reduce(function(s,i){return s+parseFloat(i.amount||0);},0);
+    return directInvs.reduce(function(s,i){return s+parseMoneyInput(i.amount||0);},0);
   }
-  // Check if ANY invoice exists for this project (catches post-delete state)
   var hasAnyInvoice=S.invoices.some(function(i){return i.project_id===projectId||i.project_id==projectId;});
-  if(hasAnyInvoice) return 0; // invoices exist but total is 0 — deleted state
-  // Legacy fallback to partner_invoices only if no invoices ever existed
+  if(hasAnyInvoice) return 0;
   return S.partnerInvoices.filter(function(pi){return pi.project_id===projectId||pi.project_id==projectId;})
-    .reduce(function(s,pi){return s+parseFloat(pi.amount||0);},0);
+    .reduce(function(s,pi){return s+parseMoneyInput(pi.amount||0);},0);
 }
 
 function renderPartner(){
@@ -8867,21 +8800,31 @@ function fillRecurringAmount(projId){
   const p=S.projects.find(x=>x.id===parseInt(projId));
   if(p&&p.recurring_amount){const el=document.getElementById('f-pi-amount');if(el)el.value=p.recurring_amount;}
 }
-
 async function savePartnerInvoice(id){
   const projId=parseInt(document.getElementById('f-pi-proj').value);
   const amount=parseMoneyInput(document.getElementById('f-pi-amount').value);
-  const period=document.getElementById('f-pi-period').value;
+  const period=(document.getElementById('f-pi-period').value||'').trim();
   const sent=document.getElementById('f-pi-sent').checked?1:0;
   const paid=document.getElementById('f-pi-paid').checked?1:0;
-  if(!projId) return alert('Project required.');
-  if(!amount) return alert('Amount required.');
-  if(!period) return alert('Period required.');
-  const invData={ project_id:projId, amount:amount, month:period, billing_type:'monthly', draft_created:0, invoice_sent:sent, paid:paid };
+  if(!projId)return alert('Project required.');
+  if(!(amount>0))return alert('Amount required.');
+  if(!period)return alert('Period required.');
+
+  const invData={
+    project_id:projId,
+    amount:amount,
+    month:period,
+    billing_type:'monthly',
+    draft_created:0,
+    invoice_sent:sent,
+    paid:paid
+  };
+
   const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
   const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
+
   if(editingInvoice){
-    await DB.update('invoices',id,invData);
+    await DB.update('invoices',id,{project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid});
   } else if(editingPartnerInv){
     await DB.delete('partner_invoices',id);
     await DB.insert('invoices',invData);
@@ -8889,9 +8832,9 @@ async function savePartnerInvoice(id){
     await DB.insert('invoices',invData);
   }
   closeModal();
-  await reloadAndRender(['partner','invoices','projects','dashboard','financial','forecast','cashflow']);
+  await loadData();
+  rerenderAfterFinancialWrite();
 }
-
 
 // ══ EXCEL EXPORT (Full backup) ══
 async function exportAllExcel(){
