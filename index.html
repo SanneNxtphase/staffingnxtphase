@@ -9486,527 +9486,8 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
   let snap=originalHtml;
   // Inject readonly banner right after <body>
   snap=snap.replace(/<body[^>]*>/, m=>m+readonlyBanner);
-  // Inject readonly script right before 
-<script>
-/* ===== Consolidated save/revenue hotfix from latest source ===== */
-(function(){
-  function parseFlexibleMoney(v){
-    if(v===null||v===undefined) return 0;
-    if(typeof v==='number') return isFinite(v)?v:0;
-    var s=String(v).trim();
-    if(!s) return 0;
-    s=s.replace(/\s+/g,'').replace(/€/g,'');
-    var mult=1;
-    if(/[kK]$/.test(s)){ mult=1000; s=s.slice(0,-1); }
-    if(s.indexOf(',')>=0 && s.indexOf('.')>=0){
-      if(s.lastIndexOf(',') > s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
-      else s=s.replace(/,/g,'');
-    } else if(s.indexOf(',')>=0){
-      s=s.replace(',', '.');
-    } else if(s.indexOf('.')>=0){
-      var parts=s.split('.');
-      if(parts.length>2 || (parts.length===2 && parts[1].length===3)) s=s.replace(/\./g,'');
-    }
-    var n=parseFloat(s);
-    return isFinite(n)? n*mult : 0;
-  }
-  window.parseFlexibleMoney = parseFlexibleMoney;
-
-  async function refreshAll(){
-    try{ await loadData(); }catch(e){ console.error('[refreshAll] loadData failed',e); }
-    ['renderInvoices','renderPartner','renderProjects','renderDashboard','renderFinancial','renderForecast','renderCashflow','renderVacation','renderSchedule','renderStaffing','renderEmployees'].forEach(function(fn){
-      try{ if(typeof window[fn]==='function') window[fn](); }catch(e){ console.error('[refreshAll] '+fn,e); }
-    });
-  }
-  window._refreshAllFinancialViews = refreshAll;
-
-  try{
-    if(window._SUPA_SCHEMA){
-      if(_SUPA_SCHEMA.projects){
-        ['billing_type','recurring_amount','recurring_freq','partner_name','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.projects.includes(k)) _SUPA_SCHEMA.projects.push(k); });
-      }
-      if(_SUPA_SCHEMA.invoices){
-        ['billing_type','invoice_number','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.invoices.includes(k)) _SUPA_SCHEMA.invoices.push(k); });
-      }
-    }
-  }catch(e){ console.error('[schema hotfix]',e); }
-
-  window.getPartnerInvoiced = function(projectId){
-    var invs=(S.invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    if(invs.length){
-      return invs.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-    }
-    var legacy=(S.partnerInvoices||S.partner_invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    return legacy.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-  };
-
-  window.saveInvoice = async function(id){
-    var amount=parseFlexibleMoney(document.getElementById('f-amount') && document.getElementById('f-amount').value);
-    var data={
-      project_id: parseInt(document.getElementById('f-proj') && document.getElementById('f-proj').value,10),
-      amount: amount,
-      month: ((document.getElementById('f-month') && document.getElementById('f-month').value) || '').trim(),
-      billing_type: (document.getElementById('f-billing') && document.getElementById('f-billing').value) || 'one-time',
-      draft_created: document.getElementById('f-draft') && document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent') && document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid') && document.getElementById('f-paid').checked ? 1 : 0
-    };
-    if(!data.project_id) return alert('Project required');
-    if(!(data.amount>0)) return alert('Amount required');
-    if(!data.month) return alert('Period required');
-    try{
-      if(id) await DB.update('invoices', id, data);
-      else await DB.insert('invoices', data);
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Invoice saved');
-    }catch(e){
-      console.error('[saveInvoice hotfix]',e);
-      alert('Invoice save failed');
-    }
-  };
-
-  window.savePartnerInvoice = async function(id){
-    var projId=parseInt(document.getElementById('f-pi-proj') && document.getElementById('f-pi-proj').value,10);
-    var amount=parseFlexibleMoney(document.getElementById('f-pi-amount') && document.getElementById('f-pi-amount').value);
-    var period=((document.getElementById('f-pi-period') && document.getElementById('f-pi-period').value) || '').trim();
-    var sent=document.getElementById('f-pi-sent') && document.getElementById('f-pi-sent').checked ? 1 : 0;
-    var paid=document.getElementById('f-pi-paid') && document.getElementById('f-pi-paid').checked ? 1 : 0;
-    if(!projId) return alert('Partner project required');
-    if(!(amount>0)) return alert('Amount required');
-    if(!period) return alert('Period required');
-    var invData={project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid};
-    try{
-      var editingInvoice=id && (S.invoices||[]).some(function(i){return i.id==id;});
-      var editingPartner=id && ((S.partnerInvoices||S.partner_invoices||[]).some(function(pi){return pi.id==id;}));
-      if(editingInvoice){
-        await DB.update('invoices',id,invData);
-      }else if(editingPartner){
-        await DB.delete('partner_invoices',id);
-        await DB.insert('invoices',invData);
-      }else{
-        await DB.insert('invoices',invData);
-      }
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Partner invoice saved');
-    }catch(e){
-      console.error('[savePartnerInvoice hotfix]',e);
-      alert('Partner invoice save failed');
-    }
-  };
-
-  window.saveVacation = async function(id){
-    var sd=document.getElementById('f-start')&&document.getElementById('f-start').value;
-    var ed=document.getElementById('f-end')&&document.getElementById('f-end').value;
-    if(!sd||!ed) return alert('Start and end date required.');
-    if(ed<sd) return alert('End date must be after start date.');
-    var days=parseFloat(document.getElementById('f-days')&&document.getElementById('f-days').value)||0;
-    if(!days && typeof countWorkdays==='function') days=countWorkdays(sd,ed);
-    var data={employee_id:parseInt(document.getElementById('f-emp').value,10),start_date:sd,end_date:ed,days:days,notes:(document.getElementById('f-note').value||null)};
-    if(id) await DB.update('vacations',id,data); else await DB.insert('vacations',data);
-    closeModal();
-    await refreshAll();
-    setTimeout(refreshAll,350);
-  };
-
-  function dateToDays(dateStr){
-    if(!dateStr) return null;
-    var p=dateStr.split('-').map(Number);
-    if(p.length<3||!p[0]||!p[1]||!p[2]) return null;
-    return Math.floor(Date.UTC(p[0],p[1]-1,p[2])/86400000);
-  }
-  function overlapDays(p,y,m){
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(pS===null||pE===null) return 0;
-    var mS=Math.floor(Date.UTC(y,m-1,1)/86400000), mE=Math.floor(Date.UTC(y,m,0)/86400000);
-    if(pE<mS||pS>mE) return 0;
-    return Math.max(0, Math.min(pE,mE)-Math.max(pS,mS)+1);
-  }
-  window.revForMonthDayPrecise = function(p,y,m){
-    if(!p) return 0;
-    var active=overlapDays(p,y,m);
-    if(active<=0) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring;
-    if((bt==='weekly'||freq==='weekly') && recurring>0){
-      return recurring * (active/7);
-    }
-    // default: day-based using project revenue spread over active project days
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(!totalRev || pS===null || pE===null) return 0;
-    var totalDays=Math.max(1, pE-pS+1);
-    var dayRevenue=totalRev/totalDays;
-    return dayRevenue*active;
-  };
-  window.revPerWk = function(p){
-    if(!p) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring/4.3333333333;
-    if((bt==='weekly'||freq==='weekly') && recurring>0) return recurring;
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var keys=(typeof projectWkKeys==='function')?projectWkKeys(p):[];
-    var weeks=Math.max(1, keys.length || 1);
-    return totalRev/weeks;
-  };
-})();
-</script>
-
-</body>
-  snap=snap.replace('
-<script>
-/* ===== Consolidated save/revenue hotfix from latest source ===== */
-(function(){
-  function parseFlexibleMoney(v){
-    if(v===null||v===undefined) return 0;
-    if(typeof v==='number') return isFinite(v)?v:0;
-    var s=String(v).trim();
-    if(!s) return 0;
-    s=s.replace(/\s+/g,'').replace(/€/g,'');
-    var mult=1;
-    if(/[kK]$/.test(s)){ mult=1000; s=s.slice(0,-1); }
-    if(s.indexOf(',')>=0 && s.indexOf('.')>=0){
-      if(s.lastIndexOf(',') > s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
-      else s=s.replace(/,/g,'');
-    } else if(s.indexOf(',')>=0){
-      s=s.replace(',', '.');
-    } else if(s.indexOf('.')>=0){
-      var parts=s.split('.');
-      if(parts.length>2 || (parts.length===2 && parts[1].length===3)) s=s.replace(/\./g,'');
-    }
-    var n=parseFloat(s);
-    return isFinite(n)? n*mult : 0;
-  }
-  window.parseFlexibleMoney = parseFlexibleMoney;
-
-  async function refreshAll(){
-    try{ await loadData(); }catch(e){ console.error('[refreshAll] loadData failed',e); }
-    ['renderInvoices','renderPartner','renderProjects','renderDashboard','renderFinancial','renderForecast','renderCashflow','renderVacation','renderSchedule','renderStaffing','renderEmployees'].forEach(function(fn){
-      try{ if(typeof window[fn]==='function') window[fn](); }catch(e){ console.error('[refreshAll] '+fn,e); }
-    });
-  }
-  window._refreshAllFinancialViews = refreshAll;
-
-  try{
-    if(window._SUPA_SCHEMA){
-      if(_SUPA_SCHEMA.projects){
-        ['billing_type','recurring_amount','recurring_freq','partner_name','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.projects.includes(k)) _SUPA_SCHEMA.projects.push(k); });
-      }
-      if(_SUPA_SCHEMA.invoices){
-        ['billing_type','invoice_number','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.invoices.includes(k)) _SUPA_SCHEMA.invoices.push(k); });
-      }
-    }
-  }catch(e){ console.error('[schema hotfix]',e); }
-
-  window.getPartnerInvoiced = function(projectId){
-    var invs=(S.invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    if(invs.length){
-      return invs.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-    }
-    var legacy=(S.partnerInvoices||S.partner_invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    return legacy.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-  };
-
-  window.saveInvoice = async function(id){
-    var amount=parseFlexibleMoney(document.getElementById('f-amount') && document.getElementById('f-amount').value);
-    var data={
-      project_id: parseInt(document.getElementById('f-proj') && document.getElementById('f-proj').value,10),
-      amount: amount,
-      month: ((document.getElementById('f-month') && document.getElementById('f-month').value) || '').trim(),
-      billing_type: (document.getElementById('f-billing') && document.getElementById('f-billing').value) || 'one-time',
-      draft_created: document.getElementById('f-draft') && document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent') && document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid') && document.getElementById('f-paid').checked ? 1 : 0
-    };
-    if(!data.project_id) return alert('Project required');
-    if(!(data.amount>0)) return alert('Amount required');
-    if(!data.month) return alert('Period required');
-    try{
-      if(id) await DB.update('invoices', id, data);
-      else await DB.insert('invoices', data);
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Invoice saved');
-    }catch(e){
-      console.error('[saveInvoice hotfix]',e);
-      alert('Invoice save failed');
-    }
-  };
-
-  window.savePartnerInvoice = async function(id){
-    var projId=parseInt(document.getElementById('f-pi-proj') && document.getElementById('f-pi-proj').value,10);
-    var amount=parseFlexibleMoney(document.getElementById('f-pi-amount') && document.getElementById('f-pi-amount').value);
-    var period=((document.getElementById('f-pi-period') && document.getElementById('f-pi-period').value) || '').trim();
-    var sent=document.getElementById('f-pi-sent') && document.getElementById('f-pi-sent').checked ? 1 : 0;
-    var paid=document.getElementById('f-pi-paid') && document.getElementById('f-pi-paid').checked ? 1 : 0;
-    if(!projId) return alert('Partner project required');
-    if(!(amount>0)) return alert('Amount required');
-    if(!period) return alert('Period required');
-    var invData={project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid};
-    try{
-      var editingInvoice=id && (S.invoices||[]).some(function(i){return i.id==id;});
-      var editingPartner=id && ((S.partnerInvoices||S.partner_invoices||[]).some(function(pi){return pi.id==id;}));
-      if(editingInvoice){
-        await DB.update('invoices',id,invData);
-      }else if(editingPartner){
-        await DB.delete('partner_invoices',id);
-        await DB.insert('invoices',invData);
-      }else{
-        await DB.insert('invoices',invData);
-      }
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Partner invoice saved');
-    }catch(e){
-      console.error('[savePartnerInvoice hotfix]',e);
-      alert('Partner invoice save failed');
-    }
-  };
-
-  window.saveVacation = async function(id){
-    var sd=document.getElementById('f-start')&&document.getElementById('f-start').value;
-    var ed=document.getElementById('f-end')&&document.getElementById('f-end').value;
-    if(!sd||!ed) return alert('Start and end date required.');
-    if(ed<sd) return alert('End date must be after start date.');
-    var days=parseFloat(document.getElementById('f-days')&&document.getElementById('f-days').value)||0;
-    if(!days && typeof countWorkdays==='function') days=countWorkdays(sd,ed);
-    var data={employee_id:parseInt(document.getElementById('f-emp').value,10),start_date:sd,end_date:ed,days:days,notes:(document.getElementById('f-note').value||null)};
-    if(id) await DB.update('vacations',id,data); else await DB.insert('vacations',data);
-    closeModal();
-    await refreshAll();
-    setTimeout(refreshAll,350);
-  };
-
-  function dateToDays(dateStr){
-    if(!dateStr) return null;
-    var p=dateStr.split('-').map(Number);
-    if(p.length<3||!p[0]||!p[1]||!p[2]) return null;
-    return Math.floor(Date.UTC(p[0],p[1]-1,p[2])/86400000);
-  }
-  function overlapDays(p,y,m){
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(pS===null||pE===null) return 0;
-    var mS=Math.floor(Date.UTC(y,m-1,1)/86400000), mE=Math.floor(Date.UTC(y,m,0)/86400000);
-    if(pE<mS||pS>mE) return 0;
-    return Math.max(0, Math.min(pE,mE)-Math.max(pS,mS)+1);
-  }
-  window.revForMonthDayPrecise = function(p,y,m){
-    if(!p) return 0;
-    var active=overlapDays(p,y,m);
-    if(active<=0) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring;
-    if((bt==='weekly'||freq==='weekly') && recurring>0){
-      return recurring * (active/7);
-    }
-    // default: day-based using project revenue spread over active project days
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(!totalRev || pS===null || pE===null) return 0;
-    var totalDays=Math.max(1, pE-pS+1);
-    var dayRevenue=totalRev/totalDays;
-    return dayRevenue*active;
-  };
-  window.revPerWk = function(p){
-    if(!p) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring/4.3333333333;
-    if((bt==='weekly'||freq==='weekly') && recurring>0) return recurring;
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var keys=(typeof projectWkKeys==='function')?projectWkKeys(p):[];
-    var weeks=Math.max(1, keys.length || 1);
-    return totalRev/weeks;
-  };
-})();
-</script>
-
-</body>',readonlyScript+'
-<script>
-/* ===== Consolidated save/revenue hotfix from latest source ===== */
-(function(){
-  function parseFlexibleMoney(v){
-    if(v===null||v===undefined) return 0;
-    if(typeof v==='number') return isFinite(v)?v:0;
-    var s=String(v).trim();
-    if(!s) return 0;
-    s=s.replace(/\s+/g,'').replace(/€/g,'');
-    var mult=1;
-    if(/[kK]$/.test(s)){ mult=1000; s=s.slice(0,-1); }
-    if(s.indexOf(',')>=0 && s.indexOf('.')>=0){
-      if(s.lastIndexOf(',') > s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
-      else s=s.replace(/,/g,'');
-    } else if(s.indexOf(',')>=0){
-      s=s.replace(',', '.');
-    } else if(s.indexOf('.')>=0){
-      var parts=s.split('.');
-      if(parts.length>2 || (parts.length===2 && parts[1].length===3)) s=s.replace(/\./g,'');
-    }
-    var n=parseFloat(s);
-    return isFinite(n)? n*mult : 0;
-  }
-  window.parseFlexibleMoney = parseFlexibleMoney;
-
-  async function refreshAll(){
-    try{ await loadData(); }catch(e){ console.error('[refreshAll] loadData failed',e); }
-    ['renderInvoices','renderPartner','renderProjects','renderDashboard','renderFinancial','renderForecast','renderCashflow','renderVacation','renderSchedule','renderStaffing','renderEmployees'].forEach(function(fn){
-      try{ if(typeof window[fn]==='function') window[fn](); }catch(e){ console.error('[refreshAll] '+fn,e); }
-    });
-  }
-  window._refreshAllFinancialViews = refreshAll;
-
-  try{
-    if(window._SUPA_SCHEMA){
-      if(_SUPA_SCHEMA.projects){
-        ['billing_type','recurring_amount','recurring_freq','partner_name','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.projects.includes(k)) _SUPA_SCHEMA.projects.push(k); });
-      }
-      if(_SUPA_SCHEMA.invoices){
-        ['billing_type','invoice_number','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.invoices.includes(k)) _SUPA_SCHEMA.invoices.push(k); });
-      }
-    }
-  }catch(e){ console.error('[schema hotfix]',e); }
-
-  window.getPartnerInvoiced = function(projectId){
-    var invs=(S.invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    if(invs.length){
-      return invs.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-    }
-    var legacy=(S.partnerInvoices||S.partner_invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    return legacy.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-  };
-
-  window.saveInvoice = async function(id){
-    var amount=parseFlexibleMoney(document.getElementById('f-amount') && document.getElementById('f-amount').value);
-    var data={
-      project_id: parseInt(document.getElementById('f-proj') && document.getElementById('f-proj').value,10),
-      amount: amount,
-      month: ((document.getElementById('f-month') && document.getElementById('f-month').value) || '').trim(),
-      billing_type: (document.getElementById('f-billing') && document.getElementById('f-billing').value) || 'one-time',
-      draft_created: document.getElementById('f-draft') && document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent') && document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid') && document.getElementById('f-paid').checked ? 1 : 0
-    };
-    if(!data.project_id) return alert('Project required');
-    if(!(data.amount>0)) return alert('Amount required');
-    if(!data.month) return alert('Period required');
-    try{
-      if(id) await DB.update('invoices', id, data);
-      else await DB.insert('invoices', data);
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Invoice saved');
-    }catch(e){
-      console.error('[saveInvoice hotfix]',e);
-      alert('Invoice save failed');
-    }
-  };
-
-  window.savePartnerInvoice = async function(id){
-    var projId=parseInt(document.getElementById('f-pi-proj') && document.getElementById('f-pi-proj').value,10);
-    var amount=parseFlexibleMoney(document.getElementById('f-pi-amount') && document.getElementById('f-pi-amount').value);
-    var period=((document.getElementById('f-pi-period') && document.getElementById('f-pi-period').value) || '').trim();
-    var sent=document.getElementById('f-pi-sent') && document.getElementById('f-pi-sent').checked ? 1 : 0;
-    var paid=document.getElementById('f-pi-paid') && document.getElementById('f-pi-paid').checked ? 1 : 0;
-    if(!projId) return alert('Partner project required');
-    if(!(amount>0)) return alert('Amount required');
-    if(!period) return alert('Period required');
-    var invData={project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid};
-    try{
-      var editingInvoice=id && (S.invoices||[]).some(function(i){return i.id==id;});
-      var editingPartner=id && ((S.partnerInvoices||S.partner_invoices||[]).some(function(pi){return pi.id==id;}));
-      if(editingInvoice){
-        await DB.update('invoices',id,invData);
-      }else if(editingPartner){
-        await DB.delete('partner_invoices',id);
-        await DB.insert('invoices',invData);
-      }else{
-        await DB.insert('invoices',invData);
-      }
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Partner invoice saved');
-    }catch(e){
-      console.error('[savePartnerInvoice hotfix]',e);
-      alert('Partner invoice save failed');
-    }
-  };
-
-  window.saveVacation = async function(id){
-    var sd=document.getElementById('f-start')&&document.getElementById('f-start').value;
-    var ed=document.getElementById('f-end')&&document.getElementById('f-end').value;
-    if(!sd||!ed) return alert('Start and end date required.');
-    if(ed<sd) return alert('End date must be after start date.');
-    var days=parseFloat(document.getElementById('f-days')&&document.getElementById('f-days').value)||0;
-    if(!days && typeof countWorkdays==='function') days=countWorkdays(sd,ed);
-    var data={employee_id:parseInt(document.getElementById('f-emp').value,10),start_date:sd,end_date:ed,days:days,notes:(document.getElementById('f-note').value||null)};
-    if(id) await DB.update('vacations',id,data); else await DB.insert('vacations',data);
-    closeModal();
-    await refreshAll();
-    setTimeout(refreshAll,350);
-  };
-
-  function dateToDays(dateStr){
-    if(!dateStr) return null;
-    var p=dateStr.split('-').map(Number);
-    if(p.length<3||!p[0]||!p[1]||!p[2]) return null;
-    return Math.floor(Date.UTC(p[0],p[1]-1,p[2])/86400000);
-  }
-  function overlapDays(p,y,m){
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(pS===null||pE===null) return 0;
-    var mS=Math.floor(Date.UTC(y,m-1,1)/86400000), mE=Math.floor(Date.UTC(y,m,0)/86400000);
-    if(pE<mS||pS>mE) return 0;
-    return Math.max(0, Math.min(pE,mE)-Math.max(pS,mS)+1);
-  }
-  window.revForMonthDayPrecise = function(p,y,m){
-    if(!p) return 0;
-    var active=overlapDays(p,y,m);
-    if(active<=0) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring;
-    if((bt==='weekly'||freq==='weekly') && recurring>0){
-      return recurring * (active/7);
-    }
-    // default: day-based using project revenue spread over active project days
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(!totalRev || pS===null || pE===null) return 0;
-    var totalDays=Math.max(1, pE-pS+1);
-    var dayRevenue=totalRev/totalDays;
-    return dayRevenue*active;
-  };
-  window.revPerWk = function(p){
-    if(!p) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring/4.3333333333;
-    if((bt==='weekly'||freq==='weekly') && recurring>0) return recurring;
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var keys=(typeof projectWkKeys==='function')?projectWkKeys(p):[];
-    var weeks=Math.max(1, keys.length || 1);
-    return totalRev/weeks;
-  };
-})();
-</script>
-
-</body>');
+  // Inject readonly script right before </body>
+  snap=snap.replace('</body>',readonlyScript+'</body>');
   // Add readonly CSS to disable pointer events on interactive elements
   snap=snap.replace('</style>',`
 /* ── READ-ONLY SNAPSHOT STYLES ── */
@@ -10034,9 +9515,10 @@ input[type=text],input[type=number],input[type=date],select.form-input,textarea{
 // PINs stored in localStorage (hashed via simple XOR — not cryptographic but 
 // prevents casual shoulder-surf exposure; for strong encryption, host on HTTPS).
 
+
 const AUTH={
-  role:null,    // 'admin' | 'viewer' | null
-  input:'',     // current PIN digits being entered
+  role:null,
+  input:'',
   selectedRole:'admin',
   ADMIN_KEY:'sp-pin-admin',
   VIEWER_KEY:'sp-pin-viewer',
@@ -10045,42 +9527,65 @@ const AUTH={
   DEFAULT_ADMIN:'1234',
   DEFAULT_VIEWER:'0000',
   DEFAULT_EMPLOYEE:'8888',
+  _submitTimer:null,
+  _lastKeyAt:0,
+  _lastKeyVal:null,
+  _isSubmitting:false,
 
-  // Simple hash — prevents plaintext storage without full crypto
-  hash(pin){let h=0;for(const c of pin){h=(h*31+c.charCodeAt(0))&0x7fffffff;}return String(h);},
-
-  getPin(role){
-    if(role==='admin'){return localStorage.getItem(this.ADMIN_KEY)||this.hash(this.DEFAULT_ADMIN);}
-    if(role==='employee'){return localStorage.getItem(this.EMPLOYEE_KEY)||this.hash(this.DEFAULT_EMPLOYEE);}
-    return localStorage.getItem(this.VIEWER_KEY)||this.hash(this.DEFAULT_VIEWER);
+  hash(pin){
+    let h=0;
+    for(const c of String(pin||'')){h=(h*31+c.charCodeAt(0))&0x7fffffff;}
+    return String(h);
   },
 
-  verify(role,pin){return this.hash(pin)===this.getPin(role);},
+  normalizeStoredPin(raw, fallbackPlain){
+    const fb=this.hash(fallbackPlain);
+    if(raw===null||raw===undefined) return fb;
+    let v=String(raw).trim();
+    if(!v) return fb;
+    if((v.startsWith('"')&&v.endsWith('"'))||(v.startsWith("'")&&v.endsWith("'"))){
+      v=v.slice(1,-1).trim();
+    }
+    if(/^\d{4}$/.test(v)) return this.hash(v);
+    if(/^\d+$/.test(v)) return v;
+    return fb;
+  },
+
+  getPin(role){
+    const key=role==='admin'?this.ADMIN_KEY:(role==='employee'?this.EMPLOYEE_KEY:this.VIEWER_KEY);
+    const fallback=role==='admin'?this.DEFAULT_ADMIN:(role==='employee'?this.DEFAULT_EMPLOYEE:this.DEFAULT_VIEWER);
+    let raw=null;
+    try{ raw=localStorage.getItem(key); }catch(e){}
+    return this.normalizeStoredPin(raw, fallback);
+  },
+
+  verify(role,pin){
+    return this.hash(String(pin||''))===this.getPin(role);
+  },
 
   setPin(role,pin){
     const h=this.hash(pin);
     const key=role==='admin'?this.ADMIN_KEY:role==='employee'?this.EMPLOYEE_KEY:this.VIEWER_KEY;
     try{localStorage.setItem(key,h);}catch(e){}
-    // Sync PIN to Supabase so all devices share the same PIN
     const supaKey='pin_'+role;
     if(typeof _supaReq==='function'){
       _supaReq('GET','settings',null,'?key=eq.'+supaKey+'&select=id').then(ex=>{
-        if(ex&&ex[0])_supaReq('PATCH','settings',{value:h},'?key=eq.'+supaKey);
+        if(ex&&ex[0]) _supaReq('PATCH','settings',{value:h},'?key=eq.'+supaKey);
         else _supaReq('POST','settings',{key:supaKey,value:h});
       }).catch(()=>{});
     }
   },
 
-  // Load PIN hashes from Supabase (called on init so all devices stay in sync)
   async syncPinsFromSupabase(){
-    if(typeof _supaReq!=='function')return;
+    if(typeof _supaReq!=='function') return;
     try{
       const res=await _supaReq('GET','settings',null,'?key=in.(pin_admin,pin_viewer,pin_employee)&select=key,value');
-      if(!res)return;
+      if(!res) return;
       res.forEach(row=>{
-        if(row.key==='pin_admin')try{localStorage.setItem(this.ADMIN_KEY,row.value);}catch(e){}
-        if(row.key==='pin_viewer')try{localStorage.setItem(this.VIEWER_KEY,row.value);}catch(e){}
-        if(row.key==='pin_employee')try{localStorage.setItem(this.EMPLOYEE_KEY,row.value);}catch(e){}
+        if(!row||!row.key) return;
+        if(row.key==='pin_admin') try{localStorage.setItem(this.ADMIN_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_ADMIN));}catch(e){}
+        if(row.key==='pin_viewer') try{localStorage.setItem(this.VIEWER_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_VIEWER));}catch(e){}
+        if(row.key==='pin_employee') try{localStorage.setItem(this.EMPLOYEE_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_EMPLOYEE));}catch(e){}
       });
     }catch(e){}
   },
@@ -10095,17 +9600,37 @@ const AUTH={
 function authSelectRole(role){
   AUTH.selectedRole=role;
   AUTH.input='';
+  AUTH._isSubmitting=false;
+  if(AUTH._submitTimer){ clearTimeout(AUTH._submitTimer); AUTH._submitTimer=null; }
   authUpdateDots();
-  document.getElementById('auth-err').textContent='';
-  document.getElementById('role-admin-btn').classList.toggle('active',role==='admin');
-  document.getElementById('role-viewer-btn').classList.toggle('active',role==='viewer');
+  const err=document.getElementById('auth-err');
+  if(err) err.textContent='';
+  const adminBtn=document.getElementById('role-admin-btn');
+  const viewerBtn=document.getElementById('role-viewer-btn');
+  if(adminBtn) adminBtn.classList.toggle('active',role==='admin');
+  if(viewerBtn) viewerBtn.classList.toggle('active',role==='viewer');
 }
+
 function authKey(k){
-  if(AUTH.input.length<4){AUTH.input+=String(k);}
-  authUpdateDots();
-  if(AUTH.input.length===4)setTimeout(authSubmit,120);
+  const now=Date.now();
+  const keyVal=String(k);
+  if(AUTH._lastKeyVal===keyVal && (now-AUTH._lastKeyAt)<180) return;
+  AUTH._lastKeyVal=keyVal;
+  AUTH._lastKeyAt=now;
+  if(AUTH._isSubmitting) return;
+  if(AUTH.input.length<4){
+    AUTH.input+=keyVal;
+    authUpdateDots();
+  }
+  if(AUTH.input.length===4){
+    if(AUTH._submitTimer) clearTimeout(AUTH._submitTimer);
+    AUTH._submitTimer=setTimeout(()=>authSubmit(),120);
+  }
 }
+
 function authDel(){
+  if(AUTH._submitTimer){ clearTimeout(AUTH._submitTimer); AUTH._submitTimer=null; }
+  AUTH._isSubmitting=false;
   AUTH.input=AUTH.input.slice(0,-1);
   authUpdateDots();
 }
@@ -10113,34 +9638,47 @@ function authDel(){
 function authUpdateDots(){
   for(let i=0;i<4;i++){
     const d=document.getElementById('pd'+i);
-    if(d){d.classList.toggle('filled',i<AUTH.input.length);d.classList.remove('error');}
+    if(d){
+      d.classList.toggle('filled',i<AUTH.input.length);
+      d.classList.remove('error');
+    }
   }
 }
 
 function authSubmit(){
+  if(AUTH._isSubmitting) return;
+  if((AUTH.input||'').length!==4) return;
+  AUTH._isSubmitting=true;
   const ok=AUTH.verify(AUTH.selectedRole,AUTH.input);
   if(ok){
     AUTH.role=AUTH.selectedRole;
-    sessionStorage.setItem(AUTH.SESSION_KEY,AUTH.role);
-    document.getElementById('auth-overlay').classList.add('hidden');
+    try{sessionStorage.setItem(AUTH.SESSION_KEY,AUTH.role);}catch(e){}
+    const overlay=document.getElementById('auth-overlay');
+    if(overlay) overlay.classList.add('hidden');
     updateRoleBadge();
+    AUTH.input='';
+    authUpdateDots();
+    AUTH._isSubmitting=false;
     if(AUTH.isEmployee()){
-      // Employee view: show only staff view, hide full app
       document.querySelector('.app').style.display='none';
       document.getElementById('employee-view').classList.add('ev-visible');
-      (async()=>{
-        await loadData();
-        renderEmployeeView();
-      })();
+      (async()=>{ await loadData(); renderEmployeeView(); })();
       return;
     }
     init();
   } else {
-    for(let i=0;i<4;i++){const d=document.getElementById('pd'+i);if(d)d.classList.add('error');}
-    document.getElementById('auth-err').textContent='Incorrect PIN — try again';
+    for(let i=0;i<4;i++){
+      const d=document.getElementById('pd'+i);
+      if(d) d.classList.add('error');
+    }
+    const err=document.getElementById('auth-err');
+    if(err) err.textContent='Incorrect PIN — try again';
     setTimeout(()=>{
-      AUTH.input='';authUpdateDots();
-      document.getElementById('auth-err').textContent='';
+      AUTH.input='';
+      AUTH._isSubmitting=false;
+      authUpdateDots();
+      const e=document.getElementById('auth-err');
+      if(e) e.textContent='';
     },900);
   }
 }
@@ -10148,9 +9686,12 @@ function authSubmit(){
 function lockApp(){
   AUTH.role=null;
   AUTH.input='';
-  sessionStorage.removeItem(AUTH.SESSION_KEY);
+  AUTH._isSubmitting=false;
+  if(AUTH._submitTimer){ clearTimeout(AUTH._submitTimer); AUTH._submitTimer=null; }
+  try{sessionStorage.removeItem(AUTH.SESSION_KEY);}catch(e){}
   authUpdateDots();
-  document.getElementById('auth-err').textContent='';
+  const err=document.getElementById('auth-err');
+  if(err) err.textContent='';
   authSelectRole('admin');
   document.getElementById('auth-overlay').classList.remove('hidden');
 }
@@ -10596,179 +10137,6 @@ ${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
   </div>
 </div>`:`<div class="section"><div class="section-title">Bank / Cashflow</div><p style="color:#9ca3af;font-size:11px;padding:8px 0">No cashflow data for this month. Enter data in the Cashflow module.</p></div>`}
 <div class="footer"><span>NXT Phase AI · staffingnxtphase.vercel.app</span><span>Monthly Report ${moLabel}</span></div>
-
-<script>
-/* ===== Consolidated save/revenue hotfix from latest source ===== */
-(function(){
-  function parseFlexibleMoney(v){
-    if(v===null||v===undefined) return 0;
-    if(typeof v==='number') return isFinite(v)?v:0;
-    var s=String(v).trim();
-    if(!s) return 0;
-    s=s.replace(/\s+/g,'').replace(/€/g,'');
-    var mult=1;
-    if(/[kK]$/.test(s)){ mult=1000; s=s.slice(0,-1); }
-    if(s.indexOf(',')>=0 && s.indexOf('.')>=0){
-      if(s.lastIndexOf(',') > s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
-      else s=s.replace(/,/g,'');
-    } else if(s.indexOf(',')>=0){
-      s=s.replace(',', '.');
-    } else if(s.indexOf('.')>=0){
-      var parts=s.split('.');
-      if(parts.length>2 || (parts.length===2 && parts[1].length===3)) s=s.replace(/\./g,'');
-    }
-    var n=parseFloat(s);
-    return isFinite(n)? n*mult : 0;
-  }
-  window.parseFlexibleMoney = parseFlexibleMoney;
-
-  async function refreshAll(){
-    try{ await loadData(); }catch(e){ console.error('[refreshAll] loadData failed',e); }
-    ['renderInvoices','renderPartner','renderProjects','renderDashboard','renderFinancial','renderForecast','renderCashflow','renderVacation','renderSchedule','renderStaffing','renderEmployees'].forEach(function(fn){
-      try{ if(typeof window[fn]==='function') window[fn](); }catch(e){ console.error('[refreshAll] '+fn,e); }
-    });
-  }
-  window._refreshAllFinancialViews = refreshAll;
-
-  try{
-    if(window._SUPA_SCHEMA){
-      if(_SUPA_SCHEMA.projects){
-        ['billing_type','recurring_amount','recurring_freq','partner_name','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.projects.includes(k)) _SUPA_SCHEMA.projects.push(k); });
-      }
-      if(_SUPA_SCHEMA.invoices){
-        ['billing_type','invoice_number','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.invoices.includes(k)) _SUPA_SCHEMA.invoices.push(k); });
-      }
-    }
-  }catch(e){ console.error('[schema hotfix]',e); }
-
-  window.getPartnerInvoiced = function(projectId){
-    var invs=(S.invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    if(invs.length){
-      return invs.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-    }
-    var legacy=(S.partnerInvoices||S.partner_invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    return legacy.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-  };
-
-  window.saveInvoice = async function(id){
-    var amount=parseFlexibleMoney(document.getElementById('f-amount') && document.getElementById('f-amount').value);
-    var data={
-      project_id: parseInt(document.getElementById('f-proj') && document.getElementById('f-proj').value,10),
-      amount: amount,
-      month: ((document.getElementById('f-month') && document.getElementById('f-month').value) || '').trim(),
-      billing_type: (document.getElementById('f-billing') && document.getElementById('f-billing').value) || 'one-time',
-      draft_created: document.getElementById('f-draft') && document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent') && document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid') && document.getElementById('f-paid').checked ? 1 : 0
-    };
-    if(!data.project_id) return alert('Project required');
-    if(!(data.amount>0)) return alert('Amount required');
-    if(!data.month) return alert('Period required');
-    try{
-      if(id) await DB.update('invoices', id, data);
-      else await DB.insert('invoices', data);
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Invoice saved');
-    }catch(e){
-      console.error('[saveInvoice hotfix]',e);
-      alert('Invoice save failed');
-    }
-  };
-
-  window.savePartnerInvoice = async function(id){
-    var projId=parseInt(document.getElementById('f-pi-proj') && document.getElementById('f-pi-proj').value,10);
-    var amount=parseFlexibleMoney(document.getElementById('f-pi-amount') && document.getElementById('f-pi-amount').value);
-    var period=((document.getElementById('f-pi-period') && document.getElementById('f-pi-period').value) || '').trim();
-    var sent=document.getElementById('f-pi-sent') && document.getElementById('f-pi-sent').checked ? 1 : 0;
-    var paid=document.getElementById('f-pi-paid') && document.getElementById('f-pi-paid').checked ? 1 : 0;
-    if(!projId) return alert('Partner project required');
-    if(!(amount>0)) return alert('Amount required');
-    if(!period) return alert('Period required');
-    var invData={project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid};
-    try{
-      var editingInvoice=id && (S.invoices||[]).some(function(i){return i.id==id;});
-      var editingPartner=id && ((S.partnerInvoices||S.partner_invoices||[]).some(function(pi){return pi.id==id;}));
-      if(editingInvoice){
-        await DB.update('invoices',id,invData);
-      }else if(editingPartner){
-        await DB.delete('partner_invoices',id);
-        await DB.insert('invoices',invData);
-      }else{
-        await DB.insert('invoices',invData);
-      }
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Partner invoice saved');
-    }catch(e){
-      console.error('[savePartnerInvoice hotfix]',e);
-      alert('Partner invoice save failed');
-    }
-  };
-
-  window.saveVacation = async function(id){
-    var sd=document.getElementById('f-start')&&document.getElementById('f-start').value;
-    var ed=document.getElementById('f-end')&&document.getElementById('f-end').value;
-    if(!sd||!ed) return alert('Start and end date required.');
-    if(ed<sd) return alert('End date must be after start date.');
-    var days=parseFloat(document.getElementById('f-days')&&document.getElementById('f-days').value)||0;
-    if(!days && typeof countWorkdays==='function') days=countWorkdays(sd,ed);
-    var data={employee_id:parseInt(document.getElementById('f-emp').value,10),start_date:sd,end_date:ed,days:days,notes:(document.getElementById('f-note').value||null)};
-    if(id) await DB.update('vacations',id,data); else await DB.insert('vacations',data);
-    closeModal();
-    await refreshAll();
-    setTimeout(refreshAll,350);
-  };
-
-  function dateToDays(dateStr){
-    if(!dateStr) return null;
-    var p=dateStr.split('-').map(Number);
-    if(p.length<3||!p[0]||!p[1]||!p[2]) return null;
-    return Math.floor(Date.UTC(p[0],p[1]-1,p[2])/86400000);
-  }
-  function overlapDays(p,y,m){
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(pS===null||pE===null) return 0;
-    var mS=Math.floor(Date.UTC(y,m-1,1)/86400000), mE=Math.floor(Date.UTC(y,m,0)/86400000);
-    if(pE<mS||pS>mE) return 0;
-    return Math.max(0, Math.min(pE,mE)-Math.max(pS,mS)+1);
-  }
-  window.revForMonthDayPrecise = function(p,y,m){
-    if(!p) return 0;
-    var active=overlapDays(p,y,m);
-    if(active<=0) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring;
-    if((bt==='weekly'||freq==='weekly') && recurring>0){
-      return recurring * (active/7);
-    }
-    // default: day-based using project revenue spread over active project days
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(!totalRev || pS===null || pE===null) return 0;
-    var totalDays=Math.max(1, pE-pS+1);
-    var dayRevenue=totalRev/totalDays;
-    return dayRevenue*active;
-  };
-  window.revPerWk = function(p){
-    if(!p) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring/4.3333333333;
-    if((bt==='weekly'||freq==='weekly') && recurring>0) return recurring;
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var keys=(typeof projectWkKeys==='function')?projectWkKeys(p):[];
-    var weeks=Math.max(1, keys.length || 1);
-    return totalRev/weeks;
-  };
-})();
-</script>
-
 </body></html>`;
   closeModal();
   const win=window.open('','_blank','width=960,height=720');
@@ -11460,179 +10828,6 @@ function initBankPlanner(){
     <div style="text-align:center;color:var(--t3);padding:40px">Loading schedule…</div>
   </div>
 </div>
-
-
-<script>
-/* ===== Consolidated save/revenue hotfix from latest source ===== */
-(function(){
-  function parseFlexibleMoney(v){
-    if(v===null||v===undefined) return 0;
-    if(typeof v==='number') return isFinite(v)?v:0;
-    var s=String(v).trim();
-    if(!s) return 0;
-    s=s.replace(/\s+/g,'').replace(/€/g,'');
-    var mult=1;
-    if(/[kK]$/.test(s)){ mult=1000; s=s.slice(0,-1); }
-    if(s.indexOf(',')>=0 && s.indexOf('.')>=0){
-      if(s.lastIndexOf(',') > s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
-      else s=s.replace(/,/g,'');
-    } else if(s.indexOf(',')>=0){
-      s=s.replace(',', '.');
-    } else if(s.indexOf('.')>=0){
-      var parts=s.split('.');
-      if(parts.length>2 || (parts.length===2 && parts[1].length===3)) s=s.replace(/\./g,'');
-    }
-    var n=parseFloat(s);
-    return isFinite(n)? n*mult : 0;
-  }
-  window.parseFlexibleMoney = parseFlexibleMoney;
-
-  async function refreshAll(){
-    try{ await loadData(); }catch(e){ console.error('[refreshAll] loadData failed',e); }
-    ['renderInvoices','renderPartner','renderProjects','renderDashboard','renderFinancial','renderForecast','renderCashflow','renderVacation','renderSchedule','renderStaffing','renderEmployees'].forEach(function(fn){
-      try{ if(typeof window[fn]==='function') window[fn](); }catch(e){ console.error('[refreshAll] '+fn,e); }
-    });
-  }
-  window._refreshAllFinancialViews = refreshAll;
-
-  try{
-    if(window._SUPA_SCHEMA){
-      if(_SUPA_SCHEMA.projects){
-        ['billing_type','recurring_amount','recurring_freq','partner_name','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.projects.includes(k)) _SUPA_SCHEMA.projects.push(k); });
-      }
-      if(_SUPA_SCHEMA.invoices){
-        ['billing_type','invoice_number','notes'].forEach(function(k){ if(!_SUPA_SCHEMA.invoices.includes(k)) _SUPA_SCHEMA.invoices.push(k); });
-      }
-    }
-  }catch(e){ console.error('[schema hotfix]',e); }
-
-  window.getPartnerInvoiced = function(projectId){
-    var invs=(S.invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    if(invs.length){
-      return invs.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-    }
-    var legacy=(S.partnerInvoices||S.partner_invoices||[]).filter(function(i){ return i && (i.project_id===projectId || i.project_id==projectId); });
-    return legacy.reduce(function(sum,i){ return sum + parseFlexibleMoney(i.amount||0); },0);
-  };
-
-  window.saveInvoice = async function(id){
-    var amount=parseFlexibleMoney(document.getElementById('f-amount') && document.getElementById('f-amount').value);
-    var data={
-      project_id: parseInt(document.getElementById('f-proj') && document.getElementById('f-proj').value,10),
-      amount: amount,
-      month: ((document.getElementById('f-month') && document.getElementById('f-month').value) || '').trim(),
-      billing_type: (document.getElementById('f-billing') && document.getElementById('f-billing').value) || 'one-time',
-      draft_created: document.getElementById('f-draft') && document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent') && document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid') && document.getElementById('f-paid').checked ? 1 : 0
-    };
-    if(!data.project_id) return alert('Project required');
-    if(!(data.amount>0)) return alert('Amount required');
-    if(!data.month) return alert('Period required');
-    try{
-      if(id) await DB.update('invoices', id, data);
-      else await DB.insert('invoices', data);
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Invoice saved');
-    }catch(e){
-      console.error('[saveInvoice hotfix]',e);
-      alert('Invoice save failed');
-    }
-  };
-
-  window.savePartnerInvoice = async function(id){
-    var projId=parseInt(document.getElementById('f-pi-proj') && document.getElementById('f-pi-proj').value,10);
-    var amount=parseFlexibleMoney(document.getElementById('f-pi-amount') && document.getElementById('f-pi-amount').value);
-    var period=((document.getElementById('f-pi-period') && document.getElementById('f-pi-period').value) || '').trim();
-    var sent=document.getElementById('f-pi-sent') && document.getElementById('f-pi-sent').checked ? 1 : 0;
-    var paid=document.getElementById('f-pi-paid') && document.getElementById('f-pi-paid').checked ? 1 : 0;
-    if(!projId) return alert('Partner project required');
-    if(!(amount>0)) return alert('Amount required');
-    if(!period) return alert('Period required');
-    var invData={project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid};
-    try{
-      var editingInvoice=id && (S.invoices||[]).some(function(i){return i.id==id;});
-      var editingPartner=id && ((S.partnerInvoices||S.partner_invoices||[]).some(function(pi){return pi.id==id;}));
-      if(editingInvoice){
-        await DB.update('invoices',id,invData);
-      }else if(editingPartner){
-        await DB.delete('partner_invoices',id);
-        await DB.insert('invoices',invData);
-      }else{
-        await DB.insert('invoices',invData);
-      }
-      closeModal();
-      await refreshAll();
-      setTimeout(refreshAll, 350);
-      if(typeof showToast==='function') showToast('Partner invoice saved');
-    }catch(e){
-      console.error('[savePartnerInvoice hotfix]',e);
-      alert('Partner invoice save failed');
-    }
-  };
-
-  window.saveVacation = async function(id){
-    var sd=document.getElementById('f-start')&&document.getElementById('f-start').value;
-    var ed=document.getElementById('f-end')&&document.getElementById('f-end').value;
-    if(!sd||!ed) return alert('Start and end date required.');
-    if(ed<sd) return alert('End date must be after start date.');
-    var days=parseFloat(document.getElementById('f-days')&&document.getElementById('f-days').value)||0;
-    if(!days && typeof countWorkdays==='function') days=countWorkdays(sd,ed);
-    var data={employee_id:parseInt(document.getElementById('f-emp').value,10),start_date:sd,end_date:ed,days:days,notes:(document.getElementById('f-note').value||null)};
-    if(id) await DB.update('vacations',id,data); else await DB.insert('vacations',data);
-    closeModal();
-    await refreshAll();
-    setTimeout(refreshAll,350);
-  };
-
-  function dateToDays(dateStr){
-    if(!dateStr) return null;
-    var p=dateStr.split('-').map(Number);
-    if(p.length<3||!p[0]||!p[1]||!p[2]) return null;
-    return Math.floor(Date.UTC(p[0],p[1]-1,p[2])/86400000);
-  }
-  function overlapDays(p,y,m){
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(pS===null||pE===null) return 0;
-    var mS=Math.floor(Date.UTC(y,m-1,1)/86400000), mE=Math.floor(Date.UTC(y,m,0)/86400000);
-    if(pE<mS||pS>mE) return 0;
-    return Math.max(0, Math.min(pE,mE)-Math.max(pS,mS)+1);
-  }
-  window.revForMonthDayPrecise = function(p,y,m){
-    if(!p) return 0;
-    var active=overlapDays(p,y,m);
-    if(active<=0) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring;
-    if((bt==='weekly'||freq==='weekly') && recurring>0){
-      return recurring * (active/7);
-    }
-    // default: day-based using project revenue spread over active project days
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var pS=dateToDays(p.start_date), pE=dateToDays(p.end_date);
-    if(!totalRev || pS===null || pE===null) return 0;
-    var totalDays=Math.max(1, pE-pS+1);
-    var dayRevenue=totalRev/totalDays;
-    return dayRevenue*active;
-  };
-  window.revPerWk = function(p){
-    if(!p) return 0;
-    var bt=(p.billing_type||'').toLowerCase();
-    var freq=(p.recurring_freq||'').toLowerCase();
-    var recurring=parseFlexibleMoney(p.recurring_amount||0);
-    if((bt==='monthly'||freq==='monthly') && recurring>0) return recurring/4.3333333333;
-    if((bt==='weekly'||freq==='weekly') && recurring>0) return recurring;
-    var totalRev=parseFlexibleMoney(p.revenue||0);
-    var keys=(typeof projectWkKeys==='function')?projectWkKeys(p):[];
-    var weeks=Math.max(1, keys.length || 1);
-    return totalRev/weeks;
-  };
-})();
-</script>
 
 </body>
 </html>
