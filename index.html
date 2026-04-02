@@ -1141,6 +1141,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 </div></div><!-- close .main and .app -->
 <div class="modal-overlay" id="modal-overlay"><div class="modal" id="modal-content"></div></div>
 <script>
+const TEAM_MODE = new URLSearchParams(location.search).has('team');
 // ══ DATABASE ADAPTER ══
 const DB={
   isElectron:typeof window.electronAPI!=='undefined',
@@ -10649,6 +10650,7 @@ function wkFmtLabel(mon,fri){
       })();
     };
     _showTeamView();
+    try{ setInterval(()=>{ if(TEAM_MODE && typeof _showTeamView==='function') _showTeamView(); }, 60000); }catch(e){}
     return;
   }
 
