@@ -1877,10 +1877,10 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
-  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes','billing_type'],
+  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
   vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
@@ -3235,18 +3235,8 @@ function projExtCostMonth(pid,mStr){
 }
 function totalExtCostMonth(mStr){
   return (S.externalCosts||[]).filter(e=>{
-    // Primary: match by date field (YYYY-MM)
-    if(e.date&&e.date.substring(0,7)===mStr) return true;
-    // Fallback: match by week_key month (week starting in this month)
-    if(!e.date&&e.week_key){
-      try{
-        const[yr,wk]=e.week_key.split('-W').map(Number);
-        const d=new Date(Date.UTC(yr,0,1+((wk-1)*7)));
-        const dow=d.getUTCDay()||7; d.setUTCDate(d.getUTCDate()-(dow-1));
-        return d.toISOString().substring(0,7)===mStr;
-      }catch(e2){return false;}
-    }
-    return false;
+    if(!e.date)return false;
+    return e.date.substring(0,7)===mStr;
   }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function renderDashboard(){
@@ -7114,25 +7104,15 @@ async function saveProject(id){
     revenue:parseFloat(document.getElementById('f-revenue').value)||0,
     start_date:document.getElementById('f-start-date').value,
     end_date:document.getElementById('f-end-date').value,
+    billing_type:'monthly',
     notes:document.getElementById('f-notes').value,
     is_partner:document.getElementById('f-is-partner').checked?1:0,
     recurring_amount:parseFloat(document.getElementById('f-rec-amount')?.value)||0,
     recurring_freq:document.getElementById('f-rec-freq')?.value||'monthly',
   };
   if(!data.client_name||!data.name)return alert('Client name and project name are required.');
-  closeModal();
-  try{
-    const payload=_supaFilter('projects',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','projects',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','projects',payload,'?select=id');
-    if(!r) showToast('⚠ Project opslaan mislukt','error');
-    else showToast(id?'Project bijgewerkt':'Project aangemaakt');
-  }catch(e){showToast('⚠ Project opslaan mislukt: '+e.message,'error');}
-  await loadData();
-  if(typeof renderProjects==='function') renderProjects();
-  if(typeof renderDashboard==='function') renderDashboard();
-  if(typeof renderStaffing==='function') renderStaffing();
+  if(id)await DB.update('projects',id,data);else await DB.insert('projects',data);
+  closeModal();await loadData();renderProjects();
 }
 
 function modalEmployee(e){
@@ -7153,16 +7133,8 @@ function modalEmployee(e){
 async function saveEmployee(id){
   const data={name:document.getElementById('f-name').value.trim(),role:document.getElementById('f-role').value.trim(),daily_cost:parseFloat(document.getElementById('f-rate').value)||0,available_days_per_week:parseFloat(document.getElementById('f-avail').value)||5,vacation_days_per_year:parseFloat(document.getElementById('f-vacdays').value)||25};
   if(!data.name)return alert('Name required.');
-  closeModal();
-  try{
-    const payload=_supaFilter('employees',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','employees',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','employees',payload,'?select=id');
-    if(!r) showToast('⚠ Medewerker opslaan mislukt','error');
-    else showToast(id?'Medewerker bijgewerkt':'Medewerker aangemaakt');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderEmployees();
+  if(id)await DB.update('employees',id,data);else await DB.insert('employees',data);
+  closeModal();await loadData();renderEmployees();
 }
 
 function countWorkdays(startStr,endStr){
@@ -7206,23 +7178,53 @@ function vacAutoCalcDays(){
     if(hint)hint.textContent='';
   }
 }
+async function _refreshPlanningViews(){
+  await loadData();
+  try{ if(typeof renderVacation==='function') renderVacation(); }catch(e){}
+  try{ if(typeof renderSchedule==='function') renderSchedule(); }catch(e){}
+  try{ if(typeof renderStaffing==='function') renderStaffing(); }catch(e){}
+  try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
+  try{ if(typeof renderEmployees==='function') renderEmployees(); }catch(e){}
+}
 async function saveVacation(id){
-  const sd=document.getElementById('f-start').value,ed=document.getElementById('f-end').value;
-  if(!sd||!ed)return alert('Start and end date required.');
-  if(ed<sd)return alert('End date must be after start date.');
-  let days=parseFloat(document.getElementById('f-days').value)||0;
-  if(!days)days=countWorkdays(sd,ed);
-  const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
+  const sd=document.getElementById('f-start')?.value, ed=document.getElementById('f-end')?.value;
+  if(!sd||!ed) return alert('Start and end date required.');
+  if(ed<sd) return alert('End date must be after start date.');
+  const employeeId=parseInt(document.getElementById('f-emp')?.value)||0;
+  if(!employeeId) return alert('Employee required.');
+  let days=parseFloat(document.getElementById('f-days')?.value)||0;
+  if(!days) days=countWorkdays(sd,ed);
+  if(!days||days<0) return alert('Vacation days must be greater than 0.');
+  const data={
+    employee_id:employeeId,
+    start_date:sd,
+    end_date:ed,
+    days:days,
+    notes:(document.getElementById('f-note')?.value||'').trim()||null
+  };
   closeModal();
+  let ok=false;
   try{
     const payload=_supaFilter('vacations',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','vacations',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','vacations',payload);
-    if(!r) showToast('⚠ Opslaan mislukt','error');
-    else showToast(id?'Vakantie bijgewerkt':'Vakantie opgeslagen');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderVacation();
+    if(_SUPA_ONLINE && location.protocol!=='file:'){
+      let res;
+      if(id) res=await _supaReq('PATCH','vacations',payload,'?id=eq.'+id);
+      else res=await _supaReq('POST','vacations',payload,'?select=id');
+      ok=(res!==null);
+      if(ok){
+        try{ await loadData(); }catch(e){}
+      }
+    }
+    if(!ok){
+      if(id) await DB.update('vacations',id,data); else await DB.insert('vacations',data);
+      ok=true;
+    }
+    showToast(id?'Vacation bijgewerkt':'Vacation opgeslagen');
+  }catch(e){
+    console.error('[saveVacation]',e);
+    showToast('⚠ Vacation opslaan mislukt: '+(e.message||e),'error');
+  }
+  await _refreshPlanningViews();
 }
 
 function modalInvoiceBody(inv,preselectedProjectId){
@@ -7262,53 +7264,12 @@ function modalInvoice(inv,preselectedProjectId){
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveInvoice(${inv?.id||''})">Save</button></div>`;
 }
 async function saveInvoice(id){
-  const data={
-    project_id:parseInt(document.getElementById('f-proj').value),
-    amount:parseFloat(document.getElementById('f-amount').value)||0,
-    month:document.getElementById('f-month').value,
-    billing_type:document.getElementById('f-billing').value,
-    draft_created:document.getElementById('f-draft').checked?1:0,
-    invoice_sent:document.getElementById('f-sent').checked?1:0,
-    paid:document.getElementById('f-paid').checked?1:0
-  };
-  if(!data.project_id) return alert('Select a project.');
-  if(!data.amount) return alert('Amount is required.');
-  closeModal();
-
-  let ok=false;
-  try{
-    if(id){
-      // UPDATE existing invoice
-      const payload=_supaFilter('invoices',data);
-      const r=await _supaReq('PATCH','invoices',payload,'?id=eq.'+id);
-      ok=(r!==null);
-    } else {
-      // INSERT new invoice — handle UNIQUE(project_id,month) constraint gracefully
-      // Strategy: try plain month, then append -2, -3 ... -9 if 409
-      const baseMonth=data.month||new Date().toISOString().substring(0,7);
-      let inserted=false;
-      for(let seq=0; seq<=9 && !inserted; seq++){
-        const tryMonth=seq===0 ? baseMonth : baseMonth+'-'+seq;
-        const payload=_supaFilter('invoices',{...data,month:tryMonth});
-        const r=await _supaReq('POST','invoices',payload,'?select=id',seq>0);
-        if(r!==null){inserted=true;ok=true;}
-        else if(seq===0){console.warn('[saveInvoice] month '+tryMonth+' conflict, trying suffix');}
-      }
-      if(!ok) showToast('⚠ Invoice opslaan mislukt (alle maand-varianten bezet)','error');
-    }
-    if(ok) showToast(id?'Invoice bijgewerkt':'Invoice toegevoegd');
-  }catch(e){
-    console.error('[saveInvoice]',e);
-    showToast('⚠ Invoice opslaan mislukt: '+e.message,'error');
-  }
-
-  // Full refresh — all views that depend on invoices
-  await loadData();
-  if(typeof renderInvoices==='function') renderInvoices();
-  if(typeof renderPartner==='function') renderPartner();
-  if(typeof renderProjects==='function') renderProjects();
-  if(typeof renderDashboard==='function') renderDashboard();
-  if(typeof renderFinancial==='function') renderFinancial();
+  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:parseFloat(document.getElementById('f-amount').value)||0,month:document.getElementById('f-month').value,billing_type:document.getElementById('f-billing').value,draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
+  if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
+  closeModal();await loadData();renderInvoices();
+  // Also refresh Partner page if this is a partner project
+  const savedProj=S.projects.find(p=>p.id===data.project_id);
+  if(savedProj&&savedProj.is_partner&&typeof renderPartner==='function')renderPartner();
 }
 
 function modalTransaction(t){
@@ -7327,16 +7288,8 @@ async function saveTransaction(id){
   const amt=parseFloat(document.getElementById('f-amount').value)||0;
   const cat=document.getElementById('f-cat')?.value||'';
   const data={date:document.getElementById('f-date').value,description:document.getElementById('f-desc').value,amount:amt,type:amt>=0?'income':'expense',category:cat};
-  closeModal();
-  try{
-    const payload=_supaFilter('bank_transactions',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','bank_transactions',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','bank_transactions',payload,'?select=id');
-    if(!r) showToast('⚠ Transactie opslaan mislukt','error');
-    else showToast(id?'Transactie bijgewerkt':'Transactie opgeslagen');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderCashflow();
+  if(id)await DB.update('bank_transactions',id,data);else await DB.insert('bank_transactions',data);
+  closeModal();await loadData();renderCashflow();
 }
 
 function modalFixedCost(c){
@@ -7642,19 +7595,6 @@ async function saveFixedCost(id){
 
 async function deleteItem(table,id){
   if(!confirm('Delete this item? This cannot be undone.'))return;
-  // Direct Supabase delete for invoice tables
-  if(table==='invoices'||table==='partner_invoices'){
-    const r=await _supaReq('DELETE',table,null,'?id=eq.'+id);
-    if(r===null){showToast('⚠ Verwijderen mislukt','error');return;}
-    showToast('Deleted');
-    await loadData();
-    if(typeof renderInvoices==='function') renderInvoices();
-    if(typeof renderPartner==='function') renderPartner();
-    if(typeof renderProjects==='function') renderProjects();
-    if(typeof renderDashboard==='function') renderDashboard();
-    if(typeof renderFinancial==='function') renderFinancial();
-    return;
-  }
   await DB.delete(table,id);
   await loadData();
   const pageMap={
@@ -8086,12 +8026,14 @@ async function confirmBankImport(){
   for(const r of parsed){
     const key=`${r.dateStr}|${r.desc}|${r.amount}`;
     if(existingKeys.has(key)){skipped++;continue;}
-    const _row={date:r.dateStr,description:r.desc,amount:r.amount,
-      type:r.amount>=0?'income':'expense',category:r.cat,counterparty:r.counterparty,
-      is_fixed:r.isFixed?1:0,amount_excl_vat:r.amtExcl,vat_pct:r.vatPct};
-    const _res=await _supaReq('POST','bank_transactions',_supaFilter('bank_transactions',_row));
-    if(_res!==null){existingKeys.add(key);count++;}
-    else{skipped++;}
+    await DB.insert('bank_transactions',{
+      date:r.dateStr,description:r.desc,amount:r.amount,
+      type:r.amount>=0?'income':'expense',
+      category:r.cat,counterparty:r.counterparty,
+      is_fixed:r.isFixed?1:0,
+      amount_excl_vat:r.amtExcl,vat_pct:r.vatPct
+    });
+    existingKeys.add(key);count++;
   }
   _bankPreview=null;
   closeModal();
@@ -8390,7 +8332,6 @@ function _renderFinancialActual(){
   const totRev=months.reduce((s,m)=>s+m.revenue,0);
   const totFixed=months.reduce((s,m)=>s+m.fixedCosts,0);
   const totForecast=months.reduce((s,m)=>s+m.forecastCosts,0);
-  const totExtCosts=months.reduce((s,m)=>s+m.extCosts,0);
   const totOpCosts=totFixed+totForecast+totExtCosts;
   const totRes=totRev-totOpCosts;
   const totMg=totRev>0?totRes/totRev*100:0;
@@ -8623,16 +8564,8 @@ function modalFutureCost(c){
 async function saveFutureCost(id){
   const data={description:document.getElementById('f-desc').value.trim(),month:document.getElementById('f-month').value,amount:parseFloat(document.getElementById('f-amount').value)||0,category:document.getElementById('f-cat').value.trim(),recurring:document.getElementById('f-recurring').checked?1:0};
   if(!data.description)return alert('Description required.');
-  closeModal();
-  try{
-    const payload=_supaFilter('future_costs',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','future_costs',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','future_costs',payload,'?select=id');
-    if(!r) showToast('⚠ Opslaan mislukt','error');
-    else showToast(id?'Bijgewerkt':'Opgeslagen');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderForecast();
+  if(id)await DB.update('future_costs',id,data);else await DB.insert('future_costs',data);
+  closeModal();await loadData();renderForecast();
 }
 
 // ══ IMPORT CSV ══
@@ -8695,15 +8628,17 @@ async function _doImportXLSX(file){
 
 // ══ PARTNER INVOICING ══
 function getPartnerInvoiced(projectId){
-  // Always use S.invoices as primary source of truth
-  const invs=S.invoices.filter(i=>i.project_id===projectId||i.project_id==projectId);
-  if(invs.length>0){
-    return invs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  // Primary lookup by project_id
+  var directInvs=S.invoices.filter(function(i){return i.project_id===projectId||i.project_id==projectId;});
+  if(directInvs.length>0){
+    return directInvs.reduce(function(s,i){return s+parseFloat(i.amount||0);},0);
   }
-  // Legacy fallback: use partner_invoices only if no invoices at all for this project
-  return S.partnerInvoices
-    .filter(pi=>pi.project_id===projectId||pi.project_id==projectId)
-    .reduce((s,pi)=>s+parseFloat(pi.amount||0),0);
+  // Check if ANY invoice exists for this project (catches post-delete state)
+  var hasAnyInvoice=S.invoices.some(function(i){return i.project_id===projectId||i.project_id==projectId;});
+  if(hasAnyInvoice) return 0; // invoices exist but total is 0 — deleted state
+  // Legacy fallback to partner_invoices only if no invoices ever existed
+  return S.partnerInvoices.filter(function(pi){return pi.project_id===projectId||pi.project_id==projectId;})
+    .reduce(function(s,pi){return s+parseFloat(pi.amount||0);},0);
 }
 
 function renderPartner(){
@@ -8864,54 +8799,37 @@ async function savePartnerInvoice(id){
   const period=document.getElementById('f-pi-period').value;
   const sent=document.getElementById('f-pi-sent').checked?1:0;
   const paid=document.getElementById('f-pi-paid').checked?1:0;
-  if(!projId) return alert('Select a project.');
-  if(!amount) return alert('Amount required.');
+  if(!amount)return alert('Amount required.');
 
-  closeModal();
-  let ok=false;
-  try{
-    const invData={
-      project_id:projId,
-      amount:amount,
-      month:period,
-      billing_type:'monthly',
-      draft_created:0,
-      invoice_sent:sent,
-      paid:paid
-    };
-    const payload=_supaFilter('invoices',invData);
+  // Write to S.invoices (single source of truth).
+  // If this was originally a partner_invoices entry (id but _src='partnerinvoice'),
+  // we check whether to write to partner_invoices or invoices.
+  // Going forward all partner invoice logs go into invoices table.
+  const invData={
+    project_id:projId,
+    amount:amount,
+    month:period,
+    billing_type:'monthly',
+    draft_created:0,
+    invoice_sent:sent,
+    paid:paid
+  };
 
-    const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
-    const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
+  // Determine if this is editing an existing invoice vs partner_invoice
+  const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
+  const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
 
-    let r;
-    if(editingInvoice){
-      r=await _supaReq('PATCH','invoices',{amount,month:period,invoice_sent:sent,paid},'?id=eq.'+id);
-      ok=(r!==null);
-    } else if(editingPartnerInv){
-      // Migrate: delete old partner_invoice, insert as invoice
-      await _supaReq('DELETE','partner_invoices',null,'?id=eq.'+id);
-      r=await _supaReq('POST','invoices',payload,'?select=id');
-      ok=(r!==null);
-    } else {
-      // New invoice — insert directly
-      r=await _supaReq('POST','invoices',payload,'?select=id');
-      ok=(r!==null);
-    }
-    if(ok) showToast(id?'Invoice updated':'Invoice logged');
-    else showToast('⚠ Invoice opslaan mislukt — zie console voor details','error');
-  }catch(e){
-    console.error('[savePartnerInvoice]',e);
-    showToast('⚠ Invoice opslaan mislukt: '+e.message,'error');
+  if(editingInvoice){
+    await DB.update('invoices',id,{amount,month:period,invoice_sent:sent,paid});
+  } else if(editingPartnerInv){
+    // Migrate: delete old partner_invoice, create new invoice row
+    await DB.delete('partner_invoices',id);
+    await DB.insert('invoices',invData);
+  } else {
+    // New entry: write to invoices table
+    await DB.insert('invoices',invData);
   }
-
-  // Full refresh
-  await loadData();
-  if(typeof renderPartner==='function') renderPartner();
-  if(typeof renderInvoices==='function') renderInvoices();
-  if(typeof renderProjects==='function') renderProjects();
-  if(typeof renderDashboard==='function') renderDashboard();
-  if(typeof renderFinancial==='function') renderFinancial();
+  closeModal();await loadData();renderPartner();if(typeof renderInvoices==='function')renderInvoices();
 }
 
 // ══ EXCEL EXPORT (Full backup) ══
