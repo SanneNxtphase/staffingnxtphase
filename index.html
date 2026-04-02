@@ -1880,7 +1880,7 @@ var _SUPA_SCHEMA = {
   projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
-  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
+  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes','billing_type'],
   vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
@@ -3235,8 +3235,18 @@ function projExtCostMonth(pid,mStr){
 }
 function totalExtCostMonth(mStr){
   return (S.externalCosts||[]).filter(e=>{
-    if(!e.date)return false;
-    return e.date.substring(0,7)===mStr;
+    // Primary: match by date field (YYYY-MM)
+    if(e.date&&e.date.substring(0,7)===mStr) return true;
+    // Fallback: match by week_key month (week starting in this month)
+    if(!e.date&&e.week_key){
+      try{
+        const[yr,wk]=e.week_key.split('-W').map(Number);
+        const d=new Date(Date.UTC(yr,0,1+((wk-1)*7)));
+        const dow=d.getUTCDay()||7; d.setUTCDate(d.getUTCDate()-(dow-1));
+        return d.toISOString().substring(0,7)===mStr;
+      }catch(e2){return false;}
+    }
+    return false;
   }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function renderDashboard(){
@@ -7226,12 +7236,52 @@ function modalInvoice(inv,preselectedProjectId){
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveInvoice(${inv?.id||''})">Save</button></div>`;
 }
 async function saveInvoice(id){
-  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:parseFloat(document.getElementById('f-amount').value)||0,month:document.getElementById('f-month').value,billing_type:document.getElementById('f-billing').value,draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
-  if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
-  closeModal();await loadData();renderInvoices();
-  // Also refresh Partner page if this is a partner project
-  const savedProj=S.projects.find(p=>p.id===data.project_id);
-  if(savedProj&&savedProj.is_partner&&typeof renderPartner==='function')renderPartner();
+  const data={
+    project_id:parseInt(document.getElementById('f-proj').value),
+    amount:parseFloat(document.getElementById('f-amount').value)||0,
+    month:document.getElementById('f-month').value,
+    billing_type:document.getElementById('f-billing').value,
+    draft_created:document.getElementById('f-draft').checked?1:0,
+    invoice_sent:document.getElementById('f-sent').checked?1:0,
+    paid:document.getElementById('f-paid').checked?1:0
+  };
+  if(!data.project_id) return alert('Select a project.');
+  if(!data.amount) return alert('Amount is required.');
+
+  closeModal();
+  let ok=false;
+  try{
+    const payload=_supaFilter('invoices',data);
+    let r;
+    if(id){
+      r=await _supaReq('PATCH','invoices',payload,'?id=eq.'+id);
+      ok=(r!==null);
+    } else {
+      r=await _supaReq('POST','invoices',payload,'?select=id');
+      ok=(r!==null);
+      // If Supabase gives 409 (unique constraint on project+month), try without month uniqueness
+      // by appending a timestamp suffix to make it unique
+      if(!ok){
+        console.warn('[saveInvoice] POST failed, retrying without month uniqueness check');
+        const payload2={...payload,month:payload.month||new Date().toISOString().substring(0,7)};
+        r=await _supaReq('POST','invoices',payload2,'?select=id',true);
+        ok=(r!==null);
+      }
+    }
+    if(ok) showToast(id?'Invoice updated':'Invoice added');
+    else showToast('⚠ Invoice opslaan mislukt','error');
+  }catch(e){
+    console.error('[saveInvoice]',e);
+    showToast('⚠ Invoice opslaan mislukt: '+e.message,'error');
+  }
+
+  // Full refresh of all affected views
+  await loadData();
+  if(typeof renderInvoices==='function') renderInvoices();
+  if(typeof renderPartner==='function') renderPartner();
+  if(typeof renderProjects==='function') renderProjects();
+  if(typeof renderDashboard==='function') renderDashboard();
+  if(typeof renderFinancial==='function') renderFinancial();
 }
 
 function modalTransaction(t){
@@ -7557,6 +7607,19 @@ async function saveFixedCost(id){
 
 async function deleteItem(table,id){
   if(!confirm('Delete this item? This cannot be undone.'))return;
+  // Direct Supabase delete for invoice tables
+  if(table==='invoices'||table==='partner_invoices'){
+    const r=await _supaReq('DELETE',table,null,'?id=eq.'+id);
+    if(r===null){showToast('⚠ Verwijderen mislukt','error');return;}
+    showToast('Deleted');
+    await loadData();
+    if(typeof renderInvoices==='function') renderInvoices();
+    if(typeof renderPartner==='function') renderPartner();
+    if(typeof renderProjects==='function') renderProjects();
+    if(typeof renderDashboard==='function') renderDashboard();
+    if(typeof renderFinancial==='function') renderFinancial();
+    return;
+  }
   await DB.delete(table,id);
   await loadData();
   const pageMap={
@@ -8294,6 +8357,7 @@ function _renderFinancialActual(){
   const totRev=months.reduce((s,m)=>s+m.revenue,0);
   const totFixed=months.reduce((s,m)=>s+m.fixedCosts,0);
   const totForecast=months.reduce((s,m)=>s+m.forecastCosts,0);
+  const totExtCosts=months.reduce((s,m)=>s+m.extCosts,0);
   const totOpCosts=totFixed+totForecast+totExtCosts;
   const totRes=totRev-totOpCosts;
   const totMg=totRev>0?totRes/totRev*100:0;
@@ -8590,17 +8654,15 @@ async function _doImportXLSX(file){
 
 // ══ PARTNER INVOICING ══
 function getPartnerInvoiced(projectId){
-  // Primary lookup by project_id
-  var directInvs=S.invoices.filter(function(i){return i.project_id===projectId||i.project_id==projectId;});
-  if(directInvs.length>0){
-    return directInvs.reduce(function(s,i){return s+parseFloat(i.amount||0);},0);
+  // Always use S.invoices as primary source of truth
+  const invs=S.invoices.filter(i=>i.project_id===projectId||i.project_id==projectId);
+  if(invs.length>0){
+    return invs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
   }
-  // Check if ANY invoice exists for this project (catches post-delete state)
-  var hasAnyInvoice=S.invoices.some(function(i){return i.project_id===projectId||i.project_id==projectId;});
-  if(hasAnyInvoice) return 0; // invoices exist but total is 0 — deleted state
-  // Legacy fallback to partner_invoices only if no invoices ever existed
-  return S.partnerInvoices.filter(function(pi){return pi.project_id===projectId||pi.project_id==projectId;})
-    .reduce(function(s,pi){return s+parseFloat(pi.amount||0);},0);
+  // Legacy fallback: use partner_invoices only if no invoices at all for this project
+  return S.partnerInvoices
+    .filter(pi=>pi.project_id===projectId||pi.project_id==projectId)
+    .reduce((s,pi)=>s+parseFloat(pi.amount||0),0);
 }
 
 function renderPartner(){
@@ -8761,37 +8823,54 @@ async function savePartnerInvoice(id){
   const period=document.getElementById('f-pi-period').value;
   const sent=document.getElementById('f-pi-sent').checked?1:0;
   const paid=document.getElementById('f-pi-paid').checked?1:0;
-  if(!amount)return alert('Amount required.');
+  if(!projId) return alert('Select a project.');
+  if(!amount) return alert('Amount required.');
 
-  // Write to S.invoices (single source of truth).
-  // If this was originally a partner_invoices entry (id but _src='partnerinvoice'),
-  // we check whether to write to partner_invoices or invoices.
-  // Going forward all partner invoice logs go into invoices table.
-  const invData={
-    project_id:projId,
-    amount:amount,
-    month:period,
-    billing_type:'monthly',
-    draft_created:0,
-    invoice_sent:sent,
-    paid:paid
-  };
+  closeModal();
+  let ok=false;
+  try{
+    const invData={
+      project_id:projId,
+      amount:amount,
+      month:period,
+      billing_type:'monthly',
+      draft_created:0,
+      invoice_sent:sent,
+      paid:paid
+    };
+    const payload=_supaFilter('invoices',invData);
 
-  // Determine if this is editing an existing invoice vs partner_invoice
-  const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
-  const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
+    const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
+    const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
 
-  if(editingInvoice){
-    await DB.update('invoices',id,{amount,month:period,invoice_sent:sent,paid});
-  } else if(editingPartnerInv){
-    // Migrate: delete old partner_invoice, create new invoice row
-    await DB.delete('partner_invoices',id);
-    await DB.insert('invoices',invData);
-  } else {
-    // New entry: write to invoices table
-    await DB.insert('invoices',invData);
+    let r;
+    if(editingInvoice){
+      r=await _supaReq('PATCH','invoices',{amount,month:period,invoice_sent:sent,paid},'?id=eq.'+id);
+      ok=(r!==null);
+    } else if(editingPartnerInv){
+      // Migrate: delete old partner_invoice, insert as invoice
+      await _supaReq('DELETE','partner_invoices',null,'?id=eq.'+id);
+      r=await _supaReq('POST','invoices',payload,'?select=id');
+      ok=(r!==null);
+    } else {
+      // New invoice — insert directly
+      r=await _supaReq('POST','invoices',payload,'?select=id');
+      ok=(r!==null);
+    }
+    if(ok) showToast(id?'Invoice updated':'Invoice logged');
+    else showToast('⚠ Invoice opslaan mislukt — zie console voor details','error');
+  }catch(e){
+    console.error('[savePartnerInvoice]',e);
+    showToast('⚠ Invoice opslaan mislukt: '+e.message,'error');
   }
-  closeModal();await loadData();renderPartner();if(typeof renderInvoices==='function')renderInvoices();
+
+  // Full refresh
+  await loadData();
+  if(typeof renderPartner==='function') renderPartner();
+  if(typeof renderInvoices==='function') renderInvoices();
+  if(typeof renderProjects==='function') renderProjects();
+  if(typeof renderDashboard==='function') renderDashboard();
+  if(typeof renderFinancial==='function') renderFinancial();
 }
 
 // ══ EXCEL EXPORT (Full backup) ══
@@ -9515,10 +9594,9 @@ input[type=text],input[type=number],input[type=date],select.form-input,textarea{
 // PINs stored in localStorage (hashed via simple XOR — not cryptographic but 
 // prevents casual shoulder-surf exposure; for strong encryption, host on HTTPS).
 
-
 const AUTH={
-  role:null,
-  input:'',
+  role:null,    // 'admin' | 'viewer' | null
+  input:'',     // current PIN digits being entered
   selectedRole:'admin',
   ADMIN_KEY:'sp-pin-admin',
   VIEWER_KEY:'sp-pin-viewer',
@@ -9527,65 +9605,42 @@ const AUTH={
   DEFAULT_ADMIN:'1234',
   DEFAULT_VIEWER:'0000',
   DEFAULT_EMPLOYEE:'8888',
-  _submitTimer:null,
-  _lastKeyAt:0,
-  _lastKeyVal:null,
-  _isSubmitting:false,
 
-  hash(pin){
-    let h=0;
-    for(const c of String(pin||'')){h=(h*31+c.charCodeAt(0))&0x7fffffff;}
-    return String(h);
-  },
-
-  normalizeStoredPin(raw, fallbackPlain){
-    const fb=this.hash(fallbackPlain);
-    if(raw===null||raw===undefined) return fb;
-    let v=String(raw).trim();
-    if(!v) return fb;
-    if((v.startsWith('"')&&v.endsWith('"'))||(v.startsWith("'")&&v.endsWith("'"))){
-      v=v.slice(1,-1).trim();
-    }
-    if(/^\d{4}$/.test(v)) return this.hash(v);
-    if(/^\d+$/.test(v)) return v;
-    return fb;
-  },
+  // Simple hash — prevents plaintext storage without full crypto
+  hash(pin){let h=0;for(const c of pin){h=(h*31+c.charCodeAt(0))&0x7fffffff;}return String(h);},
 
   getPin(role){
-    const key=role==='admin'?this.ADMIN_KEY:(role==='employee'?this.EMPLOYEE_KEY:this.VIEWER_KEY);
-    const fallback=role==='admin'?this.DEFAULT_ADMIN:(role==='employee'?this.DEFAULT_EMPLOYEE:this.DEFAULT_VIEWER);
-    let raw=null;
-    try{ raw=localStorage.getItem(key); }catch(e){}
-    return this.normalizeStoredPin(raw, fallback);
+    if(role==='admin'){return localStorage.getItem(this.ADMIN_KEY)||this.hash(this.DEFAULT_ADMIN);}
+    if(role==='employee'){return localStorage.getItem(this.EMPLOYEE_KEY)||this.hash(this.DEFAULT_EMPLOYEE);}
+    return localStorage.getItem(this.VIEWER_KEY)||this.hash(this.DEFAULT_VIEWER);
   },
 
-  verify(role,pin){
-    return this.hash(String(pin||''))===this.getPin(role);
-  },
+  verify(role,pin){return this.hash(pin)===this.getPin(role);},
 
   setPin(role,pin){
     const h=this.hash(pin);
     const key=role==='admin'?this.ADMIN_KEY:role==='employee'?this.EMPLOYEE_KEY:this.VIEWER_KEY;
     try{localStorage.setItem(key,h);}catch(e){}
+    // Sync PIN to Supabase so all devices share the same PIN
     const supaKey='pin_'+role;
     if(typeof _supaReq==='function'){
       _supaReq('GET','settings',null,'?key=eq.'+supaKey+'&select=id').then(ex=>{
-        if(ex&&ex[0]) _supaReq('PATCH','settings',{value:h},'?key=eq.'+supaKey);
+        if(ex&&ex[0])_supaReq('PATCH','settings',{value:h},'?key=eq.'+supaKey);
         else _supaReq('POST','settings',{key:supaKey,value:h});
       }).catch(()=>{});
     }
   },
 
+  // Load PIN hashes from Supabase (called on init so all devices stay in sync)
   async syncPinsFromSupabase(){
-    if(typeof _supaReq!=='function') return;
+    if(typeof _supaReq!=='function')return;
     try{
       const res=await _supaReq('GET','settings',null,'?key=in.(pin_admin,pin_viewer,pin_employee)&select=key,value');
-      if(!res) return;
+      if(!res)return;
       res.forEach(row=>{
-        if(!row||!row.key) return;
-        if(row.key==='pin_admin') try{localStorage.setItem(this.ADMIN_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_ADMIN));}catch(e){}
-        if(row.key==='pin_viewer') try{localStorage.setItem(this.VIEWER_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_VIEWER));}catch(e){}
-        if(row.key==='pin_employee') try{localStorage.setItem(this.EMPLOYEE_KEY,this.normalizeStoredPin(row.value,this.DEFAULT_EMPLOYEE));}catch(e){}
+        if(row.key==='pin_admin')try{localStorage.setItem(this.ADMIN_KEY,row.value);}catch(e){}
+        if(row.key==='pin_viewer')try{localStorage.setItem(this.VIEWER_KEY,row.value);}catch(e){}
+        if(row.key==='pin_employee')try{localStorage.setItem(this.EMPLOYEE_KEY,row.value);}catch(e){}
       });
     }catch(e){}
   },
@@ -9600,37 +9655,17 @@ const AUTH={
 function authSelectRole(role){
   AUTH.selectedRole=role;
   AUTH.input='';
-  AUTH._isSubmitting=false;
-  if(AUTH._submitTimer){ clearTimeout(AUTH._submitTimer); AUTH._submitTimer=null; }
   authUpdateDots();
-  const err=document.getElementById('auth-err');
-  if(err) err.textContent='';
-  const adminBtn=document.getElementById('role-admin-btn');
-  const viewerBtn=document.getElementById('role-viewer-btn');
-  if(adminBtn) adminBtn.classList.toggle('active',role==='admin');
-  if(viewerBtn) viewerBtn.classList.toggle('active',role==='viewer');
+  document.getElementById('auth-err').textContent='';
+  document.getElementById('role-admin-btn').classList.toggle('active',role==='admin');
+  document.getElementById('role-viewer-btn').classList.toggle('active',role==='viewer');
 }
-
 function authKey(k){
-  const now=Date.now();
-  const keyVal=String(k);
-  if(AUTH._lastKeyVal===keyVal && (now-AUTH._lastKeyAt)<180) return;
-  AUTH._lastKeyVal=keyVal;
-  AUTH._lastKeyAt=now;
-  if(AUTH._isSubmitting) return;
-  if(AUTH.input.length<4){
-    AUTH.input+=keyVal;
-    authUpdateDots();
-  }
-  if(AUTH.input.length===4){
-    if(AUTH._submitTimer) clearTimeout(AUTH._submitTimer);
-    AUTH._submitTimer=setTimeout(()=>authSubmit(),120);
-  }
+  if(AUTH.input.length<4){AUTH.input+=String(k);}
+  authUpdateDots();
+  if(AUTH.input.length===4)setTimeout(authSubmit,120);
 }
-
 function authDel(){
-  if(AUTH._submitTimer){ clearTimeout(AUTH._submitTimer); AUTH._submitTimer=null; }
-  AUTH._isSubmitting=false;
   AUTH.input=AUTH.input.slice(0,-1);
   authUpdateDots();
 }
@@ -9638,47 +9673,34 @@ function authDel(){
 function authUpdateDots(){
   for(let i=0;i<4;i++){
     const d=document.getElementById('pd'+i);
-    if(d){
-      d.classList.toggle('filled',i<AUTH.input.length);
-      d.classList.remove('error');
-    }
+    if(d){d.classList.toggle('filled',i<AUTH.input.length);d.classList.remove('error');}
   }
 }
 
 function authSubmit(){
-  if(AUTH._isSubmitting) return;
-  if((AUTH.input||'').length!==4) return;
-  AUTH._isSubmitting=true;
   const ok=AUTH.verify(AUTH.selectedRole,AUTH.input);
   if(ok){
     AUTH.role=AUTH.selectedRole;
-    try{sessionStorage.setItem(AUTH.SESSION_KEY,AUTH.role);}catch(e){}
-    const overlay=document.getElementById('auth-overlay');
-    if(overlay) overlay.classList.add('hidden');
+    sessionStorage.setItem(AUTH.SESSION_KEY,AUTH.role);
+    document.getElementById('auth-overlay').classList.add('hidden');
     updateRoleBadge();
-    AUTH.input='';
-    authUpdateDots();
-    AUTH._isSubmitting=false;
     if(AUTH.isEmployee()){
+      // Employee view: show only staff view, hide full app
       document.querySelector('.app').style.display='none';
       document.getElementById('employee-view').classList.add('ev-visible');
-      (async()=>{ await loadData(); renderEmployeeView(); })();
+      (async()=>{
+        await loadData();
+        renderEmployeeView();
+      })();
       return;
     }
     init();
   } else {
-    for(let i=0;i<4;i++){
-      const d=document.getElementById('pd'+i);
-      if(d) d.classList.add('error');
-    }
-    const err=document.getElementById('auth-err');
-    if(err) err.textContent='Incorrect PIN — try again';
+    for(let i=0;i<4;i++){const d=document.getElementById('pd'+i);if(d)d.classList.add('error');}
+    document.getElementById('auth-err').textContent='Incorrect PIN — try again';
     setTimeout(()=>{
-      AUTH.input='';
-      AUTH._isSubmitting=false;
-      authUpdateDots();
-      const e=document.getElementById('auth-err');
-      if(e) e.textContent='';
+      AUTH.input='';authUpdateDots();
+      document.getElementById('auth-err').textContent='';
     },900);
   }
 }
@@ -9686,12 +9708,9 @@ function authSubmit(){
 function lockApp(){
   AUTH.role=null;
   AUTH.input='';
-  AUTH._isSubmitting=false;
-  if(AUTH._submitTimer){ clearTimeout(AUTH._submitTimer); AUTH._submitTimer=null; }
-  try{sessionStorage.removeItem(AUTH.SESSION_KEY);}catch(e){}
+  sessionStorage.removeItem(AUTH.SESSION_KEY);
   authUpdateDots();
-  const err=document.getElementById('auth-err');
-  if(err) err.textContent='';
+  document.getElementById('auth-err').textContent='';
   authSelectRole('admin');
   document.getElementById('auth-overlay').classList.remove('hidden');
 }
