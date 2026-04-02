@@ -7178,7 +7178,7 @@ function vacAutoCalcDays(){
     if(hint)hint.textContent='';
   }
 }
-async function _refreshPlanningViews(){
+async function _refreshVacationDependentViews(){
   await loadData();
   try{ if(typeof renderVacation==='function') renderVacation(); }catch(e){}
   try{ if(typeof renderSchedule==='function') renderSchedule(); }catch(e){}
@@ -7186,45 +7186,34 @@ async function _refreshPlanningViews(){
   try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
   try{ if(typeof renderEmployees==='function') renderEmployees(); }catch(e){}
 }
+
 async function saveVacation(id){
-  const sd=document.getElementById('f-start')?.value, ed=document.getElementById('f-end')?.value;
-  if(!sd||!ed) return alert('Start and end date required.');
-  if(ed<sd) return alert('End date must be after start date.');
-  const employeeId=parseInt(document.getElementById('f-emp')?.value)||0;
-  if(!employeeId) return alert('Employee required.');
-  let days=parseFloat(document.getElementById('f-days')?.value)||0;
-  if(!days) days=countWorkdays(sd,ed);
-  if(!days||days<0) return alert('Vacation days must be greater than 0.');
-  const data={
-    employee_id:employeeId,
-    start_date:sd,
-    end_date:ed,
-    days:days,
-    notes:(document.getElementById('f-note')?.value||'').trim()||null
-  };
+  const sd=document.getElementById('f-start').value,ed=document.getElementById('f-end').value;
+  if(!sd||!ed)return alert('Start and end date required.');
+  if(ed<sd)return alert('End date must be after start date.');
+  let days=parseFloat(document.getElementById('f-days').value)||0;
+  if(!days)days=countWorkdays(sd,ed);
+  const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
+  if(!data.employee_id)return alert('Employee required.');
   closeModal();
-  let ok=false;
   try{
-    const payload=_supaFilter('vacations',data);
-    if(_SUPA_ONLINE && location.protocol!=='file:'){
-      let res;
-      if(id) res=await _supaReq('PATCH','vacations',payload,'?id=eq.'+id);
-      else res=await _supaReq('POST','vacations',payload,'?select=id');
-      ok=(res!==null);
-      if(ok){
-        try{ await loadData(); }catch(e){}
-      }
+    let ok=null;
+    if(typeof _supaReq==='function'){
+      const payload=typeof _supaFilter==='function'?_supaFilter('vacations',data):data;
+      ok=id
+        ? await _supaReq('PATCH','vacations',payload,'?id=eq.'+id)
+        : await _supaReq('POST','vacations',payload,'?select=id');
     }
     if(!ok){
-      if(id) await DB.update('vacations',id,data); else await DB.insert('vacations',data);
-      ok=true;
+      if(id) ok=await DB.update('vacations',id,data);
+      else ok=await DB.insert('vacations',data);
     }
-    showToast(id?'Vacation bijgewerkt':'Vacation opgeslagen');
+    await _refreshVacationDependentViews();
+    showToast(id?'Vacation updated':'Vacation saved','success');
   }catch(e){
     console.error('[saveVacation]',e);
-    showToast('⚠ Vacation opslaan mislukt: '+(e.message||e),'error');
+    showToast('⚠ Vacation opslaan mislukt: '+(e&&e.message?e.message:'unknown error'),'error');
   }
-  await _refreshPlanningViews();
 }
 
 function modalInvoiceBody(inv,preselectedProjectId){
