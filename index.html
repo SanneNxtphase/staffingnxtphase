@@ -9486,353 +9486,8 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
   let snap=originalHtml;
   // Inject readonly banner right after <body>
   snap=snap.replace(/<body[^>]*>/, m=>m+readonlyBanner);
-  // Inject readonly script right before 
-<script>
-(function(){
-  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
-  function getStored(role){
-    try{
-      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
-      return localStorage.getItem(key);
-    }catch(e){ return null; }
-  }
-  function expectedPin(role){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    if(!stored) return defaults[role] || '1234';
-    const s = String(stored).trim().replace(/^"|"$/g,'');
-    if(/^\d{4}$/.test(s)) return s;
-    return defaults[role] || '1234';
-  }
-  function verify(role,pin){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
-    const plain = expectedPin(role);
-    const typed = String(pin||'');
-    if(raw){
-      if(raw === typed) return true;
-      if(raw === h(typed)) return true;
-    }
-    return typed === plain || h(typed) === h(defaults[role]||plain);
-  }
-  function qs(id){ return document.getElementById(id); }
-  function ensureState(){
-    if(!window.AUTH || typeof window.AUTH !== 'object'){
-      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
-    }
-    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
-    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
-  }
-  function updateDots(){
-    ensureState();
-    for(let i=0;i<4;i++){
-      const d=qs('pd'+i);
-      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
-    }
-  }
-  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
-  function submit(){
-    ensureState();
-    const role = window.AUTH.selectedRole || 'admin';
-    const pin  = String(window.AUTH.input||'');
-    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
-    if(ok){
-      window.AUTH.role = role;
-      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
-      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
-      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
-      try{
-        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
-          document.querySelector('.app').style.display='none';
-          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
-          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
-            Promise.resolve(loadData()).then(()=>renderEmployeeView());
-          }
-          return;
-        }
-      }catch(e){}
-      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
-      return;
-    }
-    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
-    setErr('Incorrect PIN — try again');
-    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
-  }
-  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
-  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
-  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
-  window.authSubmit = submit;
-
-  function bindKeypad(){
-    const keypad = qs('pin-keypad');
-    if(!keypad) return;
-    keypad.querySelectorAll('.pin-key').forEach(btn=>{
-      btn.type='button';
-      const txt=(btn.textContent||'').trim();
-      btn.onclick=null;
-      btn.addEventListener('click', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-      btn.addEventListener('touchend', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-    });
-    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
-    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
-    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
-  }
-
-  function initRecovery(){
-    ensureState();
-    bindKeypad();
-    updateDots();
-    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
-  }
-
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
-  else initRecovery();
-})();
-</script>
-
-</body>
-  snap=snap.replace('
-<script>
-(function(){
-  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
-  function getStored(role){
-    try{
-      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
-      return localStorage.getItem(key);
-    }catch(e){ return null; }
-  }
-  function expectedPin(role){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    if(!stored) return defaults[role] || '1234';
-    const s = String(stored).trim().replace(/^"|"$/g,'');
-    if(/^\d{4}$/.test(s)) return s;
-    return defaults[role] || '1234';
-  }
-  function verify(role,pin){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
-    const plain = expectedPin(role);
-    const typed = String(pin||'');
-    if(raw){
-      if(raw === typed) return true;
-      if(raw === h(typed)) return true;
-    }
-    return typed === plain || h(typed) === h(defaults[role]||plain);
-  }
-  function qs(id){ return document.getElementById(id); }
-  function ensureState(){
-    if(!window.AUTH || typeof window.AUTH !== 'object'){
-      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
-    }
-    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
-    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
-  }
-  function updateDots(){
-    ensureState();
-    for(let i=0;i<4;i++){
-      const d=qs('pd'+i);
-      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
-    }
-  }
-  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
-  function submit(){
-    ensureState();
-    const role = window.AUTH.selectedRole || 'admin';
-    const pin  = String(window.AUTH.input||'');
-    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
-    if(ok){
-      window.AUTH.role = role;
-      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
-      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
-      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
-      try{
-        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
-          document.querySelector('.app').style.display='none';
-          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
-          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
-            Promise.resolve(loadData()).then(()=>renderEmployeeView());
-          }
-          return;
-        }
-      }catch(e){}
-      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
-      return;
-    }
-    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
-    setErr('Incorrect PIN — try again');
-    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
-  }
-  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
-  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
-  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
-  window.authSubmit = submit;
-
-  function bindKeypad(){
-    const keypad = qs('pin-keypad');
-    if(!keypad) return;
-    keypad.querySelectorAll('.pin-key').forEach(btn=>{
-      btn.type='button';
-      const txt=(btn.textContent||'').trim();
-      btn.onclick=null;
-      btn.addEventListener('click', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-      btn.addEventListener('touchend', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-    });
-    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
-    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
-    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
-  }
-
-  function initRecovery(){
-    ensureState();
-    bindKeypad();
-    updateDots();
-    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
-  }
-
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
-  else initRecovery();
-})();
-</script>
-
-</body>',readonlyScript+'
-<script>
-(function(){
-  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
-  function getStored(role){
-    try{
-      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
-      return localStorage.getItem(key);
-    }catch(e){ return null; }
-  }
-  function expectedPin(role){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    if(!stored) return defaults[role] || '1234';
-    const s = String(stored).trim().replace(/^"|"$/g,'');
-    if(/^\d{4}$/.test(s)) return s;
-    return defaults[role] || '1234';
-  }
-  function verify(role,pin){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
-    const plain = expectedPin(role);
-    const typed = String(pin||'');
-    if(raw){
-      if(raw === typed) return true;
-      if(raw === h(typed)) return true;
-    }
-    return typed === plain || h(typed) === h(defaults[role]||plain);
-  }
-  function qs(id){ return document.getElementById(id); }
-  function ensureState(){
-    if(!window.AUTH || typeof window.AUTH !== 'object'){
-      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
-    }
-    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
-    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
-  }
-  function updateDots(){
-    ensureState();
-    for(let i=0;i<4;i++){
-      const d=qs('pd'+i);
-      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
-    }
-  }
-  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
-  function submit(){
-    ensureState();
-    const role = window.AUTH.selectedRole || 'admin';
-    const pin  = String(window.AUTH.input||'');
-    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
-    if(ok){
-      window.AUTH.role = role;
-      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
-      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
-      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
-      try{
-        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
-          document.querySelector('.app').style.display='none';
-          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
-          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
-            Promise.resolve(loadData()).then(()=>renderEmployeeView());
-          }
-          return;
-        }
-      }catch(e){}
-      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
-      return;
-    }
-    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
-    setErr('Incorrect PIN — try again');
-    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
-  }
-  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
-  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
-  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
-  window.authSubmit = submit;
-
-  function bindKeypad(){
-    const keypad = qs('pin-keypad');
-    if(!keypad) return;
-    keypad.querySelectorAll('.pin-key').forEach(btn=>{
-      btn.type='button';
-      const txt=(btn.textContent||'').trim();
-      btn.onclick=null;
-      btn.addEventListener('click', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-      btn.addEventListener('touchend', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-    });
-    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
-    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
-    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
-  }
-
-  function initRecovery(){
-    ensureState();
-    bindKeypad();
-    updateDots();
-    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
-  }
-
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
-  else initRecovery();
-})();
-</script>
-
-</body>');
+  // Inject readonly script right before </body>
+  snap=snap.replace('</body>',readonlyScript+'</body>');
   // Add readonly CSS to disable pointer events on interactive elements
   snap=snap.replace('</style>',`
 /* ── READ-ONLY SNAPSHOT STYLES ── */
@@ -9921,17 +9576,46 @@ const AUTH={
 function authSelectRole(role){
   AUTH.selectedRole=role;
   AUTH.input='';
+  _authLastKeyTs=0;
+  _authLastKeyVal='';
+  if(_authSubmitTimer){clearTimeout(_authSubmitTimer);_authSubmitTimer=null;}
   authUpdateDots();
   document.getElementById('auth-err').textContent='';
   document.getElementById('role-admin-btn').classList.toggle('active',role==='admin');
   document.getElementById('role-viewer-btn').classList.toggle('active',role==='viewer');
 }
+let _authLastKeyTs=0;
+let _authLastKeyVal='';
+let _authSubmitTimer=null;
+
 function authKey(k){
-  if(AUTH.input.length<4){AUTH.input+=String(k);}
+  const now=Date.now();
+  const key=String(k);
+
+  // Guard against duplicate tap/click firing on mobile or duplicated handlers.
+  if(key===_authLastKeyVal && (now-_authLastKeyTs)<250){
+    return;
+  }
+  _authLastKeyVal=key;
+  _authLastKeyTs=now;
+
+  if(AUTH.input.length>=4)return;
+  AUTH.input += key;
   authUpdateDots();
-  if(AUTH.input.length===4)setTimeout(authSubmit,120);
+
+  if(AUTH.input.length===4){
+    if(_authSubmitTimer) clearTimeout(_authSubmitTimer);
+    _authSubmitTimer=setTimeout(()=>{
+      _authSubmitTimer=null;
+      authSubmit();
+    },120);
+  }
 }
 function authDel(){
+  if(_authSubmitTimer){
+    clearTimeout(_authSubmitTimer);
+    _authSubmitTimer=null;
+  }
   AUTH.input=AUTH.input.slice(0,-1);
   authUpdateDots();
 }
@@ -9965,7 +9649,7 @@ function authSubmit(){
     for(let i=0;i<4;i++){const d=document.getElementById('pd'+i);if(d)d.classList.add('error');}
     document.getElementById('auth-err').textContent='Incorrect PIN — try again';
     setTimeout(()=>{
-      AUTH.input='';authUpdateDots();
+      AUTH.input='';_authLastKeyTs=0;_authLastKeyVal='';if(_authSubmitTimer){clearTimeout(_authSubmitTimer);_authSubmitTimer=null;}authUpdateDots();
       document.getElementById('auth-err').textContent='';
     },900);
   }
@@ -10422,121 +10106,6 @@ ${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
   </div>
 </div>`:`<div class="section"><div class="section-title">Bank / Cashflow</div><p style="color:#9ca3af;font-size:11px;padding:8px 0">No cashflow data for this month. Enter data in the Cashflow module.</p></div>`}
 <div class="footer"><span>NXT Phase AI · staffingnxtphase.vercel.app</span><span>Monthly Report ${moLabel}</span></div>
-
-<script>
-(function(){
-  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
-  function getStored(role){
-    try{
-      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
-      return localStorage.getItem(key);
-    }catch(e){ return null; }
-  }
-  function expectedPin(role){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    if(!stored) return defaults[role] || '1234';
-    const s = String(stored).trim().replace(/^"|"$/g,'');
-    if(/^\d{4}$/.test(s)) return s;
-    return defaults[role] || '1234';
-  }
-  function verify(role,pin){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
-    const plain = expectedPin(role);
-    const typed = String(pin||'');
-    if(raw){
-      if(raw === typed) return true;
-      if(raw === h(typed)) return true;
-    }
-    return typed === plain || h(typed) === h(defaults[role]||plain);
-  }
-  function qs(id){ return document.getElementById(id); }
-  function ensureState(){
-    if(!window.AUTH || typeof window.AUTH !== 'object'){
-      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
-    }
-    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
-    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
-  }
-  function updateDots(){
-    ensureState();
-    for(let i=0;i<4;i++){
-      const d=qs('pd'+i);
-      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
-    }
-  }
-  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
-  function submit(){
-    ensureState();
-    const role = window.AUTH.selectedRole || 'admin';
-    const pin  = String(window.AUTH.input||'');
-    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
-    if(ok){
-      window.AUTH.role = role;
-      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
-      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
-      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
-      try{
-        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
-          document.querySelector('.app').style.display='none';
-          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
-          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
-            Promise.resolve(loadData()).then(()=>renderEmployeeView());
-          }
-          return;
-        }
-      }catch(e){}
-      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
-      return;
-    }
-    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
-    setErr('Incorrect PIN — try again');
-    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
-  }
-  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
-  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
-  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
-  window.authSubmit = submit;
-
-  function bindKeypad(){
-    const keypad = qs('pin-keypad');
-    if(!keypad) return;
-    keypad.querySelectorAll('.pin-key').forEach(btn=>{
-      btn.type='button';
-      const txt=(btn.textContent||'').trim();
-      btn.onclick=null;
-      btn.addEventListener('click', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-      btn.addEventListener('touchend', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-    });
-    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
-    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
-    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
-  }
-
-  function initRecovery(){
-    ensureState();
-    bindKeypad();
-    updateDots();
-    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
-  }
-
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
-  else initRecovery();
-})();
-</script>
-
 </body></html>`;
   closeModal();
   const win=window.open('','_blank','width=960,height=720');
@@ -11228,121 +10797,6 @@ function initBankPlanner(){
     <div style="text-align:center;color:var(--t3);padding:40px">Loading schedule…</div>
   </div>
 </div>
-
-
-<script>
-(function(){
-  function h(pin){let x=0; for(const c of String(pin||'')){ x=(x*31+c.charCodeAt(0)) & 0x7fffffff; } return String(x); }
-  function getStored(role){
-    try{
-      const key = role==='admin' ? 'sp-pin-admin' : role==='employee' ? 'sp-pin-employee' : 'sp-pin-viewer';
-      return localStorage.getItem(key);
-    }catch(e){ return null; }
-  }
-  function expectedPin(role){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    if(!stored) return defaults[role] || '1234';
-    const s = String(stored).trim().replace(/^"|"$/g,'');
-    if(/^\d{4}$/.test(s)) return s;
-    return defaults[role] || '1234';
-  }
-  function verify(role,pin){
-    const defaults = {admin:'1234', viewer:'0000', employee:'8888'};
-    const stored = getStored(role);
-    const raw = stored ? String(stored).trim().replace(/^"|"$/g,'') : '';
-    const plain = expectedPin(role);
-    const typed = String(pin||'');
-    if(raw){
-      if(raw === typed) return true;
-      if(raw === h(typed)) return true;
-    }
-    return typed === plain || h(typed) === h(defaults[role]||plain);
-  }
-  function qs(id){ return document.getElementById(id); }
-  function ensureState(){
-    if(!window.AUTH || typeof window.AUTH !== 'object'){
-      window.AUTH = { role:null, input:'', selectedRole:'admin', SESSION_KEY:'sp-session-role' };
-    }
-    if(typeof window.AUTH.input !== 'string') window.AUTH.input='';
-    if(!window.AUTH.selectedRole) window.AUTH.selectedRole='admin';
-  }
-  function updateDots(){
-    ensureState();
-    for(let i=0;i<4;i++){
-      const d=qs('pd'+i);
-      if(d){ d.classList.toggle('filled', i < window.AUTH.input.length); d.classList.remove('error'); }
-    }
-  }
-  function setErr(msg){ const el=qs('auth-err'); if(el) el.textContent=msg||''; }
-  function submit(){
-    ensureState();
-    const role = window.AUTH.selectedRole || 'admin';
-    const pin  = String(window.AUTH.input||'');
-    const ok = (window.AUTH && typeof window.AUTH.verify==='function') ? window.AUTH.verify(role,pin) : verify(role,pin);
-    if(ok){
-      window.AUTH.role = role;
-      try{ sessionStorage.setItem(window.AUTH.SESSION_KEY || 'sp-session-role', role); }catch(e){}
-      const ov=qs('auth-overlay'); if(ov) ov.classList.add('hidden');
-      try{ if(typeof updateRoleBadge==='function') updateRoleBadge(); }catch(e){}
-      try{
-        if(window.AUTH && typeof window.AUTH.isEmployee==='function' && window.AUTH.isEmployee()){
-          document.querySelector('.app').style.display='none';
-          const ev=qs('employee-view'); if(ev) ev.classList.add('ev-visible');
-          if(typeof loadData==='function' && typeof renderEmployeeView==='function'){
-            Promise.resolve(loadData()).then(()=>renderEmployeeView());
-          }
-          return;
-        }
-      }catch(e){}
-      try{ if(typeof init==='function') init(); }catch(e){ console.error('init failed after PIN login', e); }
-      return;
-    }
-    for(let i=0;i<4;i++){ const d=qs('pd'+i); if(d) d.classList.add('error'); }
-    setErr('Incorrect PIN — try again');
-    setTimeout(()=>{ ensureState(); window.AUTH.input=''; updateDots(); setErr(''); }, 900);
-  }
-  window.authKey = function(k){ ensureState(); if(window.AUTH.input.length<4){ window.AUTH.input += String(k); } updateDots(); if(window.AUTH.input.length===4) setTimeout(submit, 80); };
-  window.authDel = function(){ ensureState(); window.AUTH.input = window.AUTH.input.slice(0,-1); updateDots(); };
-  window.authSelectRole = function(role){ ensureState(); window.AUTH.selectedRole = role; window.AUTH.input=''; updateDots(); setErr(''); const a=qs('role-admin-btn'), v=qs('role-viewer-btn'); if(a) a.classList.toggle('active', role==='admin'); if(v) v.classList.toggle('active', role==='viewer'); };
-  window.authSubmit = submit;
-
-  function bindKeypad(){
-    const keypad = qs('pin-keypad');
-    if(!keypad) return;
-    keypad.querySelectorAll('.pin-key').forEach(btn=>{
-      btn.type='button';
-      const txt=(btn.textContent||'').trim();
-      btn.onclick=null;
-      btn.addEventListener('click', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-      btn.addEventListener('touchend', ev=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(btn.classList.contains('del') || txt==='⌫') window.authDel();
-        else if(/^\d$/.test(txt)) window.authKey(txt);
-      }, {passive:false});
-    });
-    const a=qs('role-admin-btn'), v=qs('role-viewer-btn');
-    if(a){ a.onclick=null; a.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('admin'); }); }
-    if(v){ v.onclick=null; v.addEventListener('click', ev=>{ ev.preventDefault(); window.authSelectRole('viewer'); }); }
-  }
-
-  function initRecovery(){
-    ensureState();
-    bindKeypad();
-    updateDots();
-    if(!window.AUTH.selectedRole) window.authSelectRole('admin');
-  }
-
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initRecovery);
-  else initRecovery();
-})();
-</script>
 
 </body>
 </html>
