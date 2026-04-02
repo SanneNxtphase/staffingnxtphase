@@ -9488,175 +9488,243 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
   snap=snap.replace(/<body[^>]*>/, m=>m+readonlyBanner);
   // Inject readonly script right before 
 <script>
-/* NXTPhase staffing/invoice sync patch */
+/* ===== NXTPhase stability patch: staffing + invoices + sync ===== */
 (function(){
-  function staffKey(empId, projId, wk){ return String(empId)+'__'+String(projId)+'__'+String(wk); }
-  function normalizeDays(v){
-    var n = parseFloat(String(v).replace(',', '.'));
-    if (!isFinite(n)) n = 0;
-    if (n < 0) n = 0;
-    if (n > 7) n = 7;
-    return Math.round(n * 100) / 100;
-  }
-  function upsertStaffingInMemory(row){
-    if (!window.S) return;
-    if (!Array.isArray(S.staffing)) S.staffing = [];
-    var idx = S.staffing.findIndex(function(s){
-      return String(s.employee_id)===String(row.employee_id) && String(s.project_id)===String(row.project_id) && String(s.week_key)===String(row.week_key);
-    });
-    if (row.days <= 0) {
-      if (idx >= 0) S.staffing.splice(idx, 1);
-      return;
+  try{
+    if(window._SUPA_SCHEMA && window._SUPA_SCHEMA.invoices){
+      if(!window._SUPA_SCHEMA.invoices.includes('billing_type')) window._SUPA_SCHEMA.invoices.push('billing_type');
     }
-    var next = Object.assign({}, idx >= 0 ? S.staffing[idx] : {}, row, { days: normalizeDays(row.days), note: String(row.note || '') });
-    if (idx >= 0) S.staffing[idx] = next; else S.staffing.push(next);
+  }catch(e){}
+
+  function normId(v){
+    const n = parseInt(v,10);
+    return Number.isFinite(n) ? n : v;
   }
-  async function writeStaffingToSupabase(row){
-    if (location.protocol === 'file:' || !window._SUPA_ONLINE) return true;
-    try {
-      var qs = '?employee_id=eq.' + row.employee_id + '&project_id=eq.' + row.project_id + '&week_key=eq.' + encodeURIComponent(row.week_key) + '&select=id';
-      var ex = await _supaReq('GET', 'staffing', null, qs, true);
-      if (row.days <= 0) {
-        if (ex && ex.length > 0) {
-          for (var i = 0; i < ex.length; i++) {
-            await _supaReq('DELETE', 'staffing', null, '?id=eq.' + ex[i].id, true);
-          }
-        }
-        return true;
-      }
-      var payload = _supaFilter('staffing', {
-        employee_id: row.employee_id,
-        project_id: row.project_id,
-        week_key: row.week_key,
-        days: normalizeDays(row.days),
-        note: String(row.note || '')
-      });
-      if (ex && ex.length > 0) {
-        for (var j = 0; j < ex.length; j++) {
-          var r = await _supaReq('PATCH', 'staffing', payload, '?id=eq.' + ex[j].id, true);
-          if (r === null) return false;
-        }
-      } else {
-        var ins = await _supaReq('POST', 'staffing', payload, null, true);
-        if (ins === null) return false;
-      }
-      return true;
-    } catch (e) {
-      console.error('[writeStaffingToSupabase]', e);
-      return false;
-    }
-  }
-  function rerenderPlanning(){
-    try{ renderStaffing && renderStaffing(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderSchedule && renderSchedule(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
+  function sameId(a,b){ return String(a) === String(b); }
+
+  function staffingKeyMatch(row, empId, projId, wk){
+    return sameId(row.employee_id, empId) && sameId(row.project_id, projId) && String(row.week_key) === String(wk);
   }
 
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('billing_type') === -1) {
-    _SUPA_SCHEMA.invoices.push('billing_type');
+  function applyLocalStaffing(empId, projId, wk, days, note){
+    window.S = window.S || {};
+    S.staffing = Array.isArray(S.staffing) ? S.staffing : [];
+    const idx = S.staffing.findIndex(s => staffingKeyMatch(s, empId, projId, wk));
+    if(days <= 0){
+      if(idx >= 0) S.staffing.splice(idx, 1);
+      return;
+    }
+    const existing = idx >= 0 ? S.staffing[idx] : {};
+    const row = Object.assign({}, existing, {
+      employee_id: empId,
+      project_id: projId,
+      week_key: wk,
+      days: Number(days) || 0,
+      note: String(note || '').trim()
+    });
+    if(idx >= 0) S.staffing[idx] = row;
+    else S.staffing.push(row);
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('description') === -1) {
-    _SUPA_SCHEMA.invoices.push('description');
+
+  async function rerenderAll(){
+    try{
+      if(typeof loadData === 'function') await loadData();
+    }catch(e){
+      console.warn('[patch] loadData refresh failed, using in-memory state', e);
+    }
+    try{ if(typeof renderStaffing === 'function') renderStaffing(); }catch(e){}
+    try{ if(typeof renderProjects === 'function') renderProjects(); }catch(e){}
+    try{ if(typeof renderSchedule === 'function') renderSchedule(); }catch(e){}
+    try{ if(typeof renderDashboard === 'function') renderDashboard(); }catch(e){}
+    try{ if(typeof renderFinancial === 'function') renderFinancial(); }catch(e){}
+    try{ if(typeof renderInvoices === 'function') renderInvoices(); }catch(e){}
+    try{ if(typeof renderPartner === 'function') renderPartner(); }catch(e){}
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('status') === -1) {
-    _SUPA_SCHEMA.invoices.push('status');
+
+  async function saveStaffingDirect(empId, projId, wk, days, note){
+    empId = normId(empId);
+    projId = normId(projId);
+    days = Math.max(0, Math.min(7, parseFloat(days) || 0));
+    note = String(note || '').trim();
+
+    applyLocalStaffing(empId, projId, wk, days, note);
+    try{
+      if(typeof _staffNoteSave === 'function') _staffNoteSave(empId, projId, wk, note);
+    }catch(e){}
+
+    let supaOk = true;
+    try{
+      const qs = `?employee_id=eq.${encodeURIComponent(empId)}&project_id=eq.${encodeURIComponent(projId)}&week_key=eq.${encodeURIComponent(wk)}&select=id`;
+      const existing = typeof _supaReq === 'function' ? await _supaReq('GET','staffing',null,qs) : null;
+      if(typeof _supaReq === 'function'){
+        if(days <= 0){
+          if(existing && existing[0]) await _supaReq('DELETE','staffing',null,`?id=eq.${existing[0].id}`);
+        }else{
+          const payload = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+          if(existing && existing[0]) await _supaReq('PATCH','staffing', payload, `?id=eq.${existing[0].id}`);
+          else await _supaReq('POST','staffing', payload);
+        }
+      }else if(window.DB && typeof DB.upsertStaffing === 'function'){
+        await DB.upsertStaffing({ employee_id: empId, project_id: projId, week_key: wk, days: days, note: note });
+      }
+    }catch(e){
+      supaOk = false;
+      console.error('[patch saveStaffingDirect]', e);
+      if(typeof showToast === 'function') showToast('⚠ Staffing sync naar Supabase mislukt', 'error');
+    }
+
+    await rerenderAll();
+    return supaOk;
   }
 
   window.editCellSave = async function(empId, projId, wk, days, note){
-    empId = parseInt(empId) || empId;
-    projId = parseInt(projId) || projId;
-    days = normalizeDays(days);
-    note = String(note || '').trim();
-    closeModal();
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    return await saveStaffingDirect(empId, projId, wk, days, note);
+  };
 
-    var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+  window.sfProjCellSave = async function(projId, wk){
+    const empId = parseInt(document.getElementById('spc-emp')?.value, 10) || 0;
+    const days = parseFloat(document.getElementById('spc-days')?.value) || 0;
+    if(!empId) return alert('Select an employee');
+    return await window.editCellSave(empId, projId, wk, days, '');
+  };
 
-    // local persistent cache
-    await DB.upsertStaffing(row);
-    _staffNoteSave(empId, projId, wk, note);
+  window.bulkStaffPreview = function(){
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const preview = document.getElementById('bs-preview');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(!preview || !btn) return;
 
-    // immediate in-memory update so UI reflects the change without waiting for reload
-    upsertStaffingInMemory(row);
-    rerenderPlanning();
-
-    var ok = await writeStaffingToSupabase(row);
-    if (!ok) {
-      showToast('⚠ Staffing opslaan mislukt in Supabase', 'error');
+    if(!empId || !projId || !days || !startWk){
+      preview.innerHTML = '<span style="color:var(--t3)">Fill all fields to see preview.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
       return;
     }
 
-    await loadData();
-    rerenderPlanning();
-    showToast(days > 0 ? 'Staffing saved' : 'Staffing removed', 'success');
+    const emp = (S.employees || []).find(e => sameId(e.id, empId));
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!emp || !proj){
+      preview.innerHTML = '<span style="color:var(--red)">Employee or project not found.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
+      return;
+    }
+
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const existing = weeksToFill.filter(wk =>
+      (S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+
+    if(!weeksToFill.length){
+      preview.innerHTML = '<span style="color:var(--red)">No remaining weeks in project from selected start week.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Nothing to assign';
+      return;
+    }
+
+    const weekBadges = toWrite.slice(0,12).map(wk => `<span class="bulk-week-badge">W${String(wk).split('-W')[1] || wk}</span>`).join('');
+    const more = toWrite.length > 12 ? `<span style="color:var(--t3);font-size:10px"> +${toWrite.length - 12} more</span>` : '';
+    const estCost = (parseFloat(emp.daily_cost) || 0) * days * toWrite.length;
+
+    preview.innerHTML = `
+      <div><strong>${esc(emp.name || '')}</strong> → <strong>${esc((proj.client_name || '') + ' / ' + (proj.name || ''))}</strong></div>
+      <div style="margin-top:4px"><strong>${days}</strong> days/week • <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
+        ${existing.length && !overwrite ? `<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>` : ''}
+        ${existing.length && overwrite ? `<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>` : ''}
+      </div>
+      <div style="margin-top:6px">${weekBadges}${more}</div>
+      <div style="margin-top:6px;color:var(--t3);font-size:10px">
+        Project end: ${esc(proj.end_date || '')} • Cost: ${typeof fmt === 'function' ? fmt(estCost) : estCost}
+      </div>`;
+
+    btn.disabled = toWrite.length === 0;
+    btn.textContent = toWrite.length === 0 ? 'Nothing to assign' : `Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
   };
 
   window.bulkStaffConfirm = async function(){
-    var empId = parseInt(document.getElementById('bs-emp')?.value);
-    var projId = parseInt(document.getElementById('bs-proj')?.value);
-    var days = normalizeDays(document.getElementById('bs-days')?.value || 0);
-    var startWk = document.getElementById('bs-start-wk')?.value;
-    var overwrite = !!document.getElementById('bs-overwrite')?.checked;
-    if (!empId || !projId || !days || !startWk) return;
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const note = document.getElementById('bs-note')?.value || '';
+    if(!empId || !projId || !days || !startWk) return;
 
-    var proj = (S.projects || []).find(function(p){ return p.id == projId; });
-    if (!proj) return;
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!proj) return;
 
-    var allProjWks = projectWkKeys(proj);
-    var weeksToFill = allProjWks.filter(function(wk){ return wk >= startWk; });
-    var toWrite = overwrite ? weeksToFill : weeksToFill.filter(function(wk){
-      return !S.staffing.some(function(s){
-        return String(s.employee_id)===String(empId) && String(s.project_id)===String(projId) && String(s.week_key)===String(wk) && normalizeDays(s.days) > 0;
-      });
-    });
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
 
-    if (!toWrite.length) { showToast('Nothing to assign', 'warning'); return; }
-
-    var btn = document.getElementById('bs-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Assigning…'; }
-
-    var done = 0, failed = 0;
-    for (var i = 0; i < toWrite.length; i++) {
-      var wk = toWrite[i];
-      var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: '' };
-      await DB.upsertStaffing(row);
-      upsertStaffingInMemory(row);
-      var ok = await writeStaffingToSupabase(row);
-      if (ok) done++; else failed++;
-      var bar = document.getElementById('bs-prog-bar');
-      if (bar) bar.style.width = Math.round(((i + 1) / toWrite.length) * 100) + '%';
+    if(!toWrite.length){
+      if(typeof showToast === 'function') showToast('Nothing to assign', 'warning');
+      return;
     }
 
-    closeModal();
-    await loadData();
-    rerenderPlanning();
-    if (failed) showToast('⚠ ' + done + ' weken opgeslagen, ' + failed + ' mislukt', 'error');
-    else showToast('Assigned ' + done + ' weeks successfully', 'success');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Assigning…'; }
+
+    let ok = 0;
+    let fail = 0;
+    for(const wk of toWrite){
+      const saved = await saveStaffingDirect(empId, projId, wk, days, note);
+      if(saved) ok++; else fail++;
+    }
+
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    if(typeof showToast === 'function'){
+      showToast(fail ? `Assigned ${ok} weeks, ${fail} failed` : `Assigned ${ok} week${ok!==1?'s':''}`, fail ? 'warning' : 'success');
+    }
   };
 
   window.saveInvoice = async function(id){
-    var data = {
-      project_id: parseInt(document.getElementById('f-proj').value),
-      amount: parseFloat(document.getElementById('f-amount').value) || 0,
-      month: document.getElementById('f-month').value,
-      billing_type: document.getElementById('f-billing').value,
-      draft_created: document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid').checked ? 1 : 0
+    const projVal = document.getElementById('f-proj')?.value;
+    const amountVal = document.getElementById('f-amount')?.value;
+    const monthVal = document.getElementById('f-month')?.value;
+    const billingVal = document.getElementById('f-billing')?.value || 'monthly';
+
+    const data = {
+      project_id: parseInt(projVal, 10) || 0,
+      amount: parseFloat(amountVal) || 0,
+      month: monthVal || '',
+      billing_type: billingVal,
+      draft_created: document.getElementById('f-draft')?.checked ? 1 : 0,
+      invoice_sent: document.getElementById('f-sent')?.checked ? 1 : 0,
+      paid: document.getElementById('f-paid')?.checked ? 1 : 0
     };
-    if (!data.project_id) { alert('Project is required'); return; }
-    if (!data.month) { alert('Month is required'); return; }
-    closeModal();
-    if (id) await DB.update('invoices', id, data); else await DB.insert('invoices', data);
-    await loadData();
-    try{ renderInvoices && renderInvoices(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
-    var savedProj = (S.projects || []).find(function(p){ return p.id === data.project_id; });
-    if (savedProj && savedProj.is_partner && typeof renderPartner === 'function') renderPartner();
-    showToast('Invoice saved', 'success');
+
+    if(!data.project_id) return alert('Select a project');
+    if(!data.month) return alert('Select a month');
+    if(data.amount < 0) return alert('Amount cannot be negative');
+
+    try{
+      if(window.DB){
+        if(id) await DB.update('invoices', id, data);
+        else await DB.insert('invoices', data);
+      } else if(typeof _supaReq === 'function'){
+        const payload = (typeof _supaFilter === 'function') ? _supaFilter('invoices', data) : data;
+        if(id) await _supaReq('PATCH', 'invoices', payload, `?id=eq.${id}`);
+        else await _supaReq('POST', 'invoices', payload);
+      }
+      try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+      await rerenderAll();
+      if(typeof showToast === 'function') showToast('Invoice saved', 'success');
+    }catch(e){
+      console.error('[patch saveInvoice]', e);
+      if(typeof showToast === 'function') showToast('Invoice save failed', 'error');
+    }
   };
 })();
 </script>
@@ -9664,350 +9732,486 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
 </body>
   snap=snap.replace('
 <script>
-/* NXTPhase staffing/invoice sync patch */
+/* ===== NXTPhase stability patch: staffing + invoices + sync ===== */
 (function(){
-  function staffKey(empId, projId, wk){ return String(empId)+'__'+String(projId)+'__'+String(wk); }
-  function normalizeDays(v){
-    var n = parseFloat(String(v).replace(',', '.'));
-    if (!isFinite(n)) n = 0;
-    if (n < 0) n = 0;
-    if (n > 7) n = 7;
-    return Math.round(n * 100) / 100;
-  }
-  function upsertStaffingInMemory(row){
-    if (!window.S) return;
-    if (!Array.isArray(S.staffing)) S.staffing = [];
-    var idx = S.staffing.findIndex(function(s){
-      return String(s.employee_id)===String(row.employee_id) && String(s.project_id)===String(row.project_id) && String(s.week_key)===String(row.week_key);
-    });
-    if (row.days <= 0) {
-      if (idx >= 0) S.staffing.splice(idx, 1);
-      return;
+  try{
+    if(window._SUPA_SCHEMA && window._SUPA_SCHEMA.invoices){
+      if(!window._SUPA_SCHEMA.invoices.includes('billing_type')) window._SUPA_SCHEMA.invoices.push('billing_type');
     }
-    var next = Object.assign({}, idx >= 0 ? S.staffing[idx] : {}, row, { days: normalizeDays(row.days), note: String(row.note || '') });
-    if (idx >= 0) S.staffing[idx] = next; else S.staffing.push(next);
+  }catch(e){}
+
+  function normId(v){
+    const n = parseInt(v,10);
+    return Number.isFinite(n) ? n : v;
   }
-  async function writeStaffingToSupabase(row){
-    if (location.protocol === 'file:' || !window._SUPA_ONLINE) return true;
-    try {
-      var qs = '?employee_id=eq.' + row.employee_id + '&project_id=eq.' + row.project_id + '&week_key=eq.' + encodeURIComponent(row.week_key) + '&select=id';
-      var ex = await _supaReq('GET', 'staffing', null, qs, true);
-      if (row.days <= 0) {
-        if (ex && ex.length > 0) {
-          for (var i = 0; i < ex.length; i++) {
-            await _supaReq('DELETE', 'staffing', null, '?id=eq.' + ex[i].id, true);
-          }
-        }
-        return true;
-      }
-      var payload = _supaFilter('staffing', {
-        employee_id: row.employee_id,
-        project_id: row.project_id,
-        week_key: row.week_key,
-        days: normalizeDays(row.days),
-        note: String(row.note || '')
-      });
-      if (ex && ex.length > 0) {
-        for (var j = 0; j < ex.length; j++) {
-          var r = await _supaReq('PATCH', 'staffing', payload, '?id=eq.' + ex[j].id, true);
-          if (r === null) return false;
-        }
-      } else {
-        var ins = await _supaReq('POST', 'staffing', payload, null, true);
-        if (ins === null) return false;
-      }
-      return true;
-    } catch (e) {
-      console.error('[writeStaffingToSupabase]', e);
-      return false;
-    }
-  }
-  function rerenderPlanning(){
-    try{ renderStaffing && renderStaffing(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderSchedule && renderSchedule(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
+  function sameId(a,b){ return String(a) === String(b); }
+
+  function staffingKeyMatch(row, empId, projId, wk){
+    return sameId(row.employee_id, empId) && sameId(row.project_id, projId) && String(row.week_key) === String(wk);
   }
 
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('billing_type') === -1) {
-    _SUPA_SCHEMA.invoices.push('billing_type');
+  function applyLocalStaffing(empId, projId, wk, days, note){
+    window.S = window.S || {};
+    S.staffing = Array.isArray(S.staffing) ? S.staffing : [];
+    const idx = S.staffing.findIndex(s => staffingKeyMatch(s, empId, projId, wk));
+    if(days <= 0){
+      if(idx >= 0) S.staffing.splice(idx, 1);
+      return;
+    }
+    const existing = idx >= 0 ? S.staffing[idx] : {};
+    const row = Object.assign({}, existing, {
+      employee_id: empId,
+      project_id: projId,
+      week_key: wk,
+      days: Number(days) || 0,
+      note: String(note || '').trim()
+    });
+    if(idx >= 0) S.staffing[idx] = row;
+    else S.staffing.push(row);
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('description') === -1) {
-    _SUPA_SCHEMA.invoices.push('description');
+
+  async function rerenderAll(){
+    try{
+      if(typeof loadData === 'function') await loadData();
+    }catch(e){
+      console.warn('[patch] loadData refresh failed, using in-memory state', e);
+    }
+    try{ if(typeof renderStaffing === 'function') renderStaffing(); }catch(e){}
+    try{ if(typeof renderProjects === 'function') renderProjects(); }catch(e){}
+    try{ if(typeof renderSchedule === 'function') renderSchedule(); }catch(e){}
+    try{ if(typeof renderDashboard === 'function') renderDashboard(); }catch(e){}
+    try{ if(typeof renderFinancial === 'function') renderFinancial(); }catch(e){}
+    try{ if(typeof renderInvoices === 'function') renderInvoices(); }catch(e){}
+    try{ if(typeof renderPartner === 'function') renderPartner(); }catch(e){}
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('status') === -1) {
-    _SUPA_SCHEMA.invoices.push('status');
+
+  async function saveStaffingDirect(empId, projId, wk, days, note){
+    empId = normId(empId);
+    projId = normId(projId);
+    days = Math.max(0, Math.min(7, parseFloat(days) || 0));
+    note = String(note || '').trim();
+
+    applyLocalStaffing(empId, projId, wk, days, note);
+    try{
+      if(typeof _staffNoteSave === 'function') _staffNoteSave(empId, projId, wk, note);
+    }catch(e){}
+
+    let supaOk = true;
+    try{
+      const qs = `?employee_id=eq.${encodeURIComponent(empId)}&project_id=eq.${encodeURIComponent(projId)}&week_key=eq.${encodeURIComponent(wk)}&select=id`;
+      const existing = typeof _supaReq === 'function' ? await _supaReq('GET','staffing',null,qs) : null;
+      if(typeof _supaReq === 'function'){
+        if(days <= 0){
+          if(existing && existing[0]) await _supaReq('DELETE','staffing',null,`?id=eq.${existing[0].id}`);
+        }else{
+          const payload = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+          if(existing && existing[0]) await _supaReq('PATCH','staffing', payload, `?id=eq.${existing[0].id}`);
+          else await _supaReq('POST','staffing', payload);
+        }
+      }else if(window.DB && typeof DB.upsertStaffing === 'function'){
+        await DB.upsertStaffing({ employee_id: empId, project_id: projId, week_key: wk, days: days, note: note });
+      }
+    }catch(e){
+      supaOk = false;
+      console.error('[patch saveStaffingDirect]', e);
+      if(typeof showToast === 'function') showToast('⚠ Staffing sync naar Supabase mislukt', 'error');
+    }
+
+    await rerenderAll();
+    return supaOk;
   }
 
   window.editCellSave = async function(empId, projId, wk, days, note){
-    empId = parseInt(empId) || empId;
-    projId = parseInt(projId) || projId;
-    days = normalizeDays(days);
-    note = String(note || '').trim();
-    closeModal();
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    return await saveStaffingDirect(empId, projId, wk, days, note);
+  };
 
-    var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+  window.sfProjCellSave = async function(projId, wk){
+    const empId = parseInt(document.getElementById('spc-emp')?.value, 10) || 0;
+    const days = parseFloat(document.getElementById('spc-days')?.value) || 0;
+    if(!empId) return alert('Select an employee');
+    return await window.editCellSave(empId, projId, wk, days, '');
+  };
 
-    // local persistent cache
-    await DB.upsertStaffing(row);
-    _staffNoteSave(empId, projId, wk, note);
+  window.bulkStaffPreview = function(){
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const preview = document.getElementById('bs-preview');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(!preview || !btn) return;
 
-    // immediate in-memory update so UI reflects the change without waiting for reload
-    upsertStaffingInMemory(row);
-    rerenderPlanning();
-
-    var ok = await writeStaffingToSupabase(row);
-    if (!ok) {
-      showToast('⚠ Staffing opslaan mislukt in Supabase', 'error');
+    if(!empId || !projId || !days || !startWk){
+      preview.innerHTML = '<span style="color:var(--t3)">Fill all fields to see preview.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
       return;
     }
 
-    await loadData();
-    rerenderPlanning();
-    showToast(days > 0 ? 'Staffing saved' : 'Staffing removed', 'success');
+    const emp = (S.employees || []).find(e => sameId(e.id, empId));
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!emp || !proj){
+      preview.innerHTML = '<span style="color:var(--red)">Employee or project not found.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
+      return;
+    }
+
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const existing = weeksToFill.filter(wk =>
+      (S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+
+    if(!weeksToFill.length){
+      preview.innerHTML = '<span style="color:var(--red)">No remaining weeks in project from selected start week.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Nothing to assign';
+      return;
+    }
+
+    const weekBadges = toWrite.slice(0,12).map(wk => `<span class="bulk-week-badge">W${String(wk).split('-W')[1] || wk}</span>`).join('');
+    const more = toWrite.length > 12 ? `<span style="color:var(--t3);font-size:10px"> +${toWrite.length - 12} more</span>` : '';
+    const estCost = (parseFloat(emp.daily_cost) || 0) * days * toWrite.length;
+
+    preview.innerHTML = `
+      <div><strong>${esc(emp.name || '')}</strong> → <strong>${esc((proj.client_name || '') + ' / ' + (proj.name || ''))}</strong></div>
+      <div style="margin-top:4px"><strong>${days}</strong> days/week • <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
+        ${existing.length && !overwrite ? `<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>` : ''}
+        ${existing.length && overwrite ? `<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>` : ''}
+      </div>
+      <div style="margin-top:6px">${weekBadges}${more}</div>
+      <div style="margin-top:6px;color:var(--t3);font-size:10px">
+        Project end: ${esc(proj.end_date || '')} • Cost: ${typeof fmt === 'function' ? fmt(estCost) : estCost}
+      </div>`;
+
+    btn.disabled = toWrite.length === 0;
+    btn.textContent = toWrite.length === 0 ? 'Nothing to assign' : `Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
   };
 
   window.bulkStaffConfirm = async function(){
-    var empId = parseInt(document.getElementById('bs-emp')?.value);
-    var projId = parseInt(document.getElementById('bs-proj')?.value);
-    var days = normalizeDays(document.getElementById('bs-days')?.value || 0);
-    var startWk = document.getElementById('bs-start-wk')?.value;
-    var overwrite = !!document.getElementById('bs-overwrite')?.checked;
-    if (!empId || !projId || !days || !startWk) return;
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const note = document.getElementById('bs-note')?.value || '';
+    if(!empId || !projId || !days || !startWk) return;
 
-    var proj = (S.projects || []).find(function(p){ return p.id == projId; });
-    if (!proj) return;
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!proj) return;
 
-    var allProjWks = projectWkKeys(proj);
-    var weeksToFill = allProjWks.filter(function(wk){ return wk >= startWk; });
-    var toWrite = overwrite ? weeksToFill : weeksToFill.filter(function(wk){
-      return !S.staffing.some(function(s){
-        return String(s.employee_id)===String(empId) && String(s.project_id)===String(projId) && String(s.week_key)===String(wk) && normalizeDays(s.days) > 0;
-      });
-    });
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
 
-    if (!toWrite.length) { showToast('Nothing to assign', 'warning'); return; }
-
-    var btn = document.getElementById('bs-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Assigning…'; }
-
-    var done = 0, failed = 0;
-    for (var i = 0; i < toWrite.length; i++) {
-      var wk = toWrite[i];
-      var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: '' };
-      await DB.upsertStaffing(row);
-      upsertStaffingInMemory(row);
-      var ok = await writeStaffingToSupabase(row);
-      if (ok) done++; else failed++;
-      var bar = document.getElementById('bs-prog-bar');
-      if (bar) bar.style.width = Math.round(((i + 1) / toWrite.length) * 100) + '%';
+    if(!toWrite.length){
+      if(typeof showToast === 'function') showToast('Nothing to assign', 'warning');
+      return;
     }
 
-    closeModal();
-    await loadData();
-    rerenderPlanning();
-    if (failed) showToast('⚠ ' + done + ' weken opgeslagen, ' + failed + ' mislukt', 'error');
-    else showToast('Assigned ' + done + ' weeks successfully', 'success');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Assigning…'; }
+
+    let ok = 0;
+    let fail = 0;
+    for(const wk of toWrite){
+      const saved = await saveStaffingDirect(empId, projId, wk, days, note);
+      if(saved) ok++; else fail++;
+    }
+
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    if(typeof showToast === 'function'){
+      showToast(fail ? `Assigned ${ok} weeks, ${fail} failed` : `Assigned ${ok} week${ok!==1?'s':''}`, fail ? 'warning' : 'success');
+    }
   };
 
   window.saveInvoice = async function(id){
-    var data = {
-      project_id: parseInt(document.getElementById('f-proj').value),
-      amount: parseFloat(document.getElementById('f-amount').value) || 0,
-      month: document.getElementById('f-month').value,
-      billing_type: document.getElementById('f-billing').value,
-      draft_created: document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid').checked ? 1 : 0
+    const projVal = document.getElementById('f-proj')?.value;
+    const amountVal = document.getElementById('f-amount')?.value;
+    const monthVal = document.getElementById('f-month')?.value;
+    const billingVal = document.getElementById('f-billing')?.value || 'monthly';
+
+    const data = {
+      project_id: parseInt(projVal, 10) || 0,
+      amount: parseFloat(amountVal) || 0,
+      month: monthVal || '',
+      billing_type: billingVal,
+      draft_created: document.getElementById('f-draft')?.checked ? 1 : 0,
+      invoice_sent: document.getElementById('f-sent')?.checked ? 1 : 0,
+      paid: document.getElementById('f-paid')?.checked ? 1 : 0
     };
-    if (!data.project_id) { alert('Project is required'); return; }
-    if (!data.month) { alert('Month is required'); return; }
-    closeModal();
-    if (id) await DB.update('invoices', id, data); else await DB.insert('invoices', data);
-    await loadData();
-    try{ renderInvoices && renderInvoices(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
-    var savedProj = (S.projects || []).find(function(p){ return p.id === data.project_id; });
-    if (savedProj && savedProj.is_partner && typeof renderPartner === 'function') renderPartner();
-    showToast('Invoice saved', 'success');
+
+    if(!data.project_id) return alert('Select a project');
+    if(!data.month) return alert('Select a month');
+    if(data.amount < 0) return alert('Amount cannot be negative');
+
+    try{
+      if(window.DB){
+        if(id) await DB.update('invoices', id, data);
+        else await DB.insert('invoices', data);
+      } else if(typeof _supaReq === 'function'){
+        const payload = (typeof _supaFilter === 'function') ? _supaFilter('invoices', data) : data;
+        if(id) await _supaReq('PATCH', 'invoices', payload, `?id=eq.${id}`);
+        else await _supaReq('POST', 'invoices', payload);
+      }
+      try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+      await rerenderAll();
+      if(typeof showToast === 'function') showToast('Invoice saved', 'success');
+    }catch(e){
+      console.error('[patch saveInvoice]', e);
+      if(typeof showToast === 'function') showToast('Invoice save failed', 'error');
+    }
   };
 })();
 </script>
 
 </body>',readonlyScript+'
 <script>
-/* NXTPhase staffing/invoice sync patch */
+/* ===== NXTPhase stability patch: staffing + invoices + sync ===== */
 (function(){
-  function staffKey(empId, projId, wk){ return String(empId)+'__'+String(projId)+'__'+String(wk); }
-  function normalizeDays(v){
-    var n = parseFloat(String(v).replace(',', '.'));
-    if (!isFinite(n)) n = 0;
-    if (n < 0) n = 0;
-    if (n > 7) n = 7;
-    return Math.round(n * 100) / 100;
-  }
-  function upsertStaffingInMemory(row){
-    if (!window.S) return;
-    if (!Array.isArray(S.staffing)) S.staffing = [];
-    var idx = S.staffing.findIndex(function(s){
-      return String(s.employee_id)===String(row.employee_id) && String(s.project_id)===String(row.project_id) && String(s.week_key)===String(row.week_key);
-    });
-    if (row.days <= 0) {
-      if (idx >= 0) S.staffing.splice(idx, 1);
-      return;
+  try{
+    if(window._SUPA_SCHEMA && window._SUPA_SCHEMA.invoices){
+      if(!window._SUPA_SCHEMA.invoices.includes('billing_type')) window._SUPA_SCHEMA.invoices.push('billing_type');
     }
-    var next = Object.assign({}, idx >= 0 ? S.staffing[idx] : {}, row, { days: normalizeDays(row.days), note: String(row.note || '') });
-    if (idx >= 0) S.staffing[idx] = next; else S.staffing.push(next);
+  }catch(e){}
+
+  function normId(v){
+    const n = parseInt(v,10);
+    return Number.isFinite(n) ? n : v;
   }
-  async function writeStaffingToSupabase(row){
-    if (location.protocol === 'file:' || !window._SUPA_ONLINE) return true;
-    try {
-      var qs = '?employee_id=eq.' + row.employee_id + '&project_id=eq.' + row.project_id + '&week_key=eq.' + encodeURIComponent(row.week_key) + '&select=id';
-      var ex = await _supaReq('GET', 'staffing', null, qs, true);
-      if (row.days <= 0) {
-        if (ex && ex.length > 0) {
-          for (var i = 0; i < ex.length; i++) {
-            await _supaReq('DELETE', 'staffing', null, '?id=eq.' + ex[i].id, true);
-          }
-        }
-        return true;
-      }
-      var payload = _supaFilter('staffing', {
-        employee_id: row.employee_id,
-        project_id: row.project_id,
-        week_key: row.week_key,
-        days: normalizeDays(row.days),
-        note: String(row.note || '')
-      });
-      if (ex && ex.length > 0) {
-        for (var j = 0; j < ex.length; j++) {
-          var r = await _supaReq('PATCH', 'staffing', payload, '?id=eq.' + ex[j].id, true);
-          if (r === null) return false;
-        }
-      } else {
-        var ins = await _supaReq('POST', 'staffing', payload, null, true);
-        if (ins === null) return false;
-      }
-      return true;
-    } catch (e) {
-      console.error('[writeStaffingToSupabase]', e);
-      return false;
-    }
-  }
-  function rerenderPlanning(){
-    try{ renderStaffing && renderStaffing(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderSchedule && renderSchedule(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
+  function sameId(a,b){ return String(a) === String(b); }
+
+  function staffingKeyMatch(row, empId, projId, wk){
+    return sameId(row.employee_id, empId) && sameId(row.project_id, projId) && String(row.week_key) === String(wk);
   }
 
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('billing_type') === -1) {
-    _SUPA_SCHEMA.invoices.push('billing_type');
+  function applyLocalStaffing(empId, projId, wk, days, note){
+    window.S = window.S || {};
+    S.staffing = Array.isArray(S.staffing) ? S.staffing : [];
+    const idx = S.staffing.findIndex(s => staffingKeyMatch(s, empId, projId, wk));
+    if(days <= 0){
+      if(idx >= 0) S.staffing.splice(idx, 1);
+      return;
+    }
+    const existing = idx >= 0 ? S.staffing[idx] : {};
+    const row = Object.assign({}, existing, {
+      employee_id: empId,
+      project_id: projId,
+      week_key: wk,
+      days: Number(days) || 0,
+      note: String(note || '').trim()
+    });
+    if(idx >= 0) S.staffing[idx] = row;
+    else S.staffing.push(row);
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('description') === -1) {
-    _SUPA_SCHEMA.invoices.push('description');
+
+  async function rerenderAll(){
+    try{
+      if(typeof loadData === 'function') await loadData();
+    }catch(e){
+      console.warn('[patch] loadData refresh failed, using in-memory state', e);
+    }
+    try{ if(typeof renderStaffing === 'function') renderStaffing(); }catch(e){}
+    try{ if(typeof renderProjects === 'function') renderProjects(); }catch(e){}
+    try{ if(typeof renderSchedule === 'function') renderSchedule(); }catch(e){}
+    try{ if(typeof renderDashboard === 'function') renderDashboard(); }catch(e){}
+    try{ if(typeof renderFinancial === 'function') renderFinancial(); }catch(e){}
+    try{ if(typeof renderInvoices === 'function') renderInvoices(); }catch(e){}
+    try{ if(typeof renderPartner === 'function') renderPartner(); }catch(e){}
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('status') === -1) {
-    _SUPA_SCHEMA.invoices.push('status');
+
+  async function saveStaffingDirect(empId, projId, wk, days, note){
+    empId = normId(empId);
+    projId = normId(projId);
+    days = Math.max(0, Math.min(7, parseFloat(days) || 0));
+    note = String(note || '').trim();
+
+    applyLocalStaffing(empId, projId, wk, days, note);
+    try{
+      if(typeof _staffNoteSave === 'function') _staffNoteSave(empId, projId, wk, note);
+    }catch(e){}
+
+    let supaOk = true;
+    try{
+      const qs = `?employee_id=eq.${encodeURIComponent(empId)}&project_id=eq.${encodeURIComponent(projId)}&week_key=eq.${encodeURIComponent(wk)}&select=id`;
+      const existing = typeof _supaReq === 'function' ? await _supaReq('GET','staffing',null,qs) : null;
+      if(typeof _supaReq === 'function'){
+        if(days <= 0){
+          if(existing && existing[0]) await _supaReq('DELETE','staffing',null,`?id=eq.${existing[0].id}`);
+        }else{
+          const payload = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+          if(existing && existing[0]) await _supaReq('PATCH','staffing', payload, `?id=eq.${existing[0].id}`);
+          else await _supaReq('POST','staffing', payload);
+        }
+      }else if(window.DB && typeof DB.upsertStaffing === 'function'){
+        await DB.upsertStaffing({ employee_id: empId, project_id: projId, week_key: wk, days: days, note: note });
+      }
+    }catch(e){
+      supaOk = false;
+      console.error('[patch saveStaffingDirect]', e);
+      if(typeof showToast === 'function') showToast('⚠ Staffing sync naar Supabase mislukt', 'error');
+    }
+
+    await rerenderAll();
+    return supaOk;
   }
 
   window.editCellSave = async function(empId, projId, wk, days, note){
-    empId = parseInt(empId) || empId;
-    projId = parseInt(projId) || projId;
-    days = normalizeDays(days);
-    note = String(note || '').trim();
-    closeModal();
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    return await saveStaffingDirect(empId, projId, wk, days, note);
+  };
 
-    var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+  window.sfProjCellSave = async function(projId, wk){
+    const empId = parseInt(document.getElementById('spc-emp')?.value, 10) || 0;
+    const days = parseFloat(document.getElementById('spc-days')?.value) || 0;
+    if(!empId) return alert('Select an employee');
+    return await window.editCellSave(empId, projId, wk, days, '');
+  };
 
-    // local persistent cache
-    await DB.upsertStaffing(row);
-    _staffNoteSave(empId, projId, wk, note);
+  window.bulkStaffPreview = function(){
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const preview = document.getElementById('bs-preview');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(!preview || !btn) return;
 
-    // immediate in-memory update so UI reflects the change without waiting for reload
-    upsertStaffingInMemory(row);
-    rerenderPlanning();
-
-    var ok = await writeStaffingToSupabase(row);
-    if (!ok) {
-      showToast('⚠ Staffing opslaan mislukt in Supabase', 'error');
+    if(!empId || !projId || !days || !startWk){
+      preview.innerHTML = '<span style="color:var(--t3)">Fill all fields to see preview.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
       return;
     }
 
-    await loadData();
-    rerenderPlanning();
-    showToast(days > 0 ? 'Staffing saved' : 'Staffing removed', 'success');
+    const emp = (S.employees || []).find(e => sameId(e.id, empId));
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!emp || !proj){
+      preview.innerHTML = '<span style="color:var(--red)">Employee or project not found.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
+      return;
+    }
+
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const existing = weeksToFill.filter(wk =>
+      (S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+
+    if(!weeksToFill.length){
+      preview.innerHTML = '<span style="color:var(--red)">No remaining weeks in project from selected start week.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Nothing to assign';
+      return;
+    }
+
+    const weekBadges = toWrite.slice(0,12).map(wk => `<span class="bulk-week-badge">W${String(wk).split('-W')[1] || wk}</span>`).join('');
+    const more = toWrite.length > 12 ? `<span style="color:var(--t3);font-size:10px"> +${toWrite.length - 12} more</span>` : '';
+    const estCost = (parseFloat(emp.daily_cost) || 0) * days * toWrite.length;
+
+    preview.innerHTML = `
+      <div><strong>${esc(emp.name || '')}</strong> → <strong>${esc((proj.client_name || '') + ' / ' + (proj.name || ''))}</strong></div>
+      <div style="margin-top:4px"><strong>${days}</strong> days/week • <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
+        ${existing.length && !overwrite ? `<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>` : ''}
+        ${existing.length && overwrite ? `<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>` : ''}
+      </div>
+      <div style="margin-top:6px">${weekBadges}${more}</div>
+      <div style="margin-top:6px;color:var(--t3);font-size:10px">
+        Project end: ${esc(proj.end_date || '')} • Cost: ${typeof fmt === 'function' ? fmt(estCost) : estCost}
+      </div>`;
+
+    btn.disabled = toWrite.length === 0;
+    btn.textContent = toWrite.length === 0 ? 'Nothing to assign' : `Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
   };
 
   window.bulkStaffConfirm = async function(){
-    var empId = parseInt(document.getElementById('bs-emp')?.value);
-    var projId = parseInt(document.getElementById('bs-proj')?.value);
-    var days = normalizeDays(document.getElementById('bs-days')?.value || 0);
-    var startWk = document.getElementById('bs-start-wk')?.value;
-    var overwrite = !!document.getElementById('bs-overwrite')?.checked;
-    if (!empId || !projId || !days || !startWk) return;
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const note = document.getElementById('bs-note')?.value || '';
+    if(!empId || !projId || !days || !startWk) return;
 
-    var proj = (S.projects || []).find(function(p){ return p.id == projId; });
-    if (!proj) return;
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!proj) return;
 
-    var allProjWks = projectWkKeys(proj);
-    var weeksToFill = allProjWks.filter(function(wk){ return wk >= startWk; });
-    var toWrite = overwrite ? weeksToFill : weeksToFill.filter(function(wk){
-      return !S.staffing.some(function(s){
-        return String(s.employee_id)===String(empId) && String(s.project_id)===String(projId) && String(s.week_key)===String(wk) && normalizeDays(s.days) > 0;
-      });
-    });
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
 
-    if (!toWrite.length) { showToast('Nothing to assign', 'warning'); return; }
-
-    var btn = document.getElementById('bs-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Assigning…'; }
-
-    var done = 0, failed = 0;
-    for (var i = 0; i < toWrite.length; i++) {
-      var wk = toWrite[i];
-      var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: '' };
-      await DB.upsertStaffing(row);
-      upsertStaffingInMemory(row);
-      var ok = await writeStaffingToSupabase(row);
-      if (ok) done++; else failed++;
-      var bar = document.getElementById('bs-prog-bar');
-      if (bar) bar.style.width = Math.round(((i + 1) / toWrite.length) * 100) + '%';
+    if(!toWrite.length){
+      if(typeof showToast === 'function') showToast('Nothing to assign', 'warning');
+      return;
     }
 
-    closeModal();
-    await loadData();
-    rerenderPlanning();
-    if (failed) showToast('⚠ ' + done + ' weken opgeslagen, ' + failed + ' mislukt', 'error');
-    else showToast('Assigned ' + done + ' weeks successfully', 'success');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Assigning…'; }
+
+    let ok = 0;
+    let fail = 0;
+    for(const wk of toWrite){
+      const saved = await saveStaffingDirect(empId, projId, wk, days, note);
+      if(saved) ok++; else fail++;
+    }
+
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    if(typeof showToast === 'function'){
+      showToast(fail ? `Assigned ${ok} weeks, ${fail} failed` : `Assigned ${ok} week${ok!==1?'s':''}`, fail ? 'warning' : 'success');
+    }
   };
 
   window.saveInvoice = async function(id){
-    var data = {
-      project_id: parseInt(document.getElementById('f-proj').value),
-      amount: parseFloat(document.getElementById('f-amount').value) || 0,
-      month: document.getElementById('f-month').value,
-      billing_type: document.getElementById('f-billing').value,
-      draft_created: document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid').checked ? 1 : 0
+    const projVal = document.getElementById('f-proj')?.value;
+    const amountVal = document.getElementById('f-amount')?.value;
+    const monthVal = document.getElementById('f-month')?.value;
+    const billingVal = document.getElementById('f-billing')?.value || 'monthly';
+
+    const data = {
+      project_id: parseInt(projVal, 10) || 0,
+      amount: parseFloat(amountVal) || 0,
+      month: monthVal || '',
+      billing_type: billingVal,
+      draft_created: document.getElementById('f-draft')?.checked ? 1 : 0,
+      invoice_sent: document.getElementById('f-sent')?.checked ? 1 : 0,
+      paid: document.getElementById('f-paid')?.checked ? 1 : 0
     };
-    if (!data.project_id) { alert('Project is required'); return; }
-    if (!data.month) { alert('Month is required'); return; }
-    closeModal();
-    if (id) await DB.update('invoices', id, data); else await DB.insert('invoices', data);
-    await loadData();
-    try{ renderInvoices && renderInvoices(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
-    var savedProj = (S.projects || []).find(function(p){ return p.id === data.project_id; });
-    if (savedProj && savedProj.is_partner && typeof renderPartner === 'function') renderPartner();
-    showToast('Invoice saved', 'success');
+
+    if(!data.project_id) return alert('Select a project');
+    if(!data.month) return alert('Select a month');
+    if(data.amount < 0) return alert('Amount cannot be negative');
+
+    try{
+      if(window.DB){
+        if(id) await DB.update('invoices', id, data);
+        else await DB.insert('invoices', data);
+      } else if(typeof _supaReq === 'function'){
+        const payload = (typeof _supaFilter === 'function') ? _supaFilter('invoices', data) : data;
+        if(id) await _supaReq('PATCH', 'invoices', payload, `?id=eq.${id}`);
+        else await _supaReq('POST', 'invoices', payload);
+      }
+      try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+      await rerenderAll();
+      if(typeof showToast === 'function') showToast('Invoice saved', 'success');
+    }catch(e){
+      console.error('[patch saveInvoice]', e);
+      if(typeof showToast === 'function') showToast('Invoice save failed', 'error');
+    }
   };
 })();
 </script>
@@ -10604,175 +10808,243 @@ ${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
 <div class="footer"><span>NXT Phase AI · staffingnxtphase.vercel.app</span><span>Monthly Report ${moLabel}</span></div>
 
 <script>
-/* NXTPhase staffing/invoice sync patch */
+/* ===== NXTPhase stability patch: staffing + invoices + sync ===== */
 (function(){
-  function staffKey(empId, projId, wk){ return String(empId)+'__'+String(projId)+'__'+String(wk); }
-  function normalizeDays(v){
-    var n = parseFloat(String(v).replace(',', '.'));
-    if (!isFinite(n)) n = 0;
-    if (n < 0) n = 0;
-    if (n > 7) n = 7;
-    return Math.round(n * 100) / 100;
-  }
-  function upsertStaffingInMemory(row){
-    if (!window.S) return;
-    if (!Array.isArray(S.staffing)) S.staffing = [];
-    var idx = S.staffing.findIndex(function(s){
-      return String(s.employee_id)===String(row.employee_id) && String(s.project_id)===String(row.project_id) && String(s.week_key)===String(row.week_key);
-    });
-    if (row.days <= 0) {
-      if (idx >= 0) S.staffing.splice(idx, 1);
-      return;
+  try{
+    if(window._SUPA_SCHEMA && window._SUPA_SCHEMA.invoices){
+      if(!window._SUPA_SCHEMA.invoices.includes('billing_type')) window._SUPA_SCHEMA.invoices.push('billing_type');
     }
-    var next = Object.assign({}, idx >= 0 ? S.staffing[idx] : {}, row, { days: normalizeDays(row.days), note: String(row.note || '') });
-    if (idx >= 0) S.staffing[idx] = next; else S.staffing.push(next);
+  }catch(e){}
+
+  function normId(v){
+    const n = parseInt(v,10);
+    return Number.isFinite(n) ? n : v;
   }
-  async function writeStaffingToSupabase(row){
-    if (location.protocol === 'file:' || !window._SUPA_ONLINE) return true;
-    try {
-      var qs = '?employee_id=eq.' + row.employee_id + '&project_id=eq.' + row.project_id + '&week_key=eq.' + encodeURIComponent(row.week_key) + '&select=id';
-      var ex = await _supaReq('GET', 'staffing', null, qs, true);
-      if (row.days <= 0) {
-        if (ex && ex.length > 0) {
-          for (var i = 0; i < ex.length; i++) {
-            await _supaReq('DELETE', 'staffing', null, '?id=eq.' + ex[i].id, true);
-          }
-        }
-        return true;
-      }
-      var payload = _supaFilter('staffing', {
-        employee_id: row.employee_id,
-        project_id: row.project_id,
-        week_key: row.week_key,
-        days: normalizeDays(row.days),
-        note: String(row.note || '')
-      });
-      if (ex && ex.length > 0) {
-        for (var j = 0; j < ex.length; j++) {
-          var r = await _supaReq('PATCH', 'staffing', payload, '?id=eq.' + ex[j].id, true);
-          if (r === null) return false;
-        }
-      } else {
-        var ins = await _supaReq('POST', 'staffing', payload, null, true);
-        if (ins === null) return false;
-      }
-      return true;
-    } catch (e) {
-      console.error('[writeStaffingToSupabase]', e);
-      return false;
-    }
-  }
-  function rerenderPlanning(){
-    try{ renderStaffing && renderStaffing(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderSchedule && renderSchedule(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
+  function sameId(a,b){ return String(a) === String(b); }
+
+  function staffingKeyMatch(row, empId, projId, wk){
+    return sameId(row.employee_id, empId) && sameId(row.project_id, projId) && String(row.week_key) === String(wk);
   }
 
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('billing_type') === -1) {
-    _SUPA_SCHEMA.invoices.push('billing_type');
+  function applyLocalStaffing(empId, projId, wk, days, note){
+    window.S = window.S || {};
+    S.staffing = Array.isArray(S.staffing) ? S.staffing : [];
+    const idx = S.staffing.findIndex(s => staffingKeyMatch(s, empId, projId, wk));
+    if(days <= 0){
+      if(idx >= 0) S.staffing.splice(idx, 1);
+      return;
+    }
+    const existing = idx >= 0 ? S.staffing[idx] : {};
+    const row = Object.assign({}, existing, {
+      employee_id: empId,
+      project_id: projId,
+      week_key: wk,
+      days: Number(days) || 0,
+      note: String(note || '').trim()
+    });
+    if(idx >= 0) S.staffing[idx] = row;
+    else S.staffing.push(row);
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('description') === -1) {
-    _SUPA_SCHEMA.invoices.push('description');
+
+  async function rerenderAll(){
+    try{
+      if(typeof loadData === 'function') await loadData();
+    }catch(e){
+      console.warn('[patch] loadData refresh failed, using in-memory state', e);
+    }
+    try{ if(typeof renderStaffing === 'function') renderStaffing(); }catch(e){}
+    try{ if(typeof renderProjects === 'function') renderProjects(); }catch(e){}
+    try{ if(typeof renderSchedule === 'function') renderSchedule(); }catch(e){}
+    try{ if(typeof renderDashboard === 'function') renderDashboard(); }catch(e){}
+    try{ if(typeof renderFinancial === 'function') renderFinancial(); }catch(e){}
+    try{ if(typeof renderInvoices === 'function') renderInvoices(); }catch(e){}
+    try{ if(typeof renderPartner === 'function') renderPartner(); }catch(e){}
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('status') === -1) {
-    _SUPA_SCHEMA.invoices.push('status');
+
+  async function saveStaffingDirect(empId, projId, wk, days, note){
+    empId = normId(empId);
+    projId = normId(projId);
+    days = Math.max(0, Math.min(7, parseFloat(days) || 0));
+    note = String(note || '').trim();
+
+    applyLocalStaffing(empId, projId, wk, days, note);
+    try{
+      if(typeof _staffNoteSave === 'function') _staffNoteSave(empId, projId, wk, note);
+    }catch(e){}
+
+    let supaOk = true;
+    try{
+      const qs = `?employee_id=eq.${encodeURIComponent(empId)}&project_id=eq.${encodeURIComponent(projId)}&week_key=eq.${encodeURIComponent(wk)}&select=id`;
+      const existing = typeof _supaReq === 'function' ? await _supaReq('GET','staffing',null,qs) : null;
+      if(typeof _supaReq === 'function'){
+        if(days <= 0){
+          if(existing && existing[0]) await _supaReq('DELETE','staffing',null,`?id=eq.${existing[0].id}`);
+        }else{
+          const payload = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+          if(existing && existing[0]) await _supaReq('PATCH','staffing', payload, `?id=eq.${existing[0].id}`);
+          else await _supaReq('POST','staffing', payload);
+        }
+      }else if(window.DB && typeof DB.upsertStaffing === 'function'){
+        await DB.upsertStaffing({ employee_id: empId, project_id: projId, week_key: wk, days: days, note: note });
+      }
+    }catch(e){
+      supaOk = false;
+      console.error('[patch saveStaffingDirect]', e);
+      if(typeof showToast === 'function') showToast('⚠ Staffing sync naar Supabase mislukt', 'error');
+    }
+
+    await rerenderAll();
+    return supaOk;
   }
 
   window.editCellSave = async function(empId, projId, wk, days, note){
-    empId = parseInt(empId) || empId;
-    projId = parseInt(projId) || projId;
-    days = normalizeDays(days);
-    note = String(note || '').trim();
-    closeModal();
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    return await saveStaffingDirect(empId, projId, wk, days, note);
+  };
 
-    var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+  window.sfProjCellSave = async function(projId, wk){
+    const empId = parseInt(document.getElementById('spc-emp')?.value, 10) || 0;
+    const days = parseFloat(document.getElementById('spc-days')?.value) || 0;
+    if(!empId) return alert('Select an employee');
+    return await window.editCellSave(empId, projId, wk, days, '');
+  };
 
-    // local persistent cache
-    await DB.upsertStaffing(row);
-    _staffNoteSave(empId, projId, wk, note);
+  window.bulkStaffPreview = function(){
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const preview = document.getElementById('bs-preview');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(!preview || !btn) return;
 
-    // immediate in-memory update so UI reflects the change without waiting for reload
-    upsertStaffingInMemory(row);
-    rerenderPlanning();
-
-    var ok = await writeStaffingToSupabase(row);
-    if (!ok) {
-      showToast('⚠ Staffing opslaan mislukt in Supabase', 'error');
+    if(!empId || !projId || !days || !startWk){
+      preview.innerHTML = '<span style="color:var(--t3)">Fill all fields to see preview.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
       return;
     }
 
-    await loadData();
-    rerenderPlanning();
-    showToast(days > 0 ? 'Staffing saved' : 'Staffing removed', 'success');
+    const emp = (S.employees || []).find(e => sameId(e.id, empId));
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!emp || !proj){
+      preview.innerHTML = '<span style="color:var(--red)">Employee or project not found.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
+      return;
+    }
+
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const existing = weeksToFill.filter(wk =>
+      (S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+
+    if(!weeksToFill.length){
+      preview.innerHTML = '<span style="color:var(--red)">No remaining weeks in project from selected start week.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Nothing to assign';
+      return;
+    }
+
+    const weekBadges = toWrite.slice(0,12).map(wk => `<span class="bulk-week-badge">W${String(wk).split('-W')[1] || wk}</span>`).join('');
+    const more = toWrite.length > 12 ? `<span style="color:var(--t3);font-size:10px"> +${toWrite.length - 12} more</span>` : '';
+    const estCost = (parseFloat(emp.daily_cost) || 0) * days * toWrite.length;
+
+    preview.innerHTML = `
+      <div><strong>${esc(emp.name || '')}</strong> → <strong>${esc((proj.client_name || '') + ' / ' + (proj.name || ''))}</strong></div>
+      <div style="margin-top:4px"><strong>${days}</strong> days/week • <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
+        ${existing.length && !overwrite ? `<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>` : ''}
+        ${existing.length && overwrite ? `<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>` : ''}
+      </div>
+      <div style="margin-top:6px">${weekBadges}${more}</div>
+      <div style="margin-top:6px;color:var(--t3);font-size:10px">
+        Project end: ${esc(proj.end_date || '')} • Cost: ${typeof fmt === 'function' ? fmt(estCost) : estCost}
+      </div>`;
+
+    btn.disabled = toWrite.length === 0;
+    btn.textContent = toWrite.length === 0 ? 'Nothing to assign' : `Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
   };
 
   window.bulkStaffConfirm = async function(){
-    var empId = parseInt(document.getElementById('bs-emp')?.value);
-    var projId = parseInt(document.getElementById('bs-proj')?.value);
-    var days = normalizeDays(document.getElementById('bs-days')?.value || 0);
-    var startWk = document.getElementById('bs-start-wk')?.value;
-    var overwrite = !!document.getElementById('bs-overwrite')?.checked;
-    if (!empId || !projId || !days || !startWk) return;
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const note = document.getElementById('bs-note')?.value || '';
+    if(!empId || !projId || !days || !startWk) return;
 
-    var proj = (S.projects || []).find(function(p){ return p.id == projId; });
-    if (!proj) return;
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!proj) return;
 
-    var allProjWks = projectWkKeys(proj);
-    var weeksToFill = allProjWks.filter(function(wk){ return wk >= startWk; });
-    var toWrite = overwrite ? weeksToFill : weeksToFill.filter(function(wk){
-      return !S.staffing.some(function(s){
-        return String(s.employee_id)===String(empId) && String(s.project_id)===String(projId) && String(s.week_key)===String(wk) && normalizeDays(s.days) > 0;
-      });
-    });
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
 
-    if (!toWrite.length) { showToast('Nothing to assign', 'warning'); return; }
-
-    var btn = document.getElementById('bs-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Assigning…'; }
-
-    var done = 0, failed = 0;
-    for (var i = 0; i < toWrite.length; i++) {
-      var wk = toWrite[i];
-      var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: '' };
-      await DB.upsertStaffing(row);
-      upsertStaffingInMemory(row);
-      var ok = await writeStaffingToSupabase(row);
-      if (ok) done++; else failed++;
-      var bar = document.getElementById('bs-prog-bar');
-      if (bar) bar.style.width = Math.round(((i + 1) / toWrite.length) * 100) + '%';
+    if(!toWrite.length){
+      if(typeof showToast === 'function') showToast('Nothing to assign', 'warning');
+      return;
     }
 
-    closeModal();
-    await loadData();
-    rerenderPlanning();
-    if (failed) showToast('⚠ ' + done + ' weken opgeslagen, ' + failed + ' mislukt', 'error');
-    else showToast('Assigned ' + done + ' weeks successfully', 'success');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Assigning…'; }
+
+    let ok = 0;
+    let fail = 0;
+    for(const wk of toWrite){
+      const saved = await saveStaffingDirect(empId, projId, wk, days, note);
+      if(saved) ok++; else fail++;
+    }
+
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    if(typeof showToast === 'function'){
+      showToast(fail ? `Assigned ${ok} weeks, ${fail} failed` : `Assigned ${ok} week${ok!==1?'s':''}`, fail ? 'warning' : 'success');
+    }
   };
 
   window.saveInvoice = async function(id){
-    var data = {
-      project_id: parseInt(document.getElementById('f-proj').value),
-      amount: parseFloat(document.getElementById('f-amount').value) || 0,
-      month: document.getElementById('f-month').value,
-      billing_type: document.getElementById('f-billing').value,
-      draft_created: document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid').checked ? 1 : 0
+    const projVal = document.getElementById('f-proj')?.value;
+    const amountVal = document.getElementById('f-amount')?.value;
+    const monthVal = document.getElementById('f-month')?.value;
+    const billingVal = document.getElementById('f-billing')?.value || 'monthly';
+
+    const data = {
+      project_id: parseInt(projVal, 10) || 0,
+      amount: parseFloat(amountVal) || 0,
+      month: monthVal || '',
+      billing_type: billingVal,
+      draft_created: document.getElementById('f-draft')?.checked ? 1 : 0,
+      invoice_sent: document.getElementById('f-sent')?.checked ? 1 : 0,
+      paid: document.getElementById('f-paid')?.checked ? 1 : 0
     };
-    if (!data.project_id) { alert('Project is required'); return; }
-    if (!data.month) { alert('Month is required'); return; }
-    closeModal();
-    if (id) await DB.update('invoices', id, data); else await DB.insert('invoices', data);
-    await loadData();
-    try{ renderInvoices && renderInvoices(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
-    var savedProj = (S.projects || []).find(function(p){ return p.id === data.project_id; });
-    if (savedProj && savedProj.is_partner && typeof renderPartner === 'function') renderPartner();
-    showToast('Invoice saved', 'success');
+
+    if(!data.project_id) return alert('Select a project');
+    if(!data.month) return alert('Select a month');
+    if(data.amount < 0) return alert('Amount cannot be negative');
+
+    try{
+      if(window.DB){
+        if(id) await DB.update('invoices', id, data);
+        else await DB.insert('invoices', data);
+      } else if(typeof _supaReq === 'function'){
+        const payload = (typeof _supaFilter === 'function') ? _supaFilter('invoices', data) : data;
+        if(id) await _supaReq('PATCH', 'invoices', payload, `?id=eq.${id}`);
+        else await _supaReq('POST', 'invoices', payload);
+      }
+      try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+      await rerenderAll();
+      if(typeof showToast === 'function') showToast('Invoice saved', 'success');
+    }catch(e){
+      console.error('[patch saveInvoice]', e);
+      if(typeof showToast === 'function') showToast('Invoice save failed', 'error');
+    }
   };
 })();
 </script>
@@ -11471,175 +11743,243 @@ function initBankPlanner(){
 
 
 <script>
-/* NXTPhase staffing/invoice sync patch */
+/* ===== NXTPhase stability patch: staffing + invoices + sync ===== */
 (function(){
-  function staffKey(empId, projId, wk){ return String(empId)+'__'+String(projId)+'__'+String(wk); }
-  function normalizeDays(v){
-    var n = parseFloat(String(v).replace(',', '.'));
-    if (!isFinite(n)) n = 0;
-    if (n < 0) n = 0;
-    if (n > 7) n = 7;
-    return Math.round(n * 100) / 100;
-  }
-  function upsertStaffingInMemory(row){
-    if (!window.S) return;
-    if (!Array.isArray(S.staffing)) S.staffing = [];
-    var idx = S.staffing.findIndex(function(s){
-      return String(s.employee_id)===String(row.employee_id) && String(s.project_id)===String(row.project_id) && String(s.week_key)===String(row.week_key);
-    });
-    if (row.days <= 0) {
-      if (idx >= 0) S.staffing.splice(idx, 1);
-      return;
+  try{
+    if(window._SUPA_SCHEMA && window._SUPA_SCHEMA.invoices){
+      if(!window._SUPA_SCHEMA.invoices.includes('billing_type')) window._SUPA_SCHEMA.invoices.push('billing_type');
     }
-    var next = Object.assign({}, idx >= 0 ? S.staffing[idx] : {}, row, { days: normalizeDays(row.days), note: String(row.note || '') });
-    if (idx >= 0) S.staffing[idx] = next; else S.staffing.push(next);
+  }catch(e){}
+
+  function normId(v){
+    const n = parseInt(v,10);
+    return Number.isFinite(n) ? n : v;
   }
-  async function writeStaffingToSupabase(row){
-    if (location.protocol === 'file:' || !window._SUPA_ONLINE) return true;
-    try {
-      var qs = '?employee_id=eq.' + row.employee_id + '&project_id=eq.' + row.project_id + '&week_key=eq.' + encodeURIComponent(row.week_key) + '&select=id';
-      var ex = await _supaReq('GET', 'staffing', null, qs, true);
-      if (row.days <= 0) {
-        if (ex && ex.length > 0) {
-          for (var i = 0; i < ex.length; i++) {
-            await _supaReq('DELETE', 'staffing', null, '?id=eq.' + ex[i].id, true);
-          }
-        }
-        return true;
-      }
-      var payload = _supaFilter('staffing', {
-        employee_id: row.employee_id,
-        project_id: row.project_id,
-        week_key: row.week_key,
-        days: normalizeDays(row.days),
-        note: String(row.note || '')
-      });
-      if (ex && ex.length > 0) {
-        for (var j = 0; j < ex.length; j++) {
-          var r = await _supaReq('PATCH', 'staffing', payload, '?id=eq.' + ex[j].id, true);
-          if (r === null) return false;
-        }
-      } else {
-        var ins = await _supaReq('POST', 'staffing', payload, null, true);
-        if (ins === null) return false;
-      }
-      return true;
-    } catch (e) {
-      console.error('[writeStaffingToSupabase]', e);
-      return false;
-    }
-  }
-  function rerenderPlanning(){
-    try{ renderStaffing && renderStaffing(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderSchedule && renderSchedule(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
+  function sameId(a,b){ return String(a) === String(b); }
+
+  function staffingKeyMatch(row, empId, projId, wk){
+    return sameId(row.employee_id, empId) && sameId(row.project_id, projId) && String(row.week_key) === String(wk);
   }
 
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('billing_type') === -1) {
-    _SUPA_SCHEMA.invoices.push('billing_type');
+  function applyLocalStaffing(empId, projId, wk, days, note){
+    window.S = window.S || {};
+    S.staffing = Array.isArray(S.staffing) ? S.staffing : [];
+    const idx = S.staffing.findIndex(s => staffingKeyMatch(s, empId, projId, wk));
+    if(days <= 0){
+      if(idx >= 0) S.staffing.splice(idx, 1);
+      return;
+    }
+    const existing = idx >= 0 ? S.staffing[idx] : {};
+    const row = Object.assign({}, existing, {
+      employee_id: empId,
+      project_id: projId,
+      week_key: wk,
+      days: Number(days) || 0,
+      note: String(note || '').trim()
+    });
+    if(idx >= 0) S.staffing[idx] = row;
+    else S.staffing.push(row);
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('description') === -1) {
-    _SUPA_SCHEMA.invoices.push('description');
+
+  async function rerenderAll(){
+    try{
+      if(typeof loadData === 'function') await loadData();
+    }catch(e){
+      console.warn('[patch] loadData refresh failed, using in-memory state', e);
+    }
+    try{ if(typeof renderStaffing === 'function') renderStaffing(); }catch(e){}
+    try{ if(typeof renderProjects === 'function') renderProjects(); }catch(e){}
+    try{ if(typeof renderSchedule === 'function') renderSchedule(); }catch(e){}
+    try{ if(typeof renderDashboard === 'function') renderDashboard(); }catch(e){}
+    try{ if(typeof renderFinancial === 'function') renderFinancial(); }catch(e){}
+    try{ if(typeof renderInvoices === 'function') renderInvoices(); }catch(e){}
+    try{ if(typeof renderPartner === 'function') renderPartner(); }catch(e){}
   }
-  if (window._SUPA_SCHEMA && Array.isArray(_SUPA_SCHEMA.invoices) && _SUPA_SCHEMA.invoices.indexOf('status') === -1) {
-    _SUPA_SCHEMA.invoices.push('status');
+
+  async function saveStaffingDirect(empId, projId, wk, days, note){
+    empId = normId(empId);
+    projId = normId(projId);
+    days = Math.max(0, Math.min(7, parseFloat(days) || 0));
+    note = String(note || '').trim();
+
+    applyLocalStaffing(empId, projId, wk, days, note);
+    try{
+      if(typeof _staffNoteSave === 'function') _staffNoteSave(empId, projId, wk, note);
+    }catch(e){}
+
+    let supaOk = true;
+    try{
+      const qs = `?employee_id=eq.${encodeURIComponent(empId)}&project_id=eq.${encodeURIComponent(projId)}&week_key=eq.${encodeURIComponent(wk)}&select=id`;
+      const existing = typeof _supaReq === 'function' ? await _supaReq('GET','staffing',null,qs) : null;
+      if(typeof _supaReq === 'function'){
+        if(days <= 0){
+          if(existing && existing[0]) await _supaReq('DELETE','staffing',null,`?id=eq.${existing[0].id}`);
+        }else{
+          const payload = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+          if(existing && existing[0]) await _supaReq('PATCH','staffing', payload, `?id=eq.${existing[0].id}`);
+          else await _supaReq('POST','staffing', payload);
+        }
+      }else if(window.DB && typeof DB.upsertStaffing === 'function'){
+        await DB.upsertStaffing({ employee_id: empId, project_id: projId, week_key: wk, days: days, note: note });
+      }
+    }catch(e){
+      supaOk = false;
+      console.error('[patch saveStaffingDirect]', e);
+      if(typeof showToast === 'function') showToast('⚠ Staffing sync naar Supabase mislukt', 'error');
+    }
+
+    await rerenderAll();
+    return supaOk;
   }
 
   window.editCellSave = async function(empId, projId, wk, days, note){
-    empId = parseInt(empId) || empId;
-    projId = parseInt(projId) || projId;
-    days = normalizeDays(days);
-    note = String(note || '').trim();
-    closeModal();
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    return await saveStaffingDirect(empId, projId, wk, days, note);
+  };
 
-    var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: note };
+  window.sfProjCellSave = async function(projId, wk){
+    const empId = parseInt(document.getElementById('spc-emp')?.value, 10) || 0;
+    const days = parseFloat(document.getElementById('spc-days')?.value) || 0;
+    if(!empId) return alert('Select an employee');
+    return await window.editCellSave(empId, projId, wk, days, '');
+  };
 
-    // local persistent cache
-    await DB.upsertStaffing(row);
-    _staffNoteSave(empId, projId, wk, note);
+  window.bulkStaffPreview = function(){
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const preview = document.getElementById('bs-preview');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(!preview || !btn) return;
 
-    // immediate in-memory update so UI reflects the change without waiting for reload
-    upsertStaffingInMemory(row);
-    rerenderPlanning();
-
-    var ok = await writeStaffingToSupabase(row);
-    if (!ok) {
-      showToast('⚠ Staffing opslaan mislukt in Supabase', 'error');
+    if(!empId || !projId || !days || !startWk){
+      preview.innerHTML = '<span style="color:var(--t3)">Fill all fields to see preview.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
       return;
     }
 
-    await loadData();
-    rerenderPlanning();
-    showToast(days > 0 ? 'Staffing saved' : 'Staffing removed', 'success');
+    const emp = (S.employees || []).find(e => sameId(e.id, empId));
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!emp || !proj){
+      preview.innerHTML = '<span style="color:var(--red)">Employee or project not found.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Assign';
+      return;
+    }
+
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const existing = weeksToFill.filter(wk =>
+      (S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
+
+    if(!weeksToFill.length){
+      preview.innerHTML = '<span style="color:var(--red)">No remaining weeks in project from selected start week.</span>';
+      btn.disabled = true;
+      btn.textContent = 'Nothing to assign';
+      return;
+    }
+
+    const weekBadges = toWrite.slice(0,12).map(wk => `<span class="bulk-week-badge">W${String(wk).split('-W')[1] || wk}</span>`).join('');
+    const more = toWrite.length > 12 ? `<span style="color:var(--t3);font-size:10px"> +${toWrite.length - 12} more</span>` : '';
+    const estCost = (parseFloat(emp.daily_cost) || 0) * days * toWrite.length;
+
+    preview.innerHTML = `
+      <div><strong>${esc(emp.name || '')}</strong> → <strong>${esc((proj.client_name || '') + ' / ' + (proj.name || ''))}</strong></div>
+      <div style="margin-top:4px"><strong>${days}</strong> days/week • <strong>${toWrite.length}</strong> week${toWrite.length!==1?'s':''} to fill
+        ${existing.length && !overwrite ? `<span style="color:var(--amber);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} skipped)</span>` : ''}
+        ${existing.length && overwrite ? `<span style="color:var(--blue);margin-left:6px">(${existing.length} existing week${existing.length!==1?'s':''} will be overwritten)</span>` : ''}
+      </div>
+      <div style="margin-top:6px">${weekBadges}${more}</div>
+      <div style="margin-top:6px;color:var(--t3);font-size:10px">
+        Project end: ${esc(proj.end_date || '')} • Cost: ${typeof fmt === 'function' ? fmt(estCost) : estCost}
+      </div>`;
+
+    btn.disabled = toWrite.length === 0;
+    btn.textContent = toWrite.length === 0 ? 'Nothing to assign' : `Assign ${toWrite.length} Week${toWrite.length!==1?'s':''}`;
   };
 
   window.bulkStaffConfirm = async function(){
-    var empId = parseInt(document.getElementById('bs-emp')?.value);
-    var projId = parseInt(document.getElementById('bs-proj')?.value);
-    var days = normalizeDays(document.getElementById('bs-days')?.value || 0);
-    var startWk = document.getElementById('bs-start-wk')?.value;
-    var overwrite = !!document.getElementById('bs-overwrite')?.checked;
-    if (!empId || !projId || !days || !startWk) return;
+    const empId = parseInt(document.getElementById('bs-emp')?.value, 10);
+    const projId = parseInt(document.getElementById('bs-proj')?.value, 10);
+    const days = parseFloat(document.getElementById('bs-days')?.value) || 0;
+    const startWk = document.getElementById('bs-start-wk')?.value;
+    const overwrite = !!document.getElementById('bs-overwrite')?.checked;
+    const note = document.getElementById('bs-note')?.value || '';
+    if(!empId || !projId || !days || !startWk) return;
 
-    var proj = (S.projects || []).find(function(p){ return p.id == projId; });
-    if (!proj) return;
+    const proj = (S.projects || []).find(p => sameId(p.id, projId));
+    if(!proj) return;
 
-    var allProjWks = projectWkKeys(proj);
-    var weeksToFill = allProjWks.filter(function(wk){ return wk >= startWk; });
-    var toWrite = overwrite ? weeksToFill : weeksToFill.filter(function(wk){
-      return !S.staffing.some(function(s){
-        return String(s.employee_id)===String(empId) && String(s.project_id)===String(projId) && String(s.week_key)===String(wk) && normalizeDays(s.days) > 0;
-      });
-    });
+    const allProjWks = typeof projectWkKeys === 'function' ? projectWkKeys(proj) : [];
+    const weeksToFill = allProjWks.filter(wk => String(wk) >= String(startWk));
+    const toWrite = overwrite ? weeksToFill : weeksToFill.filter(wk =>
+      !(S.staffing || []).some(s => staffingKeyMatch(s, empId, projId, wk) && (parseFloat(s.days) || 0) > 0)
+    );
 
-    if (!toWrite.length) { showToast('Nothing to assign', 'warning'); return; }
-
-    var btn = document.getElementById('bs-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Assigning…'; }
-
-    var done = 0, failed = 0;
-    for (var i = 0; i < toWrite.length; i++) {
-      var wk = toWrite[i];
-      var row = { employee_id: empId, project_id: projId, week_key: wk, days: days, note: '' };
-      await DB.upsertStaffing(row);
-      upsertStaffingInMemory(row);
-      var ok = await writeStaffingToSupabase(row);
-      if (ok) done++; else failed++;
-      var bar = document.getElementById('bs-prog-bar');
-      if (bar) bar.style.width = Math.round(((i + 1) / toWrite.length) * 100) + '%';
+    if(!toWrite.length){
+      if(typeof showToast === 'function') showToast('Nothing to assign', 'warning');
+      return;
     }
 
-    closeModal();
-    await loadData();
-    rerenderPlanning();
-    if (failed) showToast('⚠ ' + done + ' weken opgeslagen, ' + failed + ' mislukt', 'error');
-    else showToast('Assigned ' + done + ' weeks successfully', 'success');
+    const btn = document.getElementById('bs-confirm-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Assigning…'; }
+
+    let ok = 0;
+    let fail = 0;
+    for(const wk of toWrite){
+      const saved = await saveStaffingDirect(empId, projId, wk, days, note);
+      if(saved) ok++; else fail++;
+    }
+
+    try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+    if(typeof showToast === 'function'){
+      showToast(fail ? `Assigned ${ok} weeks, ${fail} failed` : `Assigned ${ok} week${ok!==1?'s':''}`, fail ? 'warning' : 'success');
+    }
   };
 
   window.saveInvoice = async function(id){
-    var data = {
-      project_id: parseInt(document.getElementById('f-proj').value),
-      amount: parseFloat(document.getElementById('f-amount').value) || 0,
-      month: document.getElementById('f-month').value,
-      billing_type: document.getElementById('f-billing').value,
-      draft_created: document.getElementById('f-draft').checked ? 1 : 0,
-      invoice_sent: document.getElementById('f-sent').checked ? 1 : 0,
-      paid: document.getElementById('f-paid').checked ? 1 : 0
+    const projVal = document.getElementById('f-proj')?.value;
+    const amountVal = document.getElementById('f-amount')?.value;
+    const monthVal = document.getElementById('f-month')?.value;
+    const billingVal = document.getElementById('f-billing')?.value || 'monthly';
+
+    const data = {
+      project_id: parseInt(projVal, 10) || 0,
+      amount: parseFloat(amountVal) || 0,
+      month: monthVal || '',
+      billing_type: billingVal,
+      draft_created: document.getElementById('f-draft')?.checked ? 1 : 0,
+      invoice_sent: document.getElementById('f-sent')?.checked ? 1 : 0,
+      paid: document.getElementById('f-paid')?.checked ? 1 : 0
     };
-    if (!data.project_id) { alert('Project is required'); return; }
-    if (!data.month) { alert('Month is required'); return; }
-    closeModal();
-    if (id) await DB.update('invoices', id, data); else await DB.insert('invoices', data);
-    await loadData();
-    try{ renderInvoices && renderInvoices(); }catch(e){}
-    try{ renderProjects && renderProjects(); }catch(e){}
-    try{ renderDashboard && renderDashboard(); }catch(e){}
-    try{ renderFinancial && renderFinancial(); }catch(e){}
-    var savedProj = (S.projects || []).find(function(p){ return p.id === data.project_id; });
-    if (savedProj && savedProj.is_partner && typeof renderPartner === 'function') renderPartner();
-    showToast('Invoice saved', 'success');
+
+    if(!data.project_id) return alert('Select a project');
+    if(!data.month) return alert('Select a month');
+    if(data.amount < 0) return alert('Amount cannot be negative');
+
+    try{
+      if(window.DB){
+        if(id) await DB.update('invoices', id, data);
+        else await DB.insert('invoices', data);
+      } else if(typeof _supaReq === 'function'){
+        const payload = (typeof _supaFilter === 'function') ? _supaFilter('invoices', data) : data;
+        if(id) await _supaReq('PATCH', 'invoices', payload, `?id=eq.${id}`);
+        else await _supaReq('POST', 'invoices', payload);
+      }
+      try{ if(typeof closeModal === 'function') closeModal(); }catch(e){}
+      await rerenderAll();
+      if(typeof showToast === 'function') showToast('Invoice saved', 'success');
+    }catch(e){
+      console.error('[patch saveInvoice]', e);
+      if(typeof showToast === 'function') showToast('Invoice save failed', 'error');
+    }
   };
 })();
 </script>
