@@ -3069,8 +3069,15 @@ async function saveExtCost(id){
   if(!projId)return alert('Please select a project.');
   if(!vendor)return alert('Vendor / partner name is required.');
   if(totalAmount<=0)return alert('Amount must be greater than 0.');
+
   const startWk=document.getElementById('ec-week-key')?.value||null;
   const endWk=document.getElementById('ec-week-key-end')?.value||startWk;
+  const monthVal=document.getElementById('ec-date')?.value||null;
+  const hoursVal=parseFloat(document.getElementById('ec-hours')?.value);
+  const rateVal=parseFloat(document.getElementById('ec-rate')?.value);
+  const usdAmt=parseFloat(document.getElementById('ec-usd')?.value);
+  const usdRate=parseFloat(document.getElementById('ec-usd-rate')?.value);
+  const desc=(document.getElementById('ec-desc')?.value||'').trim();
 
   const weeks=[];
   if(startWk){
@@ -3080,50 +3087,71 @@ async function saveExtCost(id){
     while(d<=endD){weeks.push(toWeekKey(new Date(d)));d.setDate(d.getDate()+7);}
   }
   const weekCount=Math.max(1,weeks.length);
-  const perWk=Math.round(totalAmount/weekCount*100)/100;
+  const perWk=Math.round((totalAmount/weekCount)*100)/100;
 
-  const baseData={
-    project_id:projId,vendor,
-    description:(document.getElementById('ec-desc')?.value||'').trim(),
-    hours:parseFloat(document.getElementById('ec-hours')?.value)||null,
-    rate:parseFloat(document.getElementById('ec-rate')?.value)||null,
-    date:document.getElementById('ec-date')?.value||null,
+  const fullBase={
+    project_id:projId,
+    vendor,
+    description:desc,
+    hours:isNaN(hoursVal)?null:hoursVal,
+    rate:isNaN(rateVal)?null:rateVal,
+    amount:totalAmount,
+    date:monthVal,
     total_amount:totalAmount,
+    week_key:startWk||null,
     week_key_end:endWk||startWk||null,
-    usd_amount:parseFloat(document.getElementById('ec-usd')?.value)||null,
-    usd_rate:parseFloat(document.getElementById('ec-usd-rate')?.value)||null
+    week_count:weekCount,
+    usd_amount:isNaN(usdAmt)?null:usdAmt,
+    usd_rate:isNaN(usdRate)?null:usdRate
   };
+
+  async function writeOne(method, querySuffix, row){
+    const candidates=[
+      _supaFilter('external_costs', row),
+      {project_id:row.project_id,vendor:row.vendor,description:row.description,hours:row.hours,rate:row.rate,amount:row.amount,date:row.date,week_key:row.week_key},
+      {project_id:row.project_id,vendor:row.vendor,description:row.description,amount:row.amount,date:row.date},
+      {project_id:row.project_id,vendor:row.vendor,description:row.description,amount:row.amount}
+    ];
+    for(const payload of candidates){
+      try{
+        const clean={};
+        Object.keys(payload||{}).forEach(k=>{ if(payload[k]!==undefined) clean[k]=payload[k]; });
+        const res=await _supaReq(method,'external_costs',clean,querySuffix||'');
+        if(res!==null) return true;
+      }catch(e){ console.warn('[saveExtCost fallback]', method, e); }
+    }
+    return false;
+  }
 
   closeModal();
   let ok=false;
   try{
     if(id){
-      const payload=_supaFilter('external_costs',{...baseData,amount:totalAmount,week_key:startWk,week_count:weekCount});
-      const r=await _supaReq('PATCH','external_costs',payload,'?id=eq.'+id);
-      ok=(r!==null);
+      ok=await writeOne('PATCH','?id=eq.'+id,fullBase);
       if(ok) showToast('External cost updated');
     } else if(weeks.length>1){
       let allOk=true;
       for(const wk of weeks){
-        const r=await _supaReq('POST','external_costs',_supaFilter('external_costs',{...baseData,amount:perWk,week_key:wk,week_count:weekCount}));
-        if(!r) allOk=false;
+        const row={...fullBase, amount:perWk, week_key:wk};
+        const rowOk=await writeOne('POST','',row);
+        if(!rowOk) allOk=false;
       }
       ok=allOk;
       if(ok) showToast(`Created ${weekCount} entries of ${fmt(perWk)}/wk — total ${fmt(totalAmount)}`);
     } else {
-      const r=await _supaReq('POST','external_costs',_supaFilter('external_costs',{...baseData,amount:totalAmount,week_key:startWk||null,week_count:1}));
-      ok=(r!==null);
+      ok=await writeOne('POST','',{...fullBase, amount:totalAmount, week_key:startWk||null, week_count:1});
       if(ok) showToast('External cost added');
     }
   }catch(e){
     console.error('[saveExtCost]',e);
     ok=false;
   }
-  if(!ok) showToast('⚠ Ext cost opslaan mislukt — zie Supabase Diagnostics in sidebar','error');
+  if(!ok) showToast('⚠ External cost kon niet worden opgeslagen. Run de SQL migratie en probeer opnieuw.','error');
   await loadData();
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
   renderDashboard&&renderDashboard();
+  renderFinancial&&renderFinancial();
 }
 
 async function deleteExtCost(id){
@@ -10008,7 +10036,7 @@ function openMonthlyPDFModal(){
         <label class="form-lbl">Select Month</label>
         <select class="form-input" id="pdf-month-sel">${moOpts}</select>
       </div>
-      <div style="font-size:12px;color:var(--t3);margin-top:8px">Includes: Revenue · Staff Costs · Fixed Costs · Margin · Bank/Cashflow · Active Projects</div>
+      <div style="font-size:12px;color:var(--t3);margin-top:8px">Includes: CFO summary · P&L bridge · project margin view · utilization · invoices · cash position</div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeModal()">Cancel</button>
@@ -10022,11 +10050,11 @@ function generateMonthlyPDF(){
   const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
   const moLabel=months[m-1]+' '+y;
   const moStr=sel;
-  const confRev=revForMonth(y,m,'confirmed');
-  const draftRev=revForMonth(y,m,'draft');
-  const staffCost=staffCostMonth(y,m);
-  const fixedCost=fixedMonthly(y,m);
-  const extCost=totalExtCostMonth(moStr);
+  const confRev=revForMonth(y,m,'confirmed')||0;
+  const draftRev=revForMonth(y,m,'draft')||0;
+  const staffCost=staffCostMonth(y,m)||0;
+  const fixedCost=fixedMonthly(y,m)||0;
+  const extCost=totalExtCostMonth(moStr)||0;
   const totalCost=staffCost+fixedCost+extCost;
   const margin=confRev-totalCost;
   const marginPct=confRev>0?(margin/confRev*100):0;
@@ -10036,14 +10064,24 @@ function generateMonthlyPDF(){
   const cfNet=cfClosing!==null&&cfOpening!==null?cfClosing-cfOpening:null;
   const wksM=getWeeksInMonth(y,m);
   const activeProjs=S.projects.filter(p=>{
-    if(p.status!=='confirmed')return false;
     const ms=(p.start_date||'0000-00').substring(0,7);
     const me=(p.end_date||'9999-99').substring(0,7);
-    return ms<=moStr&&me>=moStr;
+    return p.status==='confirmed'&&ms<=moStr&&me>=moStr;
   });
+  const projectRows=activeProjs.map(p=>{
+    const sc=S.staffing.filter(s=>String(s.project_id)===String(p.id)&&wksM.includes(s.week_key)).reduce((s,x)=>{
+      const e=S.employees.find(e=>String(e.id)===String(x.employee_id));
+      return s+((e?parseFloat(e.daily_cost||0):0)*(parseFloat(x.days)||0));
+    },0);
+    const ec=totalExtCostMonth(moStr,p.id)||0;
+    const rev=revForMonth(y,m,'confirmed',[p.id])||0;
+    const mg=rev-sc-ec;
+    const mgPct=rev>0?(mg/rev*100):0;
+    return {client:p.client_name||'',project:p.name||'',rev,sc,ec,mg,mgPct};
+  }).sort((a,b)=>b.mg-a.mg);
   const empCosts=S.employees.map(e=>{
-    const days=S.staffing.filter(s=>s.employee_id===e.id&&wksM.includes(s.week_key)).reduce((s,x)=>s+parseFloat(x.days||0),0);
-    return{name:e.name,days,cost:days*(e.daily_cost||0)};
+    const days=S.staffing.filter(s=>String(s.employee_id)===String(e.id)&&wksM.includes(s.week_key)).reduce((s,x)=>s+(parseFloat(x.days)||0),0);
+    return {name:e.name,days,cost:days*(parseFloat(e.daily_cost)||0)};
   }).filter(e=>e.days>0).sort((a,b)=>b.cost-a.cost);
   const fcBycat={};
   S.fixedCosts.filter(c=>c.active&&fcInDateRange(c,y,m)).forEach(c=>{
@@ -10051,65 +10089,111 @@ function generateMonthlyPDF(){
     if(!fcBycat[cat])fcBycat[cat]=0;
     fcBycat[cat]+=fcMonthlyAmount(c);
   });
+  const invMonth=(S.invoices||[]).filter(i=>(i.invoice_date||i.date||'').substring(0,7)===moStr);
+  const invoicedTotal=invMonth.reduce((s,i)=>s+(parseFloat(i.amount||0)||0),0);
+  const openInvoices=(S.invoices||[]).filter(i=>!['paid','settled'].includes(String(i.status||'').toLowerCase()));
+  const openInvoiceTotal=openInvoices.reduce((s,i)=>s+(parseFloat(i.amount||0)||0),0);
+  const utilizationDays=empCosts.reduce((s,e)=>s+e.days,0);
+  const availableDays=(S.employees||[]).reduce((sum,e)=>sum+empAvailableDaysForMonth(e.id,y,m),0);
+  const utilizationPct=availableDays>0?(utilizationDays/availableDays*100):0;
+
+  const risks=[];
+  if(confRev===0) risks.push('No confirmed revenue recorded for this month.');
+  if(margin<0) risks.push('Net margin is negative this month; review staffing mix, pricing and external costs.');
+  if(extCost>staffCost*0.6 && extCost>0) risks.push('External cost share is high versus internal staffing cost.');
+  if(openInvoiceTotal>Math.max(confRev*0.75,25000)) risks.push('Outstanding invoices are materially high versus monthly revenue.');
+  if(utilizationPct<60) risks.push('Team utilization is low; check bench time and sales conversion.');
+  if(!risks.length) risks.push('No major finance risk flags triggered based on current monthly data.');
+
+  const strengths=[];
+  if(margin>0) strengths.push('Month is margin-positive on confirmed revenue.');
+  if(utilizationPct>=75) strengths.push('Team utilization is healthy.');
+  if(draftRev>0) strengths.push('There is visible draft pipeline supporting next months.');
+
   const f=v=>'€'+Math.round(v).toLocaleString('nl-NL');
+  const f2=v=>'€'+(Math.round((v||0)*100)/100).toLocaleString('nl-NL',{minimumFractionDigits:2,maximumFractionDigits:2});
   const pct=v=>(v>=0?'+':'')+v.toFixed(1)+'%';
-  const clr=v=>v>=0?'#16a34a':'#dc2626';
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NXT Phase AI — ${moLabel}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a2e;background:#fff;padding:28px 32px}
-h1{font-size:22px;font-weight:800;color:#1a1a2e;margin-bottom:2px}.sub{font-size:12px;color:#6b7280;margin-bottom:20px}.logo{font-size:10px;font-weight:700;letter-spacing:1px;color:#3D2B1F;text-transform:uppercase;margin-bottom:4px}
-.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}.kpi{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;background:#f9fafb}.kpi-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;margin-bottom:4px}.kpi-val{font-size:20px;font-weight:800}.kpi-sub{font-size:9px;color:#9ca3af;margin-top:2px}
-.section{margin-bottom:18px}.section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;border-bottom:2px solid #e5e7eb;padding-bottom:4px;margin-bottom:8px}
-table{width:100%;border-collapse:collapse;font-size:11px}th{text-align:left;padding:5px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#6b7280;border-bottom:1px solid #e5e7eb}td{padding:5px 8px;border-bottom:1px solid #f3f4f6}.right{text-align:right}.bold{font-weight:700}
-.total-row td{font-weight:700;border-top:2px solid #e5e7eb;border-bottom:none;padding-top:7px}.green{color:#16a34a}.red{color:#dc2626}.blue{color:#1d4ed8}.amber{color:#d97706}
-.cf-box{border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.cf-item .lbl{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700}.cf-item .val{font-size:18px;font-weight:800;margin-top:2px}
-.footer{margin-top:24px;font-size:9px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:10px;display:flex;justify-content:space-between}
-@media print{body{padding:14px 18px}@page{margin:12mm 14mm;size:A4}}</style></head><body>
-<div class="logo">NXT Phase AI · Confidential</div>
+  const clr=v=>v>=0?'#166534':'#b91c1c';
+
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NXT Phase AI — CFO Monthly Report — ${moLabel}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,Arial,sans-serif;font-size:12px;color:#172033;background:#fff;padding:26px 30px}h1{font-size:24px;font-weight:800;color:#0f172a;margin-bottom:4px}.sub{font-size:12px;color:#64748b;margin-bottom:18px}.eyebrow{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#1d4ed8;margin-bottom:6px}.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.kpi{border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#f8fafc}.kpi-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#64748b;margin-bottom:4px}.kpi-val{font-size:22px;font-weight:800}.kpi-sub{font-size:10px;color:#94a3b8;margin-top:2px}.two{display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px}.card{border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#fff}.section-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.9px;color:#64748b;margin-bottom:8px}.muted{color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px}th{text-align:left;padding:6px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748b;border-bottom:1px solid #e2e8f0}td{padding:6px 8px;border-bottom:1px solid #f1f5f9}td.right,th.right{text-align:right}.bold{font-weight:700}.bad{color:#b91c1c}.bullet{margin-left:16px}.bullet li{margin-bottom:6px}.bridge-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9}.bridge-row:last-child{border-bottom:none}.footer{margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:9px;color:#94a3b8}@media print{body{padding:14px 16px}@page{size:A4;margin:10mm 10mm}}</style></head><body>
+<div class="eyebrow">NXT Phase AI · CFO Monthly Report</div>
 <h1>${moLabel}</h1>
-<div class="sub">Generated ${new Date().toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric'})}</div>
+<div class="sub">Clear operating view of revenue, margin, utilization, cash and execution risks. Generated ${new Date().toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric'})}.</div>
+
 <div class="kpi-row">
-  <div class="kpi" style="border-color:#1d4ed8"><div class="kpi-lbl">Confirmed Revenue</div><div class="kpi-val blue">${f(confRev)}</div><div class="kpi-sub">${draftRev>0?'+ '+f(draftRev)+' draft':' '}</div></div>
-  <div class="kpi" style="border-color:#dc2626"><div class="kpi-lbl">Total Costs</div><div class="kpi-val red">${f(totalCost)}</div><div class="kpi-sub">Staff + Fixed + External</div></div>
-  <div class="kpi" style="border-color:${clr(margin)}"><div class="kpi-lbl">Net Margin</div><div class="kpi-val" style="color:${clr(margin)}">${f(margin)}</div><div class="kpi-sub">${pct(marginPct)} of revenue</div></div>
-  <div class="kpi" style="border-color:#d97706"><div class="kpi-lbl">Fixed Costs</div><div class="kpi-val amber">${f(fixedCost)}</div><div class="kpi-sub">Excl. VAT · ${Object.keys(fcBycat).length} categories</div></div>
+  <div class="kpi"><div class="kpi-lbl">Confirmed Revenue</div><div class="kpi-val" style="color:#1d4ed8">${f(confRev)}</div><div class="kpi-sub">Draft pipeline ${f(draftRev)}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Total Delivery Cost</div><div class="kpi-val bad">${f(totalCost)}</div><div class="kpi-sub">Staff ${f(staffCost)} · Fixed ${f(fixedCost)} · External ${f(extCost)}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Net Margin</div><div class="kpi-val" style="color:${clr(margin)}">${f(margin)}</div><div class="kpi-sub">${pct(marginPct)} of confirmed revenue</div></div>
+  <div class="kpi"><div class="kpi-lbl">Utilization</div><div class="kpi-val" style="color:${utilizationPct>=75?'#166534':utilizationPct>=60?'#b45309':'#b91c1c'}">${utilizationPct.toFixed(1)}%</div><div class="kpi-sub">${utilizationDays.toFixed(1)} planned days of ${availableDays.toFixed(1)} available</div></div>
 </div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
-  <div class="section"><div class="section-title">Staffing Costs</div>
-    <table><thead><tr><th>Team Member</th><th class="right">Days</th><th class="right">Cost</th></tr></thead><tbody>
-    ${empCosts.map(e=>`<tr><td>${e.name}</td><td class="right">${e.days}d</td><td class="right">${f(e.cost)}</td></tr>`).join('')}
-    <tr class="total-row"><td class="bold">Total</td><td class="right bold">${empCosts.reduce((s,e)=>s+e.days,0)}d</td><td class="right bold red">${f(staffCost)}</td></tr>
-    </tbody></table>
+
+<div class="two">
+  <div class="card">
+    <div class="section-title">CFO Summary</div>
+    <ul class="bullet">
+      <li><strong>Revenue realised:</strong> ${f(confRev)} confirmed in ${activeProjs.length} active confirmed project(s).</li>
+      <li><strong>Delivery margin:</strong> ${f(margin)} after internal staffing, fixed cost base and external project cost.</li>
+      <li><strong>Invoicing:</strong> ${f(invoicedTotal)} invoiced this month; ${f(openInvoiceTotal)} still open in total receivables.</li>
+      <li><strong>Capacity:</strong> ${utilizationPct.toFixed(1)}% utilization based on planned staffing versus available working days.</li>
+    </ul>
   </div>
-  <div class="section"><div class="section-title">Fixed Costs by Category</div>
-    <table><thead><tr><th>Category</th><th class="right">Monthly (excl. VAT)</th></tr></thead><tbody>
-    ${Object.entries(fcBycat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`<tr><td>${cat}</td><td class="right">${f(amt)}</td></tr>`).join('')}
-    ${extCost>0?`<tr><td>External Project Costs</td><td class="right">${f(extCost)}</td></tr>`:''}
-    <tr class="total-row"><td class="bold">Total</td><td class="right bold red">${f(fixedCost+extCost)}</td></tr>
-    </tbody></table>
+  <div class="card">
+    <div class="section-title">Risk & Attention Points</div>
+    <ul class="bullet">${risks.map(r=>`<li>${r}</li>`).join('')}</ul>
+    <div class="section-title" style="margin-top:10px">What is going well</div>
+    <ul class="bullet">${strengths.map(r=>`<li>${r}</li>`).join('')}</ul>
   </div>
 </div>
-<div class="section"><div class="section-title">Active Projects (${activeProjs.length})</div>
-  <table><thead><tr><th>Client</th><th>Project</th><th class="right">Revenue</th><th class="right">Staff Cost</th><th class="right">Ext Cost</th><th class="right">Margin</th></tr></thead><tbody>
-  ${activeProjs.map(p=>{
-    const sc=S.staffing.filter(s=>s.project_id===p.id&&wksM.includes(s.week_key)).reduce((s,x)=>{const e=S.employees.find(e=>e.id===x.employee_id);return s+(e?e.daily_cost*x.days:0);},0);
-    const ec=totalExtCostMonth(moStr,p.id)||0;
-    const rev=revForMonth(y,m,'confirmed',[p.id])||0;
-    const mg=p.revenue>0?((p.revenue-sc-ec)/p.revenue*100):0;
-    return`<tr><td>${p.client_name}</td><td>${p.name}</td><td class="right blue">${p.revenue>0?f(p.revenue):'—'}</td><td class="right">${sc>0?f(sc):'—'}</td><td class="right">${ec>0?f(ec):'—'}</td><td class="right bold" style="color:${clr(p.revenue-sc-ec)}">${p.revenue>0?pct(mg):'—'}</td></tr>`;
-  }).join('')}
+
+<div class="two">
+  <div class="card">
+    <div class="section-title">P&L Bridge</div>
+    <div class="bridge-row"><span>Confirmed revenue</span><strong style="color:#1d4ed8">${f(confRev)}</strong></div>
+    <div class="bridge-row"><span>Internal staffing cost</span><strong class="bad">-${f(staffCost)}</strong></div>
+    <div class="bridge-row"><span>Fixed cost base</span><strong class="bad">-${f(fixedCost)}</strong></div>
+    <div class="bridge-row"><span>External project cost</span><strong class="bad">-${f(extCost)}</strong></div>
+    <div class="bridge-row"><span>Net operating margin</span><strong style="color:${clr(margin)}">${f(margin)}</strong></div>
+  </div>
+  <div class="card">
+    <div class="section-title">Cash & Working Capital</div>
+    ${cf?`<div class="bridge-row"><span>Opening cash</span><strong>${f(cfOpening)}</strong></div>
+    <div class="bridge-row"><span>Net cash movement</span><strong style="color:${clr(cfNet)}">${cfNet>=0?'+':''}${f(cfNet)}</strong></div>
+    <div class="bridge-row"><span>Closing cash</span><strong style="color:${clr(cfClosing)}">${f(cfClosing)}</strong></div>`:'<div class="muted">No cashflow row available for this month yet.</div>'}
+    <div class="bridge-row"><span>Open invoices</span><strong>${f(openInvoiceTotal)}</strong></div>
+    <div class="bridge-row"><span>Invoiced this month</span><strong>${f(invoicedTotal)}</strong></div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="section-title">Top Projects This Month</div>
+  <table><thead><tr><th>Client</th><th>Project</th><th class="right">Revenue</th><th class="right">Staff</th><th class="right">External</th><th class="right">Margin</th><th class="right">Margin %</th></tr></thead><tbody>
+  ${projectRows.length?projectRows.slice(0,12).map(p=>`<tr><td>${p.client}</td><td>${p.project}</td><td class="right">${p.rev?f2(p.rev):'—'}</td><td class="right">${p.sc?f2(p.sc):'—'}</td><td class="right">${p.ec?f2(p.ec):'—'}</td><td class="right bold" style="color:${clr(p.mg)}">${f2(p.mg)}</td><td class="right" style="color:${p.mgPct>=0?'#166534':'#b91c1c'}">${p.rev?p.mgPct.toFixed(1)+'%':'—'}</td></tr>`).join(''):`<tr><td colspan="7" class="muted">No confirmed project activity for this month.</td></tr>`}
   </tbody></table>
 </div>
-${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
-  <div class="cf-box">
-    <div class="cf-item"><div class="lbl">Opening Balance</div><div class="val">${f(cfOpening)}</div></div>
-    <div class="cf-item"><div class="lbl">Net Movement</div><div class="val" style="color:${clr(cfNet)}">${cfNet>=0?'+':''}${f(cfNet)}</div></div>
-    <div class="cf-item"><div class="lbl">Closing Balance</div><div class="val" style="color:${clr(cfClosing)}">${f(cfClosing)}</div></div>
+
+<div class="two">
+  <div class="card">
+    <div class="section-title">Staffing Cost by Person</div>
+    <table><thead><tr><th>Team member</th><th class="right">Days</th><th class="right">Cost</th></tr></thead><tbody>
+    ${empCosts.length?empCosts.slice(0,15).map(e=>`<tr><td>${e.name}</td><td class="right">${e.days.toFixed(1)}</td><td class="right">${f2(e.cost)}</td></tr>`).join(''):`<tr><td colspan="3" class="muted">No staffing cost recorded.</td></tr>`}
+    <tr><td class="bold">Total</td><td class="right bold">${utilizationDays.toFixed(1)}</td><td class="right bold bad">${f2(staffCost)}</td></tr>
+    </tbody></table>
   </div>
-</div>`:`<div class="section"><div class="section-title">Bank / Cashflow</div><p style="color:#9ca3af;font-size:11px;padding:8px 0">No cashflow data for this month. Enter data in the Cashflow module.</p></div>`}
-<div class="footer"><span>NXT Phase AI · staffingnxtphase.vercel.app</span><span>Monthly Report ${moLabel}</span></div>
+  <div class="card">
+    <div class="section-title">Fixed Cost Base</div>
+    <table><thead><tr><th>Category</th><th class="right">Monthly excl. VAT</th></tr></thead><tbody>
+    ${Object.entries(fcBycat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`<tr><td>${cat}</td><td class="right">${f2(amt)}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">No fixed cost rows.</td></tr>'}
+    <tr><td class="bold">Fixed costs total</td><td class="right bold bad">${f2(fixedCost)}</td></tr>
+    ${extCost>0?`<tr><td class="bold">External project costs</td><td class="right bold bad">${f2(extCost)}</td></tr>`:''}
+    </tbody></table>
+  </div>
+</div>
+
+<div class="footer"><span>NXT Phase AI · Internal finance use</span><span>${moLabel}</span></div>
 </body></html>`;
   closeModal();
-  const win=window.open('','_blank','width=960,height=720');
+  const win=window.open('','_blank','width=1100,height=900');
   if(!win){alert('Pop-up blocked — please allow pop-ups for this site');return;}
   win.document.write(html);
   win.document.close();
