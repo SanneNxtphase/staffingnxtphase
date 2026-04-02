@@ -9465,124 +9465,101 @@ function openShareableView(){
 }
 
 // Generates and downloads a read-only HTML snapshot of the current tool state
+
 async function exportReadonlySnapshot(){
-  const inclFinancials=document.getElementById('snap-incl-financials')?.checked!==false;
-  const inclBank=document.getElementById('snap-incl-bank')?.checked===true;
-  
-  // Build a JSON payload of all current data
-  const payload={
-    exported:new Date().toISOString(),
-    projects:S.projects,
-    employees:S.employees,
-    staffing:S.staffing,
-    vacations:S.vacations,
-    invoices:inclFinancials?S.invoices:[],
-    fixedCosts:inclFinancials?S.fixedCosts:[],
-    transactions:inclBank?S.transactions:[],
-    futureCosts:inclFinancials?S.futureCosts:[],
-    partnerInvoices:inclFinancials?S.partnerInvoices:[],
-    cashflowMonths:inclFinancials?S.cashflowMonths:[],
-    externalCosts:S.externalCosts||[],
-    sickLeave:S.sickLeave||[],
-    startingBalance:inclBank?S.startingBalance:0,
-    vatOverrides:S.vatOverrides
+  const inclFinancials = document.getElementById('snap-incl-financials')?.checked !== false;
+  const inclBank = document.getElementById('snap-incl-bank')?.checked === true;
+
+  const payload = {
+    exported: new Date().toISOString(),
+    projects: S.projects || [],
+    employees: S.employees || [],
+    staffing: S.staffing || [],
+    vacations: S.vacations || [],
+    invoices: inclFinancials ? (S.invoices || []) : [],
+    fixedCosts: inclFinancials ? (S.fixedCosts || []) : [],
+    transactions: inclBank ? (S.transactions || []) : [],
+    futureCosts: inclFinancials ? (S.futureCosts || []) : [],
+    partnerInvoices: inclFinancials ? (S.partnerInvoices || []) : [],
+    cashflowMonths: inclFinancials ? (S.cashflowMonths || []) : [],
+    externalCosts: inclFinancials ? (S.externalCosts || []) : [],
+    sickLeave: S.sickLeave || [],
+    startingBalance: inclBank ? (S.startingBalance || 0) : 0,
+    vatOverrides: S.vatOverrides || {}
   };
 
-  // Read the current file's HTML (we're inside the file, so just grab the document)
-  // Then inject data and disable all editing
-  const originalHtml=document.documentElement.outerHTML;
-  
-  // Build the snapshot: inject data, disable editing, add read-only banner
-  const readonlyBanner=`<div id="readonly-banner" style="position:fixed;top:0;left:0;right:0;z-index:99999;background:var(--navy);color:#fff;padding:9px 18px;display:flex;align-items:center;gap:10px;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.3)"><span style="background:var(--amber);color:var(--navy);padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.5px">READ-ONLY</span><span>NXTPhase Plan Snapshot · Exported ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span><span style="margin-left:auto;font-size:10px;opacity:.6">This file is view-only. No data can be edited.</span></div><div style="height:42px"></div>`;
+  let originalHtml = document.documentElement.outerHTML;
 
-  const readonlyScript=`<script>
-// READ-ONLY SNAPSHOT INJECTED DATA
+  const readonlyBanner = `<div id="readonly-banner" style="position:fixed;top:0;left:0;right:0;z-index:99999;background:var(--navy);color:#fff;padding:9px 18px;display:flex;align-items:center;gap:10px;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.3)"><span style="background:var(--amber);color:var(--navy);padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.5px">READ-ONLY</span><span>NXTPhase Plan Snapshot · Exported ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span><span style="margin-left:auto;font-size:10px;opacity:.6">This file is view-only. No data can be edited.</span></div><div style="height:42px"></div>`;
+
+  const readonlyScript = `<script>
 const __SNAPSHOT_DATA__=${JSON.stringify(payload)};
-// Override DB to use injected data (read-only, no IndexedDB writes)
-const DB={
-  async select(table){
-    const map={projects:'projects',employees:'employees',staffing:'staffing',vacations:'vacations',invoices:'invoices',fixed_costs:'fixedCosts',bank_transactions:'transactions',future_costs:'futureCosts',partner_invoices:'partnerInvoices',cashflow_months:'cashflowMonths',external_costs:'externalCosts',sick_leave:'sickLeave'};
-    return __SNAPSHOT_DATA__[map[table]||table]||[];
-  },
-  async insert(){return{id:0};},
-  async update(){return null;},
-  async delete(){return null;},
-  async getSetting(k){if(k==='starting_balance')return __SNAPSHOT_DATA__.startingBalance;return null;},
-  async setSetting(){return null;}
-};
-Object.assign(S.vatOverrides,__SNAPSHOT_DATA__.vatOverrides||{});
-// Block all write operations
-async function saveProject(){alert('Read-only snapshot — editing is disabled.');}
-async function saveEmployee(){alert('Read-only snapshot — editing is disabled.');}
-async function saveInvoice(){alert('Read-only snapshot — editing is disabled.');}
-async function saveFixedCost(){alert('Read-only snapshot — editing is disabled.');}
-async function markFixed(){alert('Read-only snapshot — editing is disabled.');}
-async function unmarkFixed(){alert('Read-only snapshot — editing is disabled.');}
-async function editCell(){alert('Read-only snapshot — editing is disabled.');}
-async function deleteItem(){alert('Read-only snapshot — editing is disabled.');}
-async function importBankCSV(){alert('Read-only snapshot — editing is disabled.');}
-async function cfDeleteSelected(){alert('Read-only snapshot — editing is disabled.');}
-async function fcDeleteSelected(){alert('Read-only snapshot — editing is disabled.');}
-async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is disabled.');}
+(function(){
+  if(window.AUTH){ AUTH.role='viewer'; }
+  const map={projects:'projects',employees:'employees',staffing:'staffing',vacations:'vacations',invoices:'invoices',fixed_costs:'fixedCosts',bank_transactions:'transactions',future_costs:'futureCosts',partner_invoices:'partnerInvoices',cashflow_months:'cashflowMonths',external_costs:'externalCosts',sick_leave:'sickLeave'};
+  if(window.DB){
+    DB.select=async function(table){ return __SNAPSHOT_DATA__[map[table]||table]||[]; };
+    DB.insert=async function(){ return {id:0}; };
+    DB.update=async function(){ return null; };
+    DB.delete=async function(){ return null; };
+    DB.getSetting=async function(k){ if(k==='starting_balance') return __SNAPSHOT_DATA__.startingBalance; return null; };
+    DB.setSetting=async function(){ return null; };
+  }
+  if(window.S){
+    S.projects=__SNAPSHOT_DATA__.projects||[];
+    S.employees=__SNAPSHOT_DATA__.employees||[];
+    S.staffing=__SNAPSHOT_DATA__.staffing||[];
+    S.vacations=__SNAPSHOT_DATA__.vacations||[];
+    S.invoices=__SNAPSHOT_DATA__.invoices||[];
+    S.fixedCosts=__SNAPSHOT_DATA__.fixedCosts||[];
+    S.transactions=__SNAPSHOT_DATA__.transactions||[];
+    S.futureCosts=__SNAPSHOT_DATA__.futureCosts||[];
+    S.partnerInvoices=__SNAPSHOT_DATA__.partnerInvoices||[];
+    S.cashflowMonths=__SNAPSHOT_DATA__.cashflowMonths||[];
+    S.externalCosts=__SNAPSHOT_DATA__.externalCosts||[];
+    S.sickLeave=__SNAPSHOT_DATA__.sickLeave||[];
+    S.startingBalance=__SNAPSHOT_DATA__.startingBalance||0;
+    Object.assign(S.vatOverrides||{},__SNAPSHOT_DATA__.vatOverrides||{});
+  }
+  const readonlyFns=['saveProject','saveEmployee','saveInvoice','saveFixedCost','markFixed','unmarkFixed','editCell','deleteItem','importBankCSV','cfDeleteSelected','fcDeleteSelected','cleanOrphanedStaffing','savePartnerInvoice','saveTransaction'];
+  readonlyFns.forEach(fn=>{
+    window[fn]=async function(){ alert('Read-only snapshot — editing is disabled.'); };
+  });
+  document.addEventListener('DOMContentLoaded',function(){
+    try{ document.getElementById('auth-overlay')?.classList.add('hidden'); }catch(e){}
+    try{ document.querySelector('.app')?.style.removeProperty('display'); }catch(e){}
+    setTimeout(function(){
+      try{ if(typeof loadData==='function') loadData(); }catch(e){}
+      try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
+      try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){}
+      try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){}
+      try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){}
+    },150);
+  });
+})();
 <\/script>`;
 
-  // Assemble final snapshot HTML
-  let snap=originalHtml;
-  // Inject readonly banner right after <body>
-  snap=snap.replace(/<body[^>]*>/, m=>m+readonlyBanner);
-  // Inject readonly script right before 
-<script>
-(function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
-})();
-</script>
-
-</body>
-  snap=snap.replace('
-<script>
-(function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
-})();
-</script>
-
-</body>',readonlyScript+'
-<script>
-(function(){
-  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
-})();
-</script>
-
-</body>');
-  // Add readonly CSS to disable pointer events on interactive elements
-  snap=snap.replace('</style>',`
-/* ── READ-ONLY SNAPSHOT STYLES ── */
-.btn-primary,.btn-blue,.btn-green,.btn-pink,.btn-purple{pointer-events:none;opacity:.6;}
-input[type=text],input[type=number],input[type=date],select.form-input,textarea{pointer-events:none;background:var(--bg2)!important;}
+  originalHtml = originalHtml.replace(/<body([^>]*)>/i, `<body$1>${readonlyBanner}`);
+  originalHtml = originalHtml.replace('</style>', `
+/* READ-ONLY SNAPSHOT */
+.btn-primary,.btn-blue,.btn-green,.btn-pink,.btn-purple{pointer-events:none;opacity:.7;}
 .editable{pointer-events:none!important;cursor:default!important;}
-#cf-bulk-bar,#fc-bulk-bar{display:none!important;}
 </style>`);
-  
-  // Download
-  const blob=new Blob([snap],{type:'text/html;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;
-  a.download=`NXTPhase Plan-Snapshot-${new Date().toISOString().slice(0,10)}.html`;
+  originalHtml = originalHtml.replace('</body>', `${readonlyScript}\n</body>`);
+
+  const blob = new Blob([originalHtml], {type:'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `NXTPhase Plan-Snapshot-${new Date().toISOString().slice(0,10)}.html`;
+  document.body.appendChild(a);
   a.click();
-  setTimeout(()=>URL.revokeObjectURL(url),5000);
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 5000);
   showToast('Snapshot downloaded — open the .html file in any browser.');
   closeModal();
 }
-  
+
 // ══ AUTHENTICATION & SECURITY ══
 // PIN-based access control. Two roles: Admin (full access) / Viewer (read-only).
 // Session stored in sessionStorage (auto-expires on tab close).
