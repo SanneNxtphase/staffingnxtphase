@@ -9846,6 +9846,36 @@ async function runSupaDiag(){
   log('fixedCosts: '+S.fixedCosts.length);
   log('sickLeave: '+S.sickLeave.length);
   log('externalCosts: '+S.externalCosts.length);
+  // Step 5b: Test INSERT on projects table (most critical)
+  log('\n--- 5b. projects WRITE test (most critical) ---');
+  try{
+    const testProj={client_name:'__DIAG_TEST__',name:'auto-test delete me',status:'stopped',revenue:0,start_date:'2099-01-01',end_date:'2099-01-01',billing_type:'monthly'};
+    const resp=await fetch(`${_SUPA_URL}/rest/v1/projects`,{
+      method:'POST',
+      headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json','Prefer':'return=representation'},
+      body:JSON.stringify(testProj)
+    });
+    const txt=await resp.text();
+    if(resp.ok){
+      const rows=JSON.parse(txt);
+      const newId=rows[0]?.id;
+      log('✅ INSERT projects OK — id='+newId,'#4ade80');
+      if(newId){
+        await fetch(`${_SUPA_URL}/rest/v1/projects?id=eq.${newId}`,{method:'DELETE',headers:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY}});
+        log('✅ DELETE cleanup OK','#4ade80');
+      }
+    } else {
+      log('❌ INSERT projects FAILED HTTP '+resp.status,'#f87171');
+      log('   '+txt.substring(0,300),'#fbbf24');
+      if(resp.status===403||resp.status===401||resp.status===42501){
+        log('   → RLS BLOCKING WRITES — run this SQL in Supabase SQL Editor:','#fb923c');
+        const tables=['projects','employees','staffing','vacations','sick_leave','fixed_costs','bank_transactions','invoices','future_costs','partner_invoices','cashflow_months','external_costs','settings'];
+        const sql=tables.map(t=>`-- ${t}\nALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;\nDROP POLICY IF EXISTS allow_all ON ${t};\nCREATE POLICY allow_all ON ${t} FOR ALL USING (true) WITH CHECK (true);`).join('\n\n');
+        log('\n'+sql,'#86efac');
+      }
+    }
+  }catch(e){log('❌ Exception: '+e.message,'#f87171');}
+
   log('\n=== DONE ===');
 }
 
@@ -9907,6 +9937,7 @@ async function init(){
     if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Offline</span>'
       +'<br><span style="font-size:8px;opacity:.7;cursor:pointer;text-decoration:underline" onclick="retrySupabaseConnection()">Retry</span>';
     console.warn('[init] Supabase unavailable — showing cached data');
+    showToast('⚠ Supabase offline — changes will NOT be saved. Check Diagnostics in sidebar.','error');
   }
 
   // Fix missing categories silently
