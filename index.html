@@ -7308,9 +7308,24 @@ async function saveInvoice(id){
   const data={project_id:parseInt(document.getElementById('f-proj').value),amount:amount,month:(document.getElementById('f-month').value||'').trim(),billing_type:document.getElementById('f-billing').value||'one-time',draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
   if(!data.project_id) return alert('Project required');
   if(!amount) return alert('Amount required');
-  if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
+  if(id){
+    await DB.update('invoices',id,data);
+    // Update S.invoices in memory immediately so render shows correct data
+    const idx=S.invoices.findIndex(i=>i.id==id);
+    if(idx>=0) Object.assign(S.invoices[idx],{...data,id:parseInt(id)});
+  } else {
+    const result=await DB.insert('invoices',data);
+    const newId=(result&&(result.lastInsertRowid||result.id))||Date.now();
+    // Add to S.invoices immediately so render shows correct data
+    S.invoices.push({...data,id:parseInt(newId)||newId});
+  }
   closeModal();
-  await _refreshAllFinancialViews();
+  try{if(typeof renderInvoices==='function')renderInvoices();}catch(e){}
+  try{if(typeof renderPartner==='function')renderPartner();}catch(e){}
+  // Then confirm from Supabase in background
+  await loadData();
+  try{if(typeof renderInvoices==='function')renderInvoices();}catch(e){}
+  try{if(typeof renderPartner==='function')renderPartner();}catch(e){}
 }
 
 function modalTransaction(t){
