@@ -551,7 +551,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
 <div id="page-financial" class="page">
   <div class="page-header">
-    <div><div class="page-title">Company Financial Dashboard</div><div class="page-sub">Real company P&amp;L &mdash; revenue vs staffing, external, fixed and forecast costs</div></div>
+    <div><div class="page-title">Company Financial Dashboard</div><div class="page-sub">Real company P&amp;L &mdash; revenue vs fixed costs &amp; bank expenses &mdash; staffing costs excluded (already in real costs)</div></div>
     <div class="btn-group">
       <select class="filter-sel" id="fin-year" onchange="renderFinancial()"><option value="2026">2026</option><option value="2025">2025</option><option value="2027">2027</option></select>
       <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer;background:var(--bg);border:1px solid var(--bdr2);border-radius:var(--rsm);padding:3px 8px"><input type="checkbox" id="fin-incl-draft" onchange="renderFinancial()"> Incl. draft</label>
@@ -1877,10 +1877,10 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
-  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes','billing_type'],
+  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
   vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
@@ -2034,6 +2034,24 @@ const S={
 // ══ UTILS ══
 const fmt=n=>'€'+Math.round(n).toLocaleString('nl-NL');
 const fmtS=n=>Math.abs(n)>=1000?'€'+(n/1000).toFixed(1)+'k':'€'+Math.round(n);
+function parseMoneyInput(v){
+  if(typeof v==='number') return isFinite(v)?v:0;
+  var s=String(v==null?'':v).trim();
+  if(!s) return 0;
+  s=s.replace(/€/g,'').replace(/\s+/g,'');
+  var mult=1;
+  if(/k$/i.test(s)){ mult=1000; s=s.slice(0,-1); }
+  if(s.indexOf(',')>-1 && s.indexOf('.')>-1){
+    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',', '.');
+    else s=s.replace(/,/g,'');
+  } else if(s.indexOf(',')>-1){
+    s=s.replace(',', '.');
+  }
+  if(/^[+-]?\d{1,3}(\.\d{3})+(\.\d+)?$/.test(s)) s=s.replace(/\.(?=\d{3}(\.|$))/g,'');
+  var n=parseFloat(s);
+  return isFinite(n)?n*mult:0;
+}
+
 const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const monthLbl=(y,m)=>new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
 const icoInfo='<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg>';
@@ -2091,13 +2109,17 @@ function projectWkKeys(p){
   const keys=[];while(d<=e){keys.push(toWeekKey(d));d.setUTCDate(d.getUTCDate()+7);}return keys;
 }
 function projectWkCount(p){return Math.max(1,projectWkKeys(p).length);}
+function revPerWk(p){return p.revenue/projectWkCount(p);}
+// ── REVENUE CALCULATION — Week-based day-accurate method ──────────────────
+// METHOD: weekly_revenue / 7 = daily_revenue
+//         count active project days in each month (Mon–Sun calendar days)
+//         monthly_revenue = daily_revenue × active_days_in_month
+//
+// This correctly handles partial weeks at month boundaries:
+// e.g. March 30–31 = 2 days of a week that started Feb/March → 2/7 × weekly_rev
+//
+// All date math uses UTC integers to be timezone/DST proof.
 
-// ── CENTRAL REVENUE ENGINE ──────────────────────────────────────────────────
-// Rules:
-// 1) Partner / recurring monthly projects use a fixed active-month fee
-// 2) Partner / recurring weekly projects use a fixed weekly fee, distributed at fee/7
-// 3) All other projects default to contract_total spread evenly over project calendar days
-// 4) Every displayed row must satisfy: revenue = activeDays * dailyRate (except 0-day cases)
 function _dateToUTCDays(dateStr){
   const[y,m,d]=(dateStr||'').split('-').map(Number);
   if(!y||!m||!d)return null;
@@ -2106,141 +2128,46 @@ function _dateToUTCDays(dateStr){
 function _utcDaysInMonth(y,m){
   return new Date(Date.UTC(y,m,0)).getUTCDate();
 }
-function _projectEpochBounds(p){
-  const pS=_dateToUTCDays(p.start_date);
-  const pE=_dateToUTCDays(p.end_date);
-  if(pS===null||pE===null||pE<pS)return null;
-  return {pS,pE,totalDays:(pE-pS+1)};
+
+// Core day-accurate revenue function using weekly/7 daily rate
+function _projectMonthActiveDays(p,y,m){
+  const pS=_dateToUTCDays(p.start_date), pE=_dateToUTCDays(p.end_date);
+  if(pS===null||pE===null) return 0;
+  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
+  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
+  if(pE<mS||pS>mE) return 0;
+  return Math.max(0, Math.min(pE,mE)-Math.max(pS,mS)+1);
 }
-function _projectRecurringAmount(p){
-  const v=parseFloat(p?.recurring_amount||0);
-  return isFinite(v)&&v>0?v:0;
-}
-function _projectRevenueTotal(p){
-  const v=parseFloat(p?.revenue||0);
-  return isFinite(v)&&v>0?v:0;
-}
-function _projectBillingModel(p){
-  const bt=String(p?.billing_type||'').toLowerCase();
-  const rf=String(p?.recurring_freq||'').toLowerCase();
-  const recAmt=_projectRecurringAmount(p);
-  if(recAmt>0 && (bt==='monthly' || bt==='monthly_fixed' || rf==='monthly')) return 'monthly_fixed';
-  if(recAmt>0 && (bt==='weekly' || bt==='weekly_fixed' || rf==='weekly')) return 'weekly_fixed';
-  if(bt==='day_based') return 'day_based';
-  return 'contract_total';
-}
-function _monthBounds(y,m){
-  return {
-    start: Math.floor(Date.UTC(y,m-1,1)/86400000),
-    end: Math.floor(Date.UTC(y,m,0)/86400000)
-  };
-}
-function _overlapDays(aS,aE,bS,bE){
-  const s=Math.max(aS,bS), e=Math.min(aE,bE);
-  return e>=s ? (e-s+1) : 0;
-}
-function _projectMonthDetail(p,y,m){
-  const bounds=_projectEpochBounds(p);
-  if(!bounds) return {revenue:0,activeDays:0,dailyRate:0,mode:'invalid'};
-  const {pS,pE,totalDays}=bounds;
-  const {start:mS,end:mE}=_monthBounds(y,m);
-  const activeDays=_overlapDays(pS,pE,mS,mE);
-  if(activeDays<=0) return {revenue:0,activeDays:0,dailyRate:0,mode:_projectBillingModel(p)};
-  const model=_projectBillingModel(p);
-  if(model==='monthly_fixed'){
-    const fee=_projectRecurringAmount(p);
-    const dailyRate=activeDays>0 ? fee/activeDays : 0;
-    return {revenue:fee,activeDays,dailyRate,mode:model};
-  }
-  if(model==='weekly_fixed'){
-    const fee=_projectRecurringAmount(p);
-    const dailyRate=fee/7;
-    return {revenue:dailyRate*activeDays,activeDays,dailyRate,mode:model};
-  }
-  if(model==='day_based'){
-    const dailyRate=parseFloat(p?.revenue_per_day||p?.day_revenue||0)||0;
-    return {revenue:dailyRate*activeDays,activeDays,dailyRate,mode:model};
-  }
-  const totalRevenue=_projectRevenueTotal(p);
-  const dailyRate=totalDays>0 ? totalRevenue/totalDays : 0;
-  return {revenue:dailyRate*activeDays,activeDays,dailyRate,mode:model};
-}
-function _projectWeekDetail(p,wk){
-  const bounds=_projectEpochBounds(p);
-  if(!bounds) return {revenue:0,activeDays:0,dailyRate:0,mode:'invalid'};
-  const {pS,pE,totalDays}=bounds;
-  const {start:wS,end:wE}=_wkBounds(wk);
-  const activeDays=_overlapDays(pS,pE,wS,wE);
-  if(activeDays<=0) return {revenue:0,activeDays:0,dailyRate:0,mode:_projectBillingModel(p)};
-  const model=_projectBillingModel(p);
-  if(model==='weekly_fixed'){
-    const fee=_projectRecurringAmount(p);
-    const dailyRate=fee/7;
-    return {revenue:dailyRate*activeDays,activeDays,dailyRate,mode:model};
-  }
-  if(model==='day_based'){
-    const dailyRate=parseFloat(p?.revenue_per_day||p?.day_revenue||0)||0;
-    return {revenue:dailyRate*activeDays,activeDays,dailyRate,mode:model};
-  }
-  if(model==='monthly_fixed'){
-    // Sum by month-slice so full weeks crossing months still reconcile to month fees
-    let revenue=0;
-    let counted=0;
-    for(let d=wS; d<=wE; d++){
-      if(d<pS||d>pE) continue;
-      const dt=new Date(d*86400000);
-      const yy=dt.getUTCFullYear(), mm=dt.getUTCMonth()+1;
-      const md=_projectMonthDetail(p,yy,mm);
-      const dayRate=md.activeDays>0 ? md.revenue/md.activeDays : 0;
-      revenue += dayRate;
-      counted++;
-    }
-    const dailyRate=counted>0 ? revenue/counted : 0;
-    return {revenue,activeDays:counted,dailyRate,mode:model};
-  }
-  const totalRevenue=_projectRevenueTotal(p);
-  const dailyRate=totalDays>0 ? totalRevenue/totalDays : 0;
-  return {revenue:dailyRate*activeDays,activeDays,dailyRate,mode:model};
-}
-function _projectWeekInMonthDetail(p,wk,y,m){
-  const wd=_projectWeekDetail(p,wk);
-  if(wd.activeDays<=0) return wd;
-  const bounds=_projectEpochBounds(p);
-  if(!bounds) return wd;
-  const {pS,pE}=bounds;
-  const {start:wS,end:wE}=_wkBounds(wk);
-  const {start:mS,end:mE}=_monthBounds(y,m);
-  const activeDays=_overlapDays(Math.max(pS,mS),Math.min(pE,mE),wS,wE);
-  if(activeDays<=0) return {revenue:0,activeDays:0,dailyRate:0,mode:wd.mode};
-  if(wd.mode==='monthly_fixed'){
-    let revenue=0;
-    let counted=0;
-    for(let d=wS; d<=wE; d++){
-      if(d<pS||d>pE||d<mS||d>mE) continue;
-      const dt=new Date(d*86400000);
-      const yy=dt.getUTCFullYear(), mm=dt.getUTCMonth()+1;
-      const md=_projectMonthDetail(p,yy,mm);
-      const dayRate=md.activeDays>0 ? md.revenue/md.activeDays : 0;
-      revenue += dayRate;
-      counted++;
-    }
-    const dailyRate=counted>0 ? revenue/counted : 0;
-    return {revenue,activeDays:counted,dailyRate,mode:wd.mode};
-  }
-  return {revenue:wd.dailyRate*activeDays,activeDays,dailyRate:wd.dailyRate,mode:wd.mode};
-}
-function revPerWk(p){
-  const weeks=projectWkKeys(p);
-  if(!weeks.length) return 0;
-  return weeks.reduce((s,w)=>s+_projectWeekDetail(p,w).revenue,0)/weeks.length;
+function _recurringMonthRevenue(p,y,m){
+  const activeDays=_projectMonthActiveDays(p,y,m);
+  if(activeDays<=0) return 0;
+  const amt=parseFloat(p.recurring_amount||0)||0;
+  if(amt<=0) return 0;
+  const freq=(p.recurring_freq||'monthly').toLowerCase();
+  if(freq==='weekly') return (amt/7)*activeDays;
+  return amt;
 }
 function revForMonthDayPrecise(p,y,m){
-  return _projectMonthDetail(p,y,m).revenue;
+  const recurring=parseFloat(p.recurring_amount||0)||0;
+  if(recurring>0) return _recurringMonthRevenue(p,y,m);
+  if(!p.start_date||!p.end_date||!p.revenue) return 0;
+  const pS=_dateToUTCDays(p.start_date);
+  const pE=_dateToUTCDays(p.end_date);
+  if(pS===null||pE===null) return 0;
+  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
+  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
+  if(pE<mS||pS>mE) return 0;
+  const oS=Math.max(pS,mS), oE=Math.min(pE,mE);
+  const activeDays=oE-oS+1;
+  const totalDays=pE-pS+1;
+  if(activeDays<=0||totalDays<=0) return 0;
+  const dailyRev=(parseFloat(p.revenue||0)||0)/totalDays;
+  return dailyRev*activeDays;
 }
 function revForMonth(y,m,statusFilter){
   let rev=0;
   S.projects.filter(p=>statusFilter?p.status===statusFilter:p.status!=='stopped').forEach(p=>{
-    rev+=_projectMonthDetail(p,y,m).revenue;
+    rev+=revForMonthDayPrecise(p,y,m);
   });
   return rev;
 }
@@ -2258,13 +2185,54 @@ function _wkBounds(wkKey){
 
 // Revenue for a project in a specific ISO week (full week, day-precise)
 // = dailyRate × active_days_in_week (clipped to project start/end)
-function revForWeek(p,wk){
-  return _projectWeekDetail(p,wk).revenue;
+function _recurringRevenueForWeek(p,wk,y,m){
+  const amt=parseFloat(p.recurring_amount||0)||0;
+  if(amt<=0) return 0;
+  const freq=(p.recurring_freq||'monthly').toLowerCase();
+  const pS=_dateToUTCDays(p.start_date), pE=_dateToUTCDays(p.end_date);
+  const b=_wkBounds(wk);
+  let sum=0;
+  for(let d=b.start; d<=b.end; d++){
+    if(d<pS||d>pE) continue;
+    const dt=new Date(d*86400000);
+    const yy=dt.getUTCFullYear(), mm=dt.getUTCMonth()+1;
+    if(y&&m && (yy!==y || mm!==m)) continue;
+    if(freq==='weekly') sum += amt/7;
+    else {
+      const ad=_projectMonthActiveDays(p,yy,mm);
+      if(ad>0) sum += amt/ad;
+    }
+  }
+  return sum;
 }
-
-// Revenue for a project in a specific ISO week, CLIPPED to the current month view.
+function revForWeek(p,wk){
+  const recurring=parseFloat(p.recurring_amount||0)||0;
+  if(recurring>0) return _recurringRevenueForWeek(p,wk);
+  if(!p.start_date||!p.end_date||!p.revenue)return 0;
+  const pS=_dateToUTCDays(p.start_date);
+  const pE=_dateToUTCDays(p.end_date);
+  const{start:wS,end:wE}=_wkBounds(wk);
+  if(pE<wS||pS>wE)return 0;
+  const activeDays=Math.min(pE,wE)-Math.max(pS,wS)+1;
+  if(activeDays<=0)return 0;
+  const wkCount=Math.max(1,projectWkCount(p));
+  return(parseFloat(p.revenue||0)/wkCount/7)*activeDays;
+}
 function revForWeekInMonth(p,wk,y,m){
-  return _projectWeekInMonthDetail(p,wk,y,m).revenue;
+  const recurring=parseFloat(p.recurring_amount||0)||0;
+  if(recurring>0) return _recurringRevenueForWeek(p,wk,y,m);
+  if(!p.start_date||!p.end_date||!p.revenue)return 0;
+  const pS=_dateToUTCDays(p.start_date);
+  const pE=_dateToUTCDays(p.end_date);
+  const{start:wS,end:wE}=_wkBounds(wk);
+  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
+  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
+  const oS=Math.max(pS,mS,wS);
+  const oE=Math.min(pE,mE,wE);
+  const activeDays=oE-oS+1;
+  if(activeDays<=0)return 0;
+  const wkCount=Math.max(1,projectWkCount(p));
+  return(parseFloat(p.revenue||0)/wkCount/7)*activeDays;
 }
 function sickInWeek(empId,wk){
   if(!S.sickLeave||!S.sickLeave.length)return 0;
@@ -3307,18 +3275,8 @@ function projExtCostMonth(pid,mStr){
 }
 function totalExtCostMonth(mStr){
   return (S.externalCosts||[]).filter(e=>{
-    // Primary: match by date field (YYYY-MM)
-    if(e.date&&e.date.substring(0,7)===mStr) return true;
-    // Fallback: match by week_key month (week starting in this month)
-    if(!e.date&&e.week_key){
-      try{
-        const[yr,wk]=e.week_key.split('-W').map(Number);
-        const d=new Date(Date.UTC(yr,0,1+((wk-1)*7)));
-        const dow=d.getUTCDay()||7; d.setUTCDate(d.getUTCDate()-(dow-1));
-        return d.toISOString().substring(0,7)===mStr;
-      }catch(e2){return false;}
-    }
-    return false;
+    if(!e.date)return false;
+    return e.date.substring(0,7)===mStr;
   }).reduce((s,e)=>s+parseFloat(e.amount||0),0);
 }
 function renderDashboard(){
@@ -3622,10 +3580,12 @@ function showWeekDetail(wk,ctxYear,ctxMonth){
   <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--blue);margin-bottom:6px">Revenue per Project (confirmed)</div>`;
   if(confProjs.length){
     html+=confProjs.map(p=>{
-      const detail=_projectWeekDetail(p,wk);
-      const rev=detail.revenue;
-      const activeDays=detail.activeDays;
-      const dailyRate=detail.dailyRate;
+      const rev=revForWeek(p,wk);
+      const pS=_dateToUTCDays(p.start_date),pE=_dateToUTCDays(p.end_date);
+      const{start:wS,end:wE}=_wkBounds(wk);
+      const activeDays=Math.min(pE,wE)-Math.max(pS,wS)+1;
+      const wkCount=Math.max(1,projectWkCount(p));
+      const dailyRate=p.revenue/wkCount/7;
       const staff=S.staffing.filter(s=>(s.project_id===p.id||s.project_id==p.id)&&s.week_key===wk);
       const totalDays=staff.reduce((s,x)=>s+x.days,0);
       // Staffing cost this week for this project
@@ -4775,9 +4735,15 @@ async function editCellSave(empId,projId,wk,days,note){
     showToast('⚠ Staffing opslaan mislukt (network error)','error');
   }
 
-  // Step 4: Re-render with current in-memory data (fast, no reload needed)
-  renderStaffing();
+  // Step 4: Reload and refresh all dependent views
+  await loadData();
+  try{renderStaffing();}catch(e){}
+  try{renderProjects();}catch(e){}
+  try{renderSchedule();}catch(e){}
+  try{renderDashboard();}catch(e){}
+  try{renderFinancial();}catch(e){}
 }
+
 
 // Staffing notes stored in settings — survives Supabase sync without schema changes
 function _staffNoteKey(empId,projId,wk){return String(empId)+':'+String(projId)+':'+wk;}
@@ -5430,7 +5396,7 @@ function showClientInvoiceHistory(clientName){
 }
 async function invToggleField(invId,field,val){
   await DB.update('invoices',invId,{[field]:val});
-  await loadData();renderInvoices();
+  await _refreshAllFinancialViews();
 }
 
 // ══ CASHFLOW — VAT MATH ══
@@ -7184,25 +7150,15 @@ async function saveProject(id){
     revenue:parseFloat(document.getElementById('f-revenue').value)||0,
     start_date:document.getElementById('f-start-date').value,
     end_date:document.getElementById('f-end-date').value,
+    billing_type:'monthly',
     notes:document.getElementById('f-notes').value,
     is_partner:document.getElementById('f-is-partner').checked?1:0,
     recurring_amount:parseFloat(document.getElementById('f-rec-amount')?.value)||0,
     recurring_freq:document.getElementById('f-rec-freq')?.value||'monthly',
   };
   if(!data.client_name||!data.name)return alert('Client name and project name are required.');
-  closeModal();
-  try{
-    const payload=_supaFilter('projects',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','projects',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','projects',payload,'?select=id');
-    if(!r) showToast('⚠ Project opslaan mislukt','error');
-    else showToast(id?'Project bijgewerkt':'Project aangemaakt');
-  }catch(e){showToast('⚠ Project opslaan mislukt: '+e.message,'error');}
-  await loadData();
-  if(typeof renderProjects==='function') renderProjects();
-  if(typeof renderDashboard==='function') renderDashboard();
-  if(typeof renderStaffing==='function') renderStaffing();
+  if(id)await DB.update('projects',id,data);else await DB.insert('projects',data);
+  closeModal();await loadData();renderProjects();
 }
 
 function modalEmployee(e){
@@ -7223,16 +7179,8 @@ function modalEmployee(e){
 async function saveEmployee(id){
   const data={name:document.getElementById('f-name').value.trim(),role:document.getElementById('f-role').value.trim(),daily_cost:parseFloat(document.getElementById('f-rate').value)||0,available_days_per_week:parseFloat(document.getElementById('f-avail').value)||5,vacation_days_per_year:parseFloat(document.getElementById('f-vacdays').value)||25};
   if(!data.name)return alert('Name required.');
-  closeModal();
-  try{
-    const payload=_supaFilter('employees',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','employees',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','employees',payload,'?select=id');
-    if(!r) showToast('⚠ Medewerker opslaan mislukt','error');
-    else showToast(id?'Medewerker bijgewerkt':'Medewerker aangemaakt');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderEmployees();
+  if(id)await DB.update('employees',id,data);else await DB.insert('employees',data);
+  closeModal();await loadData();renderEmployees();
 }
 
 function countWorkdays(startStr,endStr){
@@ -7283,16 +7231,8 @@ async function saveVacation(id){
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
   const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
-  closeModal();
-  try{
-    const payload=_supaFilter('vacations',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','vacations',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','vacations',payload);
-    if(!r) showToast('⚠ Opslaan mislukt','error');
-    else showToast(id?'Vakantie bijgewerkt':'Vakantie opgeslagen');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderVacation();
+  if(id)await DB.update('vacations',id,data);else await DB.insert('vacations',data);
+  closeModal();await loadData();renderVacation();
 }
 
 function modalInvoiceBody(inv,preselectedProjectId){
@@ -7331,54 +7271,24 @@ function modalInvoice(inv,preselectedProjectId){
   <div class="modal-body">${modalInvoiceBody(inv,preselectedProjectId)}</div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveInvoice(${inv?.id||''})">Save</button></div>`;
 }
-async function saveInvoice(id){
-  const data={
-    project_id:parseInt(document.getElementById('f-proj').value),
-    amount:parseFloat(document.getElementById('f-amount').value)||0,
-    month:document.getElementById('f-month').value,
-    billing_type:document.getElementById('f-billing').value,
-    draft_created:document.getElementById('f-draft').checked?1:0,
-    invoice_sent:document.getElementById('f-sent').checked?1:0,
-    paid:document.getElementById('f-paid').checked?1:0
-  };
-  if(!data.project_id) return alert('Select a project.');
-  if(!data.amount) return alert('Amount is required.');
-  closeModal();
-
-  let ok=false;
-  try{
-    if(id){
-      // UPDATE existing invoice
-      const payload=_supaFilter('invoices',data);
-      const r=await _supaReq('PATCH','invoices',payload,'?id=eq.'+id);
-      ok=(r!==null);
-    } else {
-      // INSERT new invoice — handle UNIQUE(project_id,month) constraint gracefully
-      // Strategy: try plain month, then append -2, -3 ... -9 if 409
-      const baseMonth=data.month||new Date().toISOString().substring(0,7);
-      let inserted=false;
-      for(let seq=0; seq<=9 && !inserted; seq++){
-        const tryMonth=seq===0 ? baseMonth : baseMonth+'-'+seq;
-        const payload=_supaFilter('invoices',{...data,month:tryMonth});
-        const r=await _supaReq('POST','invoices',payload,'?select=id',seq>0);
-        if(r!==null){inserted=true;ok=true;}
-        else if(seq===0){console.warn('[saveInvoice] month '+tryMonth+' conflict, trying suffix');}
-      }
-      if(!ok) showToast('⚠ Invoice opslaan mislukt (alle maand-varianten bezet)','error');
-    }
-    if(ok) showToast(id?'Invoice bijgewerkt':'Invoice toegevoegd');
-  }catch(e){
-    console.error('[saveInvoice]',e);
-    showToast('⚠ Invoice opslaan mislukt: '+e.message,'error');
-  }
-
-  // Full refresh — all views that depend on invoices
+async function _refreshAllFinancialViews(){
   await loadData();
-  if(typeof renderInvoices==='function') renderInvoices();
-  if(typeof renderPartner==='function') renderPartner();
-  if(typeof renderProjects==='function') renderProjects();
-  if(typeof renderDashboard==='function') renderDashboard();
-  if(typeof renderFinancial==='function') renderFinancial();
+  try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){}
+  try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){}
+  try{ if(typeof renderProjects==='function') renderProjects(); }catch(e){}
+  try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
+  try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){}
+  try{ if(typeof renderForecast==='function') renderForecast(); }catch(e){}
+  try{ if(typeof renderCashflow==='function') renderCashflow(); }catch(e){}
+}
+async function saveInvoice(id){
+  const amount=parseMoneyInput(document.getElementById('f-amount')?.value);
+  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:amount,month:(document.getElementById('f-month').value||'').trim(),billing_type:document.getElementById('f-billing').value||'one-time',draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
+  if(!data.project_id) return alert('Project required');
+  if(!amount) return alert('Amount required');
+  if(id)await DB.update('invoices',id,data);else await DB.insert('invoices',data);
+  closeModal();
+  await _refreshAllFinancialViews();
 }
 
 function modalTransaction(t){
@@ -7397,16 +7307,8 @@ async function saveTransaction(id){
   const amt=parseFloat(document.getElementById('f-amount').value)||0;
   const cat=document.getElementById('f-cat')?.value||'';
   const data={date:document.getElementById('f-date').value,description:document.getElementById('f-desc').value,amount:amt,type:amt>=0?'income':'expense',category:cat};
-  closeModal();
-  try{
-    const payload=_supaFilter('bank_transactions',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','bank_transactions',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','bank_transactions',payload,'?select=id');
-    if(!r) showToast('⚠ Transactie opslaan mislukt','error');
-    else showToast(id?'Transactie bijgewerkt':'Transactie opgeslagen');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderCashflow();
+  if(id)await DB.update('bank_transactions',id,data);else await DB.insert('bank_transactions',data);
+  closeModal();await loadData();renderCashflow();
 }
 
 function modalFixedCost(c){
@@ -7712,19 +7614,6 @@ async function saveFixedCost(id){
 
 async function deleteItem(table,id){
   if(!confirm('Delete this item? This cannot be undone.'))return;
-  // Direct Supabase delete for invoice tables
-  if(table==='invoices'||table==='partner_invoices'){
-    const r=await _supaReq('DELETE',table,null,'?id=eq.'+id);
-    if(r===null){showToast('⚠ Verwijderen mislukt','error');return;}
-    showToast('Deleted');
-    await loadData();
-    if(typeof renderInvoices==='function') renderInvoices();
-    if(typeof renderPartner==='function') renderPartner();
-    if(typeof renderProjects==='function') renderProjects();
-    if(typeof renderDashboard==='function') renderDashboard();
-    if(typeof renderFinancial==='function') renderFinancial();
-    return;
-  }
   await DB.delete(table,id);
   await loadData();
   const pageMap={
@@ -7733,8 +7622,11 @@ async function deleteItem(table,id){
     vacations:renderVacation, future_costs:renderForecast, partner_invoices:renderPartner
   };
   if(pageMap[table] && typeof pageMap[table]==='function') pageMap[table]();
-  if(table==='invoices'&&typeof renderPartner==='function')renderPartner();
-  if(table==='partner_invoices'&&typeof renderInvoices==='function')renderInvoices();
+  if(['invoices','partner_invoices','external_costs','future_costs','fixed_costs','bank_transactions'].includes(table)) await _refreshAllFinancialViews();
+  else {
+    if(table==='invoices'&&typeof renderPartner==='function')renderPartner();
+    if(table==='partner_invoices'&&typeof renderInvoices==='function')renderInvoices();
+  }
 }
 
 // ══ VAT OVERVIEW ══
@@ -8156,12 +8048,14 @@ async function confirmBankImport(){
   for(const r of parsed){
     const key=`${r.dateStr}|${r.desc}|${r.amount}`;
     if(existingKeys.has(key)){skipped++;continue;}
-    const _row={date:r.dateStr,description:r.desc,amount:r.amount,
-      type:r.amount>=0?'income':'expense',category:r.cat,counterparty:r.counterparty,
-      is_fixed:r.isFixed?1:0,amount_excl_vat:r.amtExcl,vat_pct:r.vatPct};
-    const _res=await _supaReq('POST','bank_transactions',_supaFilter('bank_transactions',_row));
-    if(_res!==null){existingKeys.add(key);count++;}
-    else{skipped++;}
+    await DB.insert('bank_transactions',{
+      date:r.dateStr,description:r.desc,amount:r.amount,
+      type:r.amount>=0?'income':'expense',
+      category:r.cat,counterparty:r.counterparty,
+      is_fixed:r.isFixed?1:0,
+      amount_excl_vat:r.amtExcl,vat_pct:r.vatPct
+    });
+    existingKeys.add(key);count++;
   }
   _bankPreview=null;
   closeModal();
@@ -8362,7 +8256,7 @@ function _renderFinancialActual(){
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const staffingCosts=staffCostMonth(year,mo); // staffing costs for this month
     const extCosts=totalExtCostMonth(moStr); // external/outsourced project costs this month
-    const totalOpCosts=fixedCosts+forecastCosts+extCosts; // staffingCosts tracked separately (not in opResult)
+    const totalOpCosts=fixedCosts+forecastCosts+staffingCosts+extCosts; // include staffing costs in operating result
     const opResult=revenue-totalOpCosts;
     const opMargin=revenue>0?(opResult/revenue*100):0;
     // Active projects this month
@@ -8413,7 +8307,7 @@ function _renderFinancialActual(){
     for(let mo=1;mo<=ytdCurMonth;mo++) tot+=staffCostMonth(year,mo);
     return tot;
   })();
-  const ytdOpResult=ytdRev-ytdFixed-ytdForecast;
+  const ytdOpResult=ytdRev-ytdFixed-ytdForecast-ytdStaffing-ytdMos.reduce((s,m)=>s+m.extCosts,0);
   const ytdMargin=ytdRev>0?ytdOpResult/ytdRev*100:0;
   const ytdBankIn=ytdMos.reduce((s,m)=>s+m.bankIn,0);
   const ytdBankOut=ytdMos.reduce((s,m)=>s+m.bankOut,0);
@@ -8460,7 +8354,6 @@ function _renderFinancialActual(){
   const totRev=months.reduce((s,m)=>s+m.revenue,0);
   const totFixed=months.reduce((s,m)=>s+m.fixedCosts,0);
   const totForecast=months.reduce((s,m)=>s+m.forecastCosts,0);
-  const totExtCosts=months.reduce((s,m)=>s+m.extCosts,0);
   const totOpCosts=totFixed+totForecast+totExtCosts;
   const totRes=totRev-totOpCosts;
   const totMg=totRev>0?totRes/totRev*100:0;
@@ -8693,16 +8586,8 @@ function modalFutureCost(c){
 async function saveFutureCost(id){
   const data={description:document.getElementById('f-desc').value.trim(),month:document.getElementById('f-month').value,amount:parseFloat(document.getElementById('f-amount').value)||0,category:document.getElementById('f-cat').value.trim(),recurring:document.getElementById('f-recurring').checked?1:0};
   if(!data.description)return alert('Description required.');
-  closeModal();
-  try{
-    const payload=_supaFilter('future_costs',data);
-    let r;
-    if(id) r=await _supaReq('PATCH','future_costs',payload,'?id=eq.'+id);
-    else r=await _supaReq('POST','future_costs',payload,'?select=id');
-    if(!r) showToast('⚠ Opslaan mislukt','error');
-    else showToast(id?'Bijgewerkt':'Opgeslagen');
-  }catch(e){showToast('⚠ Opslaan mislukt: '+e.message,'error');}
-  await loadData();renderForecast();
+  if(id)await DB.update('future_costs',id,data);else await DB.insert('future_costs',data);
+  closeModal();await loadData();renderForecast();
 }
 
 // ══ IMPORT CSV ══
@@ -8765,15 +8650,17 @@ async function _doImportXLSX(file){
 
 // ══ PARTNER INVOICING ══
 function getPartnerInvoiced(projectId){
-  // Always use S.invoices as primary source of truth
-  const invs=S.invoices.filter(i=>i.project_id===projectId||i.project_id==projectId);
-  if(invs.length>0){
-    return invs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  // Primary lookup by project_id
+  var directInvs=S.invoices.filter(function(i){return i.project_id===projectId||i.project_id==projectId;});
+  if(directInvs.length>0){
+    return directInvs.reduce(function(s,i){return s+parseFloat(i.amount||0);},0);
   }
-  // Legacy fallback: use partner_invoices only if no invoices at all for this project
-  return S.partnerInvoices
-    .filter(pi=>pi.project_id===projectId||pi.project_id==projectId)
-    .reduce((s,pi)=>s+parseFloat(pi.amount||0),0);
+  // Check if ANY invoice exists for this project (catches post-delete state)
+  var hasAnyInvoice=S.invoices.some(function(i){return i.project_id===projectId||i.project_id==projectId;});
+  if(hasAnyInvoice) return 0; // invoices exist but total is 0 — deleted state
+  // Legacy fallback to partner_invoices only if no invoices ever existed
+  return S.partnerInvoices.filter(function(pi){return pi.project_id===projectId||pi.project_id==projectId;})
+    .reduce(function(s,pi){return s+parseFloat(pi.amount||0);},0);
 }
 
 function renderPartner(){
@@ -8930,58 +8817,25 @@ function fillRecurringAmount(projId){
 }
 async function savePartnerInvoice(id){
   const projId=parseInt(document.getElementById('f-pi-proj').value);
-  const amount=parseFloat(document.getElementById('f-pi-amount').value)||0;
-  const period=document.getElementById('f-pi-period').value;
+  const amount=parseMoneyInput(document.getElementById('f-pi-amount').value);
+  const period=(document.getElementById('f-pi-period').value||'').trim();
   const sent=document.getElementById('f-pi-sent').checked?1:0;
   const paid=document.getElementById('f-pi-paid').checked?1:0;
-  if(!projId) return alert('Select a project.');
+  if(!projId) return alert('Partner project required.');
   if(!amount) return alert('Amount required.');
-
-  closeModal();
-  let ok=false;
-  try{
-    const invData={
-      project_id:projId,
-      amount:amount,
-      month:period,
-      billing_type:'monthly',
-      draft_created:0,
-      invoice_sent:sent,
-      paid:paid
-    };
-    const payload=_supaFilter('invoices',invData);
-
-    const editingInvoice=id&&S.invoices.some(i=>i.id===id||i.id==id);
-    const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id===id||pi.id==id);
-
-    let r;
-    if(editingInvoice){
-      r=await _supaReq('PATCH','invoices',{amount,month:period,invoice_sent:sent,paid},'?id=eq.'+id);
-      ok=(r!==null);
-    } else if(editingPartnerInv){
-      // Migrate: delete old partner_invoice, insert as invoice
-      await _supaReq('DELETE','partner_invoices',null,'?id=eq.'+id);
-      r=await _supaReq('POST','invoices',payload,'?select=id');
-      ok=(r!==null);
-    } else {
-      // New invoice — insert directly
-      r=await _supaReq('POST','invoices',payload,'?select=id');
-      ok=(r!==null);
-    }
-    if(ok) showToast(id?'Invoice updated':'Invoice logged');
-    else showToast('⚠ Invoice opslaan mislukt — zie console voor details','error');
-  }catch(e){
-    console.error('[savePartnerInvoice]',e);
-    showToast('⚠ Invoice opslaan mislukt: '+e.message,'error');
+  const invData={project_id:projId,amount:amount,month:period,billing_type:'monthly',draft_created:0,invoice_sent:sent,paid:paid};
+  const editingInvoice=id&&S.invoices.some(i=>i.id==id);
+  const editingPartnerInv=id&&S.partnerInvoices.some(pi=>pi.id==id);
+  if(editingInvoice){
+    await DB.update('invoices',id,invData);
+  } else if(editingPartnerInv){
+    await DB.delete('partner_invoices',id);
+    await DB.insert('invoices',invData);
+  } else {
+    await DB.insert('invoices',invData);
   }
-
-  // Full refresh
-  await loadData();
-  if(typeof renderPartner==='function') renderPartner();
-  if(typeof renderInvoices==='function') renderInvoices();
-  if(typeof renderProjects==='function') renderProjects();
-  if(typeof renderDashboard==='function') renderDashboard();
-  if(typeof renderFinancial==='function') renderFinancial();
+  closeModal();
+  await _refreshAllFinancialViews();
 }
 
 // ══ EXCEL EXPORT (Full backup) ══
@@ -9436,7 +9290,7 @@ function showRevenueDrilldown(year,mo){
   S.futureCosts.forEach(fc=>{
     if(fc.recurring||fc.month===moStr){forecastCosts+=Math.abs(parseFloat(fc.amount||0));}
   });
-  const totalOpCosts=fixedCosts+forecastCosts;
+  const totalOpCosts=fixedCosts+forecastCosts+staffCostMonth(year,mo)+totalExtCostMonth(moStr);
   const opResult=totalProjRev-totalOpCosts;
   const opMargin=totalProjRev>0?(opResult/totalProjRev*100):0;
   
@@ -9471,8 +9325,6 @@ function showRevenueDrilldown(year,mo){
         <div class="flex-between" style="padding:5px 0;font-size:11px;color:var(--amber)"><span>Draft subtotal</span><span>${fmt(totalDraftRev)}</span></div>
       `:''}
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px"><span>Total Revenue${_modalInclDraft&&totalDraftRev>0?' (conf + draft)':''}</span><span style="color:var(--blue)">${fmt(_modalInclDraft?totalRevInclDraft:totalProjRev)}</span></div>
-      <div class="flex-between" style="padding:4px 0;color:var(--amber)"><span>− Staffing Costs</span><span>${fmt(staffingCosts)}</span></div>
-      ${extCosts>0?`<div class="flex-between" style="padding:4px 0;color:var(--orange,#f97316)"><span>− External Costs</span><span>${fmt(extCosts)}</span></div>`:''}
       <div class="flex-between" style="padding:4px 0;color:var(--red)"><span>− Fixed Costs</span><span>${fmt(fixedCosts)}</span></div>
       ${forecastCosts>0?`<div class="flex-between" style="padding:4px 0;color:var(--amber)"><span>− Forecast Costs</span><span>${fmt(forecastCosts)}</span></div>`:''}
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px">
@@ -9678,8 +9530,95 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
   let snap=originalHtml;
   // Inject readonly banner right after <body>
   snap=snap.replace(/<body[^>]*>/, m=>m+readonlyBanner);
-  // Inject readonly script right before </body>
-  snap=snap.replace('</body>',readonlyScript+'</body>');
+  // Inject readonly script right before 
+<script>
+(function(){
+  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
+  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
+  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
+  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+})();
+</script>
+
+
+<script>
+// SAFE RENDER GUARD (prevents empty dashboards)
+(function(){
+  if (typeof renderFinancial === 'function') {
+    const _rf = renderFinancial;
+    renderFinancial = function(){
+      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
+    }
+  }
+  if (typeof renderDashboard === 'function') {
+    const _rd = renderDashboard;
+    renderDashboard = function(){
+      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
+    }
+  }
+})();
+</script>
+
+</body>
+  snap=snap.replace('
+<script>
+(function(){
+  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
+  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
+  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
+  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+})();
+</script>
+
+
+<script>
+// SAFE RENDER GUARD (prevents empty dashboards)
+(function(){
+  if (typeof renderFinancial === 'function') {
+    const _rf = renderFinancial;
+    renderFinancial = function(){
+      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
+    }
+  }
+  if (typeof renderDashboard === 'function') {
+    const _rd = renderDashboard;
+    renderDashboard = function(){
+      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
+    }
+  }
+})();
+</script>
+
+</body>',readonlyScript+'
+<script>
+(function(){
+  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
+  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
+  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
+  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+})();
+</script>
+
+
+<script>
+// SAFE RENDER GUARD (prevents empty dashboards)
+(function(){
+  if (typeof renderFinancial === 'function') {
+    const _rf = renderFinancial;
+    renderFinancial = function(){
+      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
+    }
+  }
+  if (typeof renderDashboard === 'function') {
+    const _rd = renderDashboard;
+    renderDashboard = function(){
+      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
+    }
+  }
+})();
+</script>
+
+</body>');
   // Add readonly CSS to disable pointer events on interactive elements
   snap=snap.replace('</style>',`
 /* ── READ-ONLY SNAPSHOT STYLES ── */
@@ -10269,6 +10208,35 @@ ${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
   </div>
 </div>`:`<div class="section"><div class="section-title">Bank / Cashflow</div><p style="color:#9ca3af;font-size:11px;padding:8px 0">No cashflow data for this month. Enter data in the Cashflow module.</p></div>`}
 <div class="footer"><span>NXT Phase AI · staffingnxtphase.vercel.app</span><span>Monthly Report ${moLabel}</span></div>
+
+<script>
+(function(){
+  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
+  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
+  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
+  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+})();
+</script>
+
+
+<script>
+// SAFE RENDER GUARD (prevents empty dashboards)
+(function(){
+  if (typeof renderFinancial === 'function') {
+    const _rf = renderFinancial;
+    renderFinancial = function(){
+      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
+    }
+  }
+  if (typeof renderDashboard === 'function') {
+    const _rd = renderDashboard;
+    renderDashboard = function(){
+      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
+    }
+  }
+})();
+</script>
+
 </body></html>`;
   closeModal();
   const win=window.open('','_blank','width=960,height=720');
@@ -10960,6 +10928,35 @@ function initBankPlanner(){
     <div style="text-align:center;color:var(--t3);padding:40px">Loading schedule…</div>
   </div>
 </div>
+
+
+<script>
+(function(){
+  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
+  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
+  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
+  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+})();
+</script>
+
+
+<script>
+// SAFE RENDER GUARD (prevents empty dashboards)
+(function(){
+  if (typeof renderFinancial === 'function') {
+    const _rf = renderFinancial;
+    renderFinancial = function(){
+      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
+    }
+  }
+  if (typeof renderDashboard === 'function') {
+    const _rd = renderDashboard;
+    renderDashboard = function(){
+      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
+    }
+  }
+})();
+</script>
 
 </body>
 </html>
