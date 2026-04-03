@@ -557,7 +557,7 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
       <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer;background:var(--bg);border:1px solid var(--bdr2);border-radius:var(--rsm);padding:3px 8px"><input type="checkbox" id="fin-incl-draft" onchange="renderFinancial()"> Incl. draft</label>
     </div>
   </div>
-  <div class="alert alert-info" style="margin-bottom:14px"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg><span><strong>Dual-view Company Dashboard:</strong> <strong>Op. Result</strong> = Revenue – Fixed Costs (from Fixed Costs register) – Forecast Costs. <strong>Cashflow columns</strong> (Bank In/Out) are shown <em>separately</em> for liquidity monitoring only — they never influence the P&amp;L calculation. Starting balance and balance changes can be tracked in the Bank &amp; Cashflow section.</span></div>
+  <div class="alert alert-info" style="margin-bottom:14px"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg><span><strong>Dual-view Company Dashboard:</strong> <strong>Op. Result</strong> = Revenue – Staffing Costs – External Costs – Fixed Costs – Forecast Costs. <strong>Cashflow columns</strong> (Bank In/Out) are shown <em>separately</em> for liquidity monitoring only — they never influence the P&amp;L calculation. Starting balance and balance changes can be tracked in the Bank &amp; Cashflow section.</span></div>
   <div class="kpi-row" id="fin-kpis"></div>
   <!-- Mobile card view (hidden on desktop via CSS) -->
   <div class="fin-mobile-cards" id="fin-mobile-cards"></div>
@@ -1877,10 +1877,10 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','is_partner','recurring_amount','partner_name','notes'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
-  invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
+  invoices: ['project_id','amount','month','billing_type','paid','invoice_sent','draft_created','invoice_number','notes'],
   vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
@@ -2092,107 +2092,105 @@ function projectWkKeys(p){
 }
 function projectWkCount(p){return Math.max(1,projectWkKeys(p).length);}
 function revPerWk(p){return p.revenue/projectWkCount(p);}
-// ── REVENUE CALCULATION — Week-based day-accurate method ──────────────────
-// METHOD: weekly_revenue / 7 = daily_revenue
-//         count active project days in each month (Mon–Sun calendar days)
-//         monthly_revenue = daily_revenue × active_days_in_month
-//
-// This correctly handles partial weeks at month boundaries:
-// e.g. March 30–31 = 2 days of a week that started Feb/March → 2/7 × weekly_rev
-//
-// All date math uses UTC integers to be timezone/DST proof.
 
-function _dateToUTCDays(dateStr){
-  const[y,m,d]=(dateStr||'').split('-').map(Number);
-  if(!y||!m||!d)return null;
-  return Math.floor(Date.UTC(y,m-1,d)/86400000);
+// ── CONSOLIDATED REVENUE ENGINE ─────────────────────────────────────────────
+// One source of truth for project revenue across dashboard, financial view and PDF.
+// Supported models:
+// - monthly / monthly_fixed: fixed amount per active month
+// - weekly / weekly_fixed: fixed amount per active week, allocated by calendar day
+// - day_based: revenue is per calendar day
+// - default / contract_total: total contract value spread over full active calendar duration
+function _projectBillingType(p){
+  return String(p?.billing_type || '').toLowerCase().trim();
 }
-function _utcDaysInMonth(y,m){
-  return new Date(Date.UTC(y,m,0)).getUTCDate();
+function _projectRecurringFreq(p){
+  return String(p?.recurring_freq || 'monthly').toLowerCase().trim();
 }
+function _projectTotalRevenue(p){
+  return parseFloat(p?.revenue || 0) || 0;
+}
+function _projectRecurringAmount(p){
+  return parseFloat(p?.recurring_amount || 0) || 0;
+}
+function _monthBoundsDays(y,m){
+  return {start: Math.floor(Date.UTC(y,m-1,1)/86400000), end: Math.floor(Date.UTC(y,m,0)/86400000)};
+}
+function _projectRangeDays(p){
+  const pS=_dateToUTCDays(p.start_date), pE=_dateToUTCDays(p.end_date);
+  if(pS===null || pE===null || pE<pS) return null;
+  return {start:pS,end:pE,totalDays:(pE-pS+1)};
+}
+function _projectMonthRevenueMeta(p,y,m){
+  const rng=_projectRangeDays(p);
+  if(!rng) return {rev:0,activeDays:0,dailyRate:0,label:'',mode:'none'};
+  const mb=_monthBoundsDays(y,m);
+  if(rng.end<mb.start || rng.start>mb.end) return {rev:0,activeDays:0,dailyRate:0,label:'',mode:'none'};
+  const activeStart=Math.max(rng.start, mb.start);
+  const activeEnd=Math.min(rng.end, mb.end);
+  const activeDays=Math.max(0, activeEnd-activeStart+1);
+  if(activeDays<=0) return {rev:0,activeDays:0,dailyRate:0,label:'',mode:'none'};
 
-// Core day-accurate revenue function using weekly/7 daily rate
+  const billing=_projectBillingType(p);
+  const recurring=_projectRecurringAmount(p);
+  const freq=_projectRecurringFreq(p);
+
+  // Fixed monthly fee: never fluctuate with 28/30/31 days
+  if((billing==='monthly' || billing==='monthly_fixed') && (_projectTotalRevenue(p)>0 || recurring>0) || (recurring>0 && freq==='monthly')){
+    const rev= recurring>0 ? recurring : _projectTotalRevenue(p);
+    const dailyRate= activeDays>0 ? rev/activeDays : 0;
+    return {rev,activeDays,dailyRate,label:'monthly fee',mode:'monthly_fixed'};
+  }
+
+  // Fixed weekly fee: amount per active week, allocated by day for exact month clipping
+  if((billing==='weekly' || billing==='weekly_fixed') && (_projectTotalRevenue(p)>0 || recurring>0) || (recurring>0 && freq==='weekly')){
+    const weekAmt = recurring>0 ? recurring : _projectTotalRevenue(p);
+    const rev = (weekAmt/7) * activeDays;
+    return {rev,activeDays,dailyRate:weekAmt/7,label:'weekly fee',mode:'weekly_fixed'};
+  }
+
+  // Day-based: stored revenue is per-day revenue
+  if(billing==='day_based'){
+    const dailyRate=_projectTotalRevenue(p);
+    return {rev:dailyRate*activeDays,activeDays,dailyRate,label:'day based',mode:'day_based'};
+  }
+
+  // Default: contract total spread over active calendar days
+  const totalRevenue=_projectTotalRevenue(p);
+  const dailyRate = rng.totalDays>0 ? totalRevenue/rng.totalDays : 0;
+  return {rev:dailyRate*activeDays,activeDays,dailyRate,label:'contract total',mode:'contract_total'};
+}
 function revForMonthDayPrecise(p,y,m){
-  if(!p.start_date||!p.end_date||!p.revenue)return 0;
-  const pS=_dateToUTCDays(p.start_date);
-  const pE=_dateToUTCDays(p.end_date);
-  if(pS===null||pE===null)return 0;
-  // First and last UTC day of month m in year y
-  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
-  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
-  // No overlap
-  if(pE<mS||pS>mE)return 0;
-  // Active days = overlap between project and month (inclusive)
-  const oS=Math.max(pS,mS);
-  const oE=Math.min(pE,mE);
-  const activeDays=oE-oS+1;
-  if(activeDays<=0)return 0;
-  // Total project calendar days
-  const totalDays=pE-pS+1;
-  if(totalDays<=0)return 0;
-  // WEEK-BASED METHOD:
-  // weekly_rev = total_revenue / total_project_weeks (each week = 7 calendar days)
-  // daily_rev = weekly_rev / 7 = total_revenue / (totalDays rounded up to weeks × 7) ... 
-  // Simpler: daily_rev = (revenue / totalWeeks) / 7
-  //        = revenue / (totalDays/7 * 7) if project is exact weeks
-  // Most accurate: daily_rev = revenue / totalDays (same result as rev/totalWeeks/7)
-  // BUT per spec: daily = weekly/7, and weekly = revenue/projectWkCount
-  // So: daily = (revenue / projectWkCount(p)) / 7
-  // Daily rate = revenue spread evenly over all calendar days of project
-  // Correctly handles 1-day projects (no /7 penalty), partial weeks, multi-week
-  const dailyRev = p.revenue / totalDays;
-  return dailyRev * activeDays;
+  return _projectMonthRevenueMeta(p,y,m).rev;
 }
-
 function revForMonth(y,m,statusFilter){
   let rev=0;
   S.projects.filter(p=>statusFilter?p.status===statusFilter:p.status!=='stopped').forEach(p=>{
-    rev+=revForMonthDayPrecise(p,y,m);
-  });return rev;
+    rev+=_projectMonthRevenueMeta(p,y,m).rev;
+  });
+  return rev;
 }
 
-// ── WEEK-PRECISE REVENUE ─────────────────────────────────────────────────────
-// Convert ISO week key to UTC epoch day bounds {start, end}
-function _wkBounds(wkKey){
-  const[yr,wn]=wkKey.split('-W').map(Number);
-  // Jan 4 is always in ISO week 1
-  const jan4=Math.floor(Date.UTC(yr,0,4)/86400000);
-  const jan4dow=(new Date(Date.UTC(yr,0,4)).getUTCDay()||7); // Mon=1..Sun=7
-  const wkStart=jan4-(jan4dow-1)+(wn-1)*7;
-  return{start:wkStart,end:wkStart+6};
-}
-
-// Revenue for a project in a specific ISO week (full week, day-precise)
-// = dailyRate × active_days_in_week (clipped to project start/end)
+// Revenue in week: sum the per-day value across days in the ISO week
 function revForWeek(p,wk){
-  if(!p.start_date||!p.end_date||!p.revenue)return 0;
-  const pS=_dateToUTCDays(p.start_date);
-  const pE=_dateToUTCDays(p.end_date);
-  const{start:wS,end:wE}=_wkBounds(wk);
-  if(pE<wS||pS>wE)return 0;
-  const activeDays=Math.min(pE,wE)-Math.max(pS,wS)+1;
-  if(activeDays<=0)return 0;
-  const wkCount=Math.max(1,projectWkCount(p));
-  return(p.revenue/wkCount/7)*activeDays;
+  const b=_wkBounds(wk);
+  let rev=0;
+  for(let d=b.start; d<=b.end; d++){
+    const dt=new Date(d*86400000);
+    rev += _projectMonthRevenueMeta(p, dt.getUTCFullYear(), dt.getUTCMonth()+1).dailyRate * ((_projectRangeDays(p) && d>=_projectRangeDays(p).start && d<=_projectRangeDays(p).end)?1:0);
+  }
+  return rev;
 }
-
-// Revenue for a project in a specific ISO week, CLIPPED to the current month view.
-// Used in weekly widgets so that the sum of all weekly widgets = monthly total.
-// e.g. W09 Feb23–Mar1 in March view: only Mar 1 counts → 1/7 of weekly rate
 function revForWeekInMonth(p,wk,y,m){
-  if(!p.start_date||!p.end_date||!p.revenue)return 0;
-  const pS=_dateToUTCDays(p.start_date);
-  const pE=_dateToUTCDays(p.end_date);
-  const{start:wS,end:wE}=_wkBounds(wk);
-  const mS=Math.floor(Date.UTC(y,m-1,1)/86400000);
-  const mE=Math.floor(Date.UTC(y,m,0)/86400000);
-  // Clip to project ∩ month ∩ week
-  const oS=Math.max(pS,mS,wS);
-  const oE=Math.min(pE,mE,wE);
-  const activeDays=oE-oS+1;
-  if(activeDays<=0)return 0;
-  const wkCount=Math.max(1,projectWkCount(p));
-  return(p.revenue/wkCount/7)*activeDays;
+  const b=_wkBounds(wk);
+  const mb=_monthBoundsDays(y,m);
+  let rev=0;
+  const rng=_projectRangeDays(p);
+  if(!rng) return 0;
+  for(let d=b.start; d<=b.end; d++){
+    if(d<mb.start || d>mb.end || d<rng.start || d>rng.end) continue;
+    rev += _projectMonthRevenueMeta(p,y,m).dailyRate;
+  }
+  return rev;
 }
 function sickInWeek(empId,wk){
   if(!S.sickLeave||!S.sickLeave.length)return 0;
@@ -3347,7 +3345,7 @@ function renderDashboard(){
         <div style="font-size:15px;font-weight:700;color:var(--navy)">${fmt(confRev+allDraftRevThisMonth)}</div>
       </div>
     </div>
-    <div style="font-size:9.5px;color:var(--t3)">${monthLbl(y,m)} revenue · day-precise calculation</div>`;
+    <div style="font-size:9.5px;color:var(--t3)">${monthLbl(y,m)} revenue · consolidated project revenue calculation</div>`;
 
   // Fixed Costs by Category — planning layer totals
   const moStr=y+'-'+String(m).padStart(2,'0');
@@ -7178,15 +7176,6 @@ function vacAutoCalcDays(){
     if(hint)hint.textContent='';
   }
 }
-async function _refreshVacationDependentViews(){
-  await loadData();
-  try{ if(typeof renderVacation==='function') renderVacation(); }catch(e){}
-  try{ if(typeof renderSchedule==='function') renderSchedule(); }catch(e){}
-  try{ if(typeof renderStaffing==='function') renderStaffing(); }catch(e){}
-  try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
-  try{ if(typeof renderEmployees==='function') renderEmployees(); }catch(e){}
-}
-
 async function saveVacation(id){
   const sd=document.getElementById('f-start').value,ed=document.getElementById('f-end').value;
   if(!sd||!ed)return alert('Start and end date required.');
@@ -7194,26 +7183,8 @@ async function saveVacation(id){
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
   const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
-  if(!data.employee_id)return alert('Employee required.');
-  closeModal();
-  try{
-    let ok=null;
-    if(typeof _supaReq==='function'){
-      const payload=typeof _supaFilter==='function'?_supaFilter('vacations',data):data;
-      ok=id
-        ? await _supaReq('PATCH','vacations',payload,'?id=eq.'+id)
-        : await _supaReq('POST','vacations',payload,'?select=id');
-    }
-    if(!ok){
-      if(id) ok=await DB.update('vacations',id,data);
-      else ok=await DB.insert('vacations',data);
-    }
-    await _refreshVacationDependentViews();
-    showToast(id?'Vacation updated':'Vacation saved','success');
-  }catch(e){
-    console.error('[saveVacation]',e);
-    showToast('⚠ Vacation opslaan mislukt: '+(e&&e.message?e.message:'unknown error'),'error');
-  }
+  if(id)await DB.update('vacations',id,data);else await DB.insert('vacations',data);
+  closeModal();await loadData();renderVacation();
 }
 
 function modalInvoiceBody(inv,preselectedProjectId){
@@ -8223,7 +8194,7 @@ function _renderFinancialActual(){
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const staffingCosts=staffCostMonth(year,mo); // staffing costs for this month
     const extCosts=totalExtCostMonth(moStr); // external/outsourced project costs this month
-    const totalOpCosts=fixedCosts+forecastCosts+extCosts; // staffingCosts tracked separately (not in opResult)
+    const totalOpCosts=fixedCosts+forecastCosts+extCosts+staffingCosts;
     const opResult=revenue-totalOpCosts;
     const opMargin=revenue>0?(opResult/revenue*100):0;
     // Active projects this month
@@ -8274,7 +8245,8 @@ function _renderFinancialActual(){
     for(let mo=1;mo<=ytdCurMonth;mo++) tot+=staffCostMonth(year,mo);
     return tot;
   })();
-  const ytdOpResult=ytdRev-ytdFixed-ytdForecast;
+  const ytdExt=ytdMos.reduce((s,m)=>s+m.extCosts,0);
+  const ytdOpResult=ytdRev-ytdFixed-ytdForecast-ytdStaffing-ytdExt;
   const ytdMargin=ytdRev>0?ytdOpResult/ytdRev*100:0;
   const ytdBankIn=ytdMos.reduce((s,m)=>s+m.bankIn,0);
   const ytdBankOut=ytdMos.reduce((s,m)=>s+m.bankOut,0);
@@ -8284,6 +8256,7 @@ function _renderFinancialActual(){
     <div class="kpi ab"><div class="kpi-lbl">YTD Revenue</div><div class="kpi-val blue">${fmtS(ytdRev)}</div><div class="kpi-sub">${inclDraft?'Conf+draft':'Confirmed'}</div></div>
     <div class="kpi ar"><div class="kpi-lbl">YTD Fixed Costs</div><div class="kpi-val red">${fmtS(ytdFixed)}</div><div class="kpi-sub">Excl. VAT · Fixed Costs register</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Staffing Costs</div><div class="kpi-val amber">${fmtS(ytdStaffing)}</div><div class="kpi-sub">Jan–${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ytdCurMonth-1]} ${year}</div></div>
+    <div class="kpi ar"><div class="kpi-lbl">External Costs</div><div class="kpi-val red">${fmtS(ytdExt)}</div><div class="kpi-sub">Jan–${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ytdCurMonth-1]} ${year}</div></div>
     <div class="kpi ${ytdOpResult>=0?'ag':'ar'}"><div class="kpi-lbl">YTD Op. Result</div><div class="kpi-val ${ytdOpResult>=0?'green':'red'}">${fmtS(ytdOpResult)}</div><div class="kpi-sub">Margin ${ytdMargin.toFixed(1)}%</div></div>
     <div class="kpi ag"><div class="kpi-lbl">YTD Bank In</div><div class="kpi-val green">${hasCFData?fmtS(ytdBankIn):'—'}</div><div class="kpi-sub">From Cashflow module</div></div>
     <div class="kpi ar"><div class="kpi-lbl">YTD Bank Out</div><div class="kpi-val red">${hasCFData?fmtS(ytdBankOut):'—'}</div><div class="kpi-sub">From Cashflow module</div></div>
@@ -8291,7 +8264,7 @@ function _renderFinancialActual(){
 
   // ── Monthly P&L table — Operational Result / Cashflow clearly separated ──
   let cum=0;
-  document.getElementById('fin-pl-tbody').innerHTML=months.map(({mo,moStr,revenue,draftRev,fixedCosts,forecastCosts,extCosts,totalOpCosts,opResult,opMargin,bankIn,bankOut,netCash,openBal,closeBal,cfEntry,activeConf,isCurrent,isPast})=>{
+  document.getElementById('fin-pl-tbody').innerHTML=months.map(({mo,moStr,revenue,draftRev,fixedCosts,forecastCosts,staffingCosts,extCosts,totalOpCosts,opResult,opMargin,bankIn,bankOut,netCash,openBal,closeBal,cfEntry,activeConf,isCurrent,isPast})=>{
     cum+=opResult;
     const lbl=new Date(year,mo-1,1).toLocaleDateString('nl-NL',{month:'short',year:'2-digit'});
     const dot=isCurrent?`<span style="display:inline-block;width:6px;height:6px;background:var(--blue);border-radius:50%;margin-right:5px;vertical-align:middle"></span>`:'';
@@ -8305,6 +8278,7 @@ function _renderFinancialActual(){
       <td class="right" style="cursor:pointer" onclick="showRevenueDrilldown(${year},${mo})" title="Click for breakdown">${revenue>0?`<span style="color:var(--blue);font-weight:600">${fmt(revenue)}</span>${draftRev>0?`<br><span style="font-size:9px;color:var(--amber)">(${fmt(draftRev)} draft)</span>`:''}`:'-'}</td>
       <td class="right" style="color:var(--red)">${fixedCosts?fmt(fixedCosts):'-'}</td>
       <td class="right" style="color:var(--amber)">${forecastCosts?fmt(forecastCosts):'-'}</td>
+      <td class="right" style="color:var(--purple)">${staffingCosts>0?fmt(staffingCosts):'-'}</td>
       <td class="right" style="color:var(--orange,#f97316)">${extCosts>0?fmt(extCosts):'-'}</td>
       <td class="right">${totalOpCosts?fmt(totalOpCosts):'-'}</td>
       <td class="right${opResult>0?' f-pos':opResult<0?' f-neg':''}">${revenue>0||totalOpCosts>0?fmt(opResult):'-'}</td>
@@ -8321,7 +8295,9 @@ function _renderFinancialActual(){
   const totRev=months.reduce((s,m)=>s+m.revenue,0);
   const totFixed=months.reduce((s,m)=>s+m.fixedCosts,0);
   const totForecast=months.reduce((s,m)=>s+m.forecastCosts,0);
-  const totOpCosts=totFixed+totForecast+totExtCosts;
+  const totStaffing=months.reduce((s,m)=>s+m.staffingCosts,0);
+  const totExtCosts=months.reduce((s,m)=>s+m.extCosts,0);
+  const totOpCosts=totFixed+totForecast+totStaffing+totExtCosts;
   const totRes=totRev-totOpCosts;
   const totMg=totRev>0?totRes/totRev*100:0;
   const totIn=months.reduce((s,m)=>s+m.bankIn,0);
@@ -8334,6 +8310,7 @@ function _renderFinancialActual(){
     <td class="right" style="color:var(--blue)">${fmt(totRev)}</td>
     <td class="right" style="color:var(--red)">${fmt(totFixed)}</td>
     <td class="right" style="color:var(--amber)">${fmt(totForecast)}</td>
+    <td class="right" style="color:var(--purple)">${fmt(totStaffing)}</td>
     <td class="right" style="color:var(--orange,#f97316)">${totExtCosts?fmt(totExtCosts):'-'}</td>
     <td class="right">${fmt(totOpCosts)}</td>
     <td class="right${totRes>=0?' f-pos':' f-neg'}">${fmt(totRes)}</td>
@@ -9232,82 +9209,62 @@ async function deleteCategoryConfirm(name,count){
 function showRevenueDrilldown(year,mo){
   const moStr=`${year}-${String(mo).padStart(2,'0')}`;
   const lbl=new Date(year,mo-1,1).toLocaleDateString('en',{month:'long',year:'numeric'});
-  
-  // ── Day-accurate revenue per project (same formula as P&L / revForMonth) ──
-  // Check if "incl. draft" is ticked on the financial dashboard
   const _modalInclDraft=document.getElementById('fin-incl-draft')?.checked||false;
-  const projRev=S.projects.filter(p=>p.status==='confirmed').map(p=>{
-    const rev=revForMonthDayPrecise(p,year,mo);
-    if(rev<=0)return null;
-    const pS=_dateToUTCDays(p.start_date);
-    const pE=_dateToUTCDays(p.end_date);
-    const mS=Math.floor(Date.UTC(year,mo-1,1)/86400000);
-    const mE=Math.floor(Date.UTC(year,mo,0)/86400000);
-    const activeDays=Math.min(pE,mE)-Math.max(pS,mS)+1;
-    const wkCount=Math.max(1,projectWkCount(p));
-    const rpw=p.revenue/wkCount;
-    const dailyRate=rpw/7;
-    return{p,rev,activeDays,rpw,dailyRate,isDraft:false};
-  }).filter(Boolean);
-
-  // Draft projects — only when incl. draft is checked
-  const draftProjRev=_modalInclDraft?S.projects.filter(p=>p.status==='draft').map(p=>{
-    const rev=revForMonthDayPrecise(p,year,mo);
-    if(rev<=0)return null;
-    const pS=_dateToUTCDays(p.start_date);
-    const pE=_dateToUTCDays(p.end_date);
-    const mS=Math.floor(Date.UTC(year,mo-1,1)/86400000);
-    const mE=Math.floor(Date.UTC(year,mo,0)/86400000);
-    const activeDays=Math.min(pE,mE)-Math.max(pS,mS)+1;
-    const wkCount=Math.max(1,projectWkCount(p));
-    const rpw=p.revenue/wkCount;
-    const dailyRate=rpw/7;
-    return{p,rev,activeDays,rpw,dailyRate,isDraft:true};
-  }).filter(Boolean):[];
-  
-  // Financial summary using same revForMonth as P&L
+  function buildRows(status){
+    return S.projects.filter(p=>p.status===status).map(p=>{
+      const meta=_projectMonthRevenueMeta(p,year,mo);
+      if(meta.rev<=0) return null;
+      return {p,rev:meta.rev,activeDays:meta.activeDays,dailyRate:meta.dailyRate,mode:meta.mode,label:meta.label};
+    }).filter(Boolean);
+  }
+  const projRev=buildRows('confirmed');
+  const draftProjRev=_modalInclDraft?buildRows('draft'):[];
   const totalProjRev=projRev.reduce((s,r)=>s+r.rev,0);
   const totalDraftRev=draftProjRev.reduce((s,r)=>s+r.rev,0);
   const fixedCosts=fixedMonthly(year,mo);
+  const staffingCosts=staffCostMonth(year,mo);
+  const extCosts=totalExtCostMonth(moStr);
   let forecastCosts=0;
-  S.futureCosts.forEach(fc=>{
-    if(fc.recurring||fc.month===moStr){forecastCosts+=Math.abs(parseFloat(fc.amount||0));}
-  });
-  const totalOpCosts=fixedCosts+forecastCosts;
+  S.futureCosts.forEach(fc=>{ if(fc.recurring||fc.month===moStr){forecastCosts+=Math.abs(parseFloat(fc.amount||0));} });
+  const totalOpCosts=fixedCosts+staffingCosts+extCosts+forecastCosts;
   const opResult=totalProjRev-totalOpCosts;
   const opMargin=totalProjRev>0?(opResult/totalProjRev*100):0;
-  
-  // Cashflow (separate)
   const bankIn=getBankInForMonth(moStr);
   const bankOut=getBankOutForMonth(moStr);
   const bankInGross=S.transactions.filter(t=>t.date&&t.date.startsWith(moStr)&&getTxType(t)==='revenue').reduce((s,t)=>s+Math.abs(parseFloat(t.amount||0)),0);
   const bankOutGross=S.transactions.filter(t=>t.date&&t.date.startsWith(moStr)&&getTxType(t)==='cost').reduce((s,t)=>s+Math.abs(parseFloat(t.amount||0)),0);
   const vatOnIn=bankInGross-bankIn;
   const vatOnOut=bankOutGross-bankOut;
-  
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
   const totalRevInclDraft=totalProjRev+totalDraftRev;
   const opResultInclDraft=totalRevInclDraft-totalOpCosts;
   const opMarginInclDraft=totalRevInclDraft>0?(opResultInclDraft/totalRevInclDraft*100):0;
-
+  function lineHint(row){
+    if(row.mode==='monthly_fixed') return `${row.activeDays} active days · fixed monthly fee`;
+    if(row.mode==='weekly_fixed') return `${row.activeDays} days × ${fmt(row.dailyRate)}/day (weekly fee)`;
+    if(row.mode==='day_based') return `${row.activeDays} days × ${fmt(row.dailyRate)}/day`;
+    return `${row.activeDays} days × ${fmt(row.dailyRate)}/day`;
+  }
   m.innerHTML=`<div class="modal-header"><div class="modal-title">Company Dashboard — ${lbl}</div><div class="modal-x" onclick="closeModal()">&#x2715;</div></div>
   <div class="modal-body">
     <div style="background:var(--blue-bg);border:1px solid var(--bdr2);border-radius:var(--r);padding:13px;margin-bottom:14px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--blue);margin-bottom:10px">📊 Operational Result (P&amp;L)${_modalInclDraft?' <span style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber);border-radius:10px;padding:1px 7px;font-size:9px;font-weight:700;margin-left:6px">incl. draft</span>':''}</div>
-      ${projRev.length?projRev.map(({p,rev,activeDays,dailyRate})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid var(--bdr)">
-        <div><span class="bold">${esc(p.client_name)}</span> / <span style="color:var(--t2)">${esc(p.name)}</span>
-        <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} days × ${fmt(dailyRate)}/day</span></div>
-        <span class="bold text-blue">${fmt(rev)}</span></div>`).join(''):'<div class="text-muted" style="font-size:11px;padding:4px 0">No confirmed project revenue</div>'}
+      ${projRev.length?projRev.map((row)=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid var(--bdr)">
+        <div><span class="bold">${esc(row.p.client_name)}</span> / <span style="color:var(--t2)">${esc(row.p.name)}</span>
+        <span style="font-size:9px;color:var(--t3);margin-left:6px">${lineHint(row)}</span></div>
+        <span class="bold text-blue">${fmt(row.rev)}</span></div>`).join(''):'<div class="text-muted" style="font-size:11px;padding:4px 0">No confirmed project revenue</div>'}
       ${draftProjRev.length?`
         <div style="margin:6px 0 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--amber);padding:4px 0;border-top:1px dashed #f0d090">&#9675; Draft Projects (indicative)</div>
-        ${draftProjRev.map(({p,rev,activeDays,dailyRate})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid #f0d090">
-          <div><span class="bold" style="color:var(--amber)">${esc(p.client_name)}</span> / <span style="color:var(--t2)">${esc(p.name)}</span>
-          <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} days × ${fmt(dailyRate)}/day</span></div>
-          <span class="bold" style="color:var(--amber)">${fmt(rev)}</span></div>`).join('')}
+        ${draftProjRev.map((row)=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid #f0d090">
+          <div><span class="bold" style="color:var(--amber)">${esc(row.p.client_name)}</span> / <span style="color:var(--t2)">${esc(row.p.name)}</span>
+          <span style="font-size:9px;color:var(--t3);margin-left:6px">${lineHint(row)}</span></div>
+          <span class="bold" style="color:var(--amber)">${fmt(row.rev)}</span></div>`).join('')}
         <div class="flex-between" style="padding:5px 0;font-size:11px;color:var(--amber)"><span>Draft subtotal</span><span>${fmt(totalDraftRev)}</span></div>
       `:''}
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px"><span>Total Revenue${_modalInclDraft&&totalDraftRev>0?' (conf + draft)':''}</span><span style="color:var(--blue)">${fmt(_modalInclDraft?totalRevInclDraft:totalProjRev)}</span></div>
+      <div class="flex-between" style="padding:4px 0;color:var(--purple)"><span>− Staffing Costs</span><span>${fmt(staffingCosts)}</span></div>
+      <div class="flex-between" style="padding:4px 0;color:var(--orange,#f97316)"><span>− External Costs</span><span>${fmt(extCosts)}</span></div>
       <div class="flex-between" style="padding:4px 0;color:var(--red)"><span>− Fixed Costs</span><span>${fmt(fixedCosts)}</span></div>
       ${forecastCosts>0?`<div class="flex-between" style="padding:4px 0;color:var(--amber)"><span>− Forecast Costs</span><span>${fmt(forecastCosts)}</span></div>`:''}
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px">
