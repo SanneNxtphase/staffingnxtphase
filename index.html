@@ -7303,26 +7303,58 @@ async function _refreshAllFinancialViews(){
   // Step 3: renderFinancial has its own Supabase fetch - call separately
   try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){}
 }
+async function _insertInvoiceToSupabase(data){
+  // Insert invoice to Supabase. Retries with unique month suffix if unique constraint blocks.
+  const baseMonth=data.month||new Date().toISOString().substring(0,7);
+  for(let seq=0;seq<20;seq++){
+    const tryMonth=seq===0?baseMonth:(baseMonth+'-'+seq);
+    const pay=_supaFilter('invoices',{...data,month:tryMonth});
+    // Use raw fetch so we can check HTTP status
+    try{
+      const hdrs=_supaHdr();
+      hdrs['Prefer']='return=representation';
+      const resp=await fetch(_supaUrl('invoices','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(pay)});
+      if(resp.ok){
+        const rows=await resp.json().catch(()=>[]);
+        const supaId=rows[0]?.id;
+        if(supaId) return{supaId,month:tryMonth};
+      }
+      // Only retry on 409 conflict (unique constraint violation)
+      if(resp.status!==409) return null;
+      // 409 → try next month suffix
+    }catch(e){return null;}
+  }
+  return null;
+}
+
 async function saveInvoice(id){
   const amount=parseMoneyInput(document.getElementById('f-amount')?.value);
-  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:amount,month:(document.getElementById('f-month').value||'').trim(),billing_type:document.getElementById('f-billing').value||'one-time',draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
+  const data={project_id:parseInt(document.getElementById('f-proj').value),amount:amount,month:(document.getElementById('f-month').value||new Date().toISOString().substring(0,7)).trim(),billing_type:document.getElementById('f-billing').value||'one-time',draft_created:document.getElementById('f-draft').checked?1:0,invoice_sent:document.getElementById('f-sent').checked?1:0,paid:document.getElementById('f-paid').checked?1:0};
   if(!data.project_id) return alert('Project required');
   if(!amount) return alert('Amount required');
   if(id){
     await DB.update('invoices',id,data);
-    // Update S.invoices in memory immediately so render shows correct data
     const idx=S.invoices.findIndex(i=>i.id==id);
     if(idx>=0) Object.assign(S.invoices[idx],{...data,id:parseInt(id)});
   } else {
-    const result=await DB.insert('invoices',data);
-    const newId=(result&&(result.lastInsertRowid||result.id))||Date.now();
-    // Add to S.invoices immediately so render shows correct data
-    S.invoices.push({...data,id:parseInt(newId)||newId});
+    const saved=await _insertInvoiceToSupabase(data);
+    const supaId=saved?.supaId;
+    const finalMonth=saved?.month||data.month;
+    const finalData={...data,month:finalMonth};
+    // Also write to localStorage with Supabase ID if we got one
+    const store=DB._gs();
+    const localId=(store._ids&&store._ids.invoices)||1;
+    if(store._ids) store._ids.invoices=(localId+1);
+    store.invoices=store.invoices||[];
+    const localRow={...finalData,id:supaId||localId,created_at:new Date().toISOString()};
+    store.invoices.push(localRow);
+    DB._sv(); DB._store=null;
+    S.invoices.push({...finalData,id:supaId||localId});
+    if(!saved) showToast('⚠ Factuur lokaal opgeslagen maar Supabase sync mislukt','warning');
   }
   closeModal();
   try{if(typeof renderInvoices==='function')renderInvoices();}catch(e){}
   try{if(typeof renderPartner==='function')renderPartner();}catch(e){}
-  // Then confirm from Supabase in background
   await loadData();
   try{if(typeof renderInvoices==='function')renderInvoices();}catch(e){}
   try{if(typeof renderPartner==='function')renderPartner();}catch(e){}
@@ -8877,12 +8909,36 @@ async function savePartnerInvoice(id){
     await DB.update('invoices',id,invData);
   } else if(editingPartnerInv){
     await DB.delete('partner_invoices',id);
-    await DB.insert('invoices',invData);
+    const savedPI=await _insertInvoiceToSupabase(invData);
+    const supaIdPI=savedPI?.supaId;
+    const finalMonthPI=savedPI?.month||invData.month;
+    const store2=DB._gs();
+    const localId2=(store2._ids&&store2._ids.invoices)||1;
+    if(store2._ids) store2._ids.invoices=(localId2+1);
+    store2.invoices=store2.invoices||[];
+    store2.invoices.push({...invData,month:finalMonthPI,id:supaIdPI||localId2,created_at:new Date().toISOString()});
+    DB._sv(); DB._store=null;
+    S.invoices.push({...invData,month:finalMonthPI,id:supaIdPI||localId2});
   } else {
-    await DB.insert('invoices',invData);
+    const saved=await _insertInvoiceToSupabase(invData);
+    const supaId=saved?.supaId;
+    const finalMonth=saved?.month||invData.month;
+    const finalData={...invData,month:finalMonth};
+    const store=DB._gs();
+    const localId=(store._ids&&store._ids.invoices)||1;
+    if(store._ids) store._ids.invoices=(localId+1);
+    store.invoices=store.invoices||[];
+    store.invoices.push({...finalData,id:supaId||localId,created_at:new Date().toISOString()});
+    DB._sv(); DB._store=null;
+    S.invoices.push({...finalData,id:supaId||localId});
+    if(!saved) showToast('⚠ Factuur lokaal opgeslagen maar Supabase sync mislukt','warning');
   }
   closeModal();
-  await _refreshAllFinancialViews();
+  try{if(typeof renderInvoices==='function')renderInvoices();}catch(e){}
+  try{if(typeof renderPartner==='function')renderPartner();}catch(e){}
+  await loadData();
+  try{if(typeof renderInvoices==='function')renderInvoices();}catch(e){}
+  try{if(typeof renderPartner==='function')renderPartner();}catch(e){}
 }
 
 // ══ EXCEL EXPORT (Full backup) ══
@@ -9912,6 +9968,13 @@ async function runSupaDiag(){
       }
     }
   }catch(e){log('❌ Exception: '+e.message,'#f87171');}
+
+  // Step 6: Check for unique constraint on invoices that blocks multiple invoices per project/month
+  log('\n--- 6. invoices unique constraint check ---');
+  log('If you cannot add multiple invoices per project, run this SQL in Supabase SQL Editor:','#fb923c');
+  log('ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_project_id_month_key;','#86efac');
+  log('ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_project_id_month_unique;','#86efac');
+  log('This allows multiple invoices per project per month (required for partial billing).','#86efac');
 
   log('\n=== DONE ===');
 }
