@@ -7265,7 +7265,7 @@ function modalInvoiceBody(inv,preselectedProjectId){
   return`<div class="form-group"><label class="form-lbl">Project</label><select class="form-input" id="f-proj">${projOptions}</select></div>
     <div class="form-row">
       <div class="form-group"><label class="form-lbl">Amount (€)</label><input class="form-input" type="number" id="f-amount" value="${inv?.amount||''}"></div>
-      <div class="form-group"><label class="form-lbl">Period (YYYY-MM or YYYY-Wnn)</label><input class="form-input" id="f-month" placeholder="2026-02" value="${inv?.month||''}"></div>
+      <div class="form-group"><label class="form-lbl">Period (YYYY-MM or YYYY-Wnn)</label><input class="form-input" id="f-month" placeholder="2026-02" value="${inv?.month||new Date().toISOString().substring(0,7)}" value="${inv?.month||''}"></div>
     </div>
     <div class="form-group"><label class="form-lbl">Invoice Type</label>
       <select class="form-input" id="f-billing">
