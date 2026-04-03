@@ -3850,7 +3850,7 @@ function renderProjects(){
       <td class="text-muted">${p.start_date||'—'}</td><td class="text-muted" style="${isComp?'color:var(--amber)!important;font-weight:600':''}">${p.end_date||'—'}</td>
       <td class="right">${w}</td>
       <td class="right text-blue bold">${fmt(p.revenue)}${partnerProgress}</td>
-      <td class="right text-muted">${fmt(rpw)}</td>
+      <td class="right text-muted" title="${w} wks × this rate = ${fmt(p.revenue)}">${w>0&&rpw>0?'€'+rpw.toLocaleString('nl-NL',{minimumFractionDigits:2,maximumFractionDigits:4})+'/wk':'—'}</td>
       <td class="right" style="color:var(--pink)">${fmt(cost)}</td>
       <td class="right" style="color:var(--orange,#f97316)">${extCost>0?fmt(extCost):'<span style="color:var(--t4)">—</span>'}</td>
       <td class="right bold ${mc}" title="Rev: ${fmt(p.revenue)} | Staff: ${fmt(cost)}${extCost>0?' | Ext: '+fmt(extCost):''}">${mg.toFixed(1)}%<div style="font-size:8px;color:var(--t3);font-weight:400">${fmt(p.revenue-totalCost)}</div></td>
@@ -8110,7 +8110,6 @@ function renderFinancial(){
   if(_kpis)_kpis.innerHTML='';
 
   // Always fetch ALL required data fresh — never depend on prior state
-  // projects is required by showRevenueDrilldown — must always be fresh
   const _fetches=[
     _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc'),
     _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc'),
@@ -8181,7 +8180,6 @@ function renderFinancial(){
       ecRows.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
       S.externalCosts=ecRows;
     }
-    // projects + employees are required for revenue drilldown and staffing cost calculations
     if(prRows&&prRows.length>0){
       S.projects=prRows.map(p=>({...p,id:parseInt(p.id)||p.id,is_partner:p.is_partner||0,recurring_amount:p.recurring_amount||0,recurring_freq:p.recurring_freq||'monthly'}));
     }
@@ -9273,8 +9271,10 @@ function showRevenueDrilldown(year,mo){
     const mS=Math.floor(Date.UTC(year,mo-1,1)/86400000);
     const mE=Math.floor(Date.UTC(year,mo,0)/86400000);
     const activeDays=Math.max(1,Math.min(pE,mE)-Math.max(pS,mS)+1);
-    const dailyRate=rev/activeDays; // always rev÷days — correct for fixed-fee and recurring
-    return{p,rev,activeDays,dailyRate,isDraft:false};
+    const dailyRate=rev/activeDays;
+    const wkCount=Math.max(1,projectWkCount(p));
+    const rpwVal=parseFloat(p.revenue||0)/wkCount;
+    return{p,rev,activeDays,dailyRate,wkCount,rpwVal,isDraft:false};
   }).filter(Boolean);
 
   // Draft projects — only when incl. draft is checked
@@ -9287,10 +9287,12 @@ function showRevenueDrilldown(year,mo){
     const mE=Math.floor(Date.UTC(year,mo,0)/86400000);
     const activeDays=Math.max(1,Math.min(pE,mE)-Math.max(pS,mS)+1);
     const dailyRate=rev/activeDays;
-    return{p,rev,activeDays,dailyRate,isDraft:true};
+    const wkCount=Math.max(1,projectWkCount(p));
+    const rpwVal=parseFloat(p.revenue||0)/wkCount;
+    return{p,rev,activeDays,dailyRate,wkCount,rpwVal,isDraft:true};
   }).filter(Boolean):[];
   
-  // Financial summary — identical formula to _renderFinancialActual P&L table
+  // Financial summary using same revForMonth as P&L
   const totalProjRev=projRev.reduce((s,r)=>s+r.rev,0);
   const totalDraftRev=draftProjRev.reduce((s,r)=>s+r.rev,0);
   const fixedCosts=fixedMonthly(year,mo);
@@ -9303,8 +9305,7 @@ function showRevenueDrilldown(year,mo){
   const totalOpCosts=fixedCosts+forecastCosts+staffingCosts+extCosts;
   const opResult=totalProjRev-totalOpCosts;
   const opMargin=totalProjRev>0?(opResult/totalProjRev*100):0;
-
-  // Cashflow — use Cashflow module (same source as P&L table, not raw bank_transactions)
+  // Cashflow from Cashflow module (same source as P&L table)
   const cfEntry=getCFEntryForMonth(moStr);
   const cfNet=cfEntry?(parseFloat(cfEntry.closing||0)-parseFloat(cfEntry.opening||0)):null;
   const bankIn=cfEntry?(cfEntry.inflow!=null?parseFloat(cfEntry.inflow||0):Math.max(0,cfNet)):0;
@@ -9312,7 +9313,7 @@ function showRevenueDrilldown(year,mo){
   const openBal=cfEntry?parseFloat(cfEntry.opening||0):null;
   const closeBal=cfEntry?parseFloat(cfEntry.closing||0):null;
   const hasCFEntry=cfEntry!==null;
-
+  
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
   const totalRevInclDraft=totalProjRev+totalDraftRev;
@@ -9323,16 +9324,16 @@ function showRevenueDrilldown(year,mo){
   <div class="modal-body">
     <div style="background:var(--blue-bg);border:1px solid var(--bdr2);border-radius:var(--r);padding:13px;margin-bottom:14px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--blue);margin-bottom:10px">📊 Operational Result (P&amp;L)${_modalInclDraft?' <span style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber);border-radius:10px;padding:1px 7px;font-size:9px;font-weight:700;margin-left:6px">incl. draft</span>':''}</div>
-      ${projRev.length?projRev.map(({p,rev,activeDays,dailyRate})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid var(--bdr)">
+      ${projRev.length?projRev.map(({p,rev,activeDays,dailyRate,wkCount,rpwVal})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid var(--bdr)">
         <div><span class="bold">${esc(p.client_name)}</span> / <span style="color:var(--t2)">${esc(p.name)}</span>
-        <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} days × ${fmt(dailyRate)}/day</span></div>
-        <span class="bold text-blue">${fmt(rev)}</span></div>`).join(''):'<div class="text-muted" style="font-size:11px;padding:4px 0">No confirmed project revenue</div>'}
+        <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} active days · €${rpwVal.toLocaleString('nl-NL',{minimumFractionDigits:2,maximumFractionDigits:4})}/wk (${wkCount} wks)</span></div>
+        <span class="bold text-blue">€${rev.toLocaleString('nl-NL',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>`).join(''):'<div class="text-muted" style="font-size:11px;padding:4px 0">No confirmed project revenue</div>'}
       ${draftProjRev.length?`
         <div style="margin:6px 0 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--amber);padding:4px 0;border-top:1px dashed #f0d090">&#9675; Draft Projects (indicative)</div>
-        ${draftProjRev.map(({p,rev,activeDays,dailyRate})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid #f0d090">
+        ${draftProjRev.map(({p,rev,activeDays,dailyRate,wkCount,rpwVal})=>`<div class="flex-between" style="padding:4px 0;border-bottom:1px solid #f0d090">
           <div><span class="bold" style="color:var(--amber)">${esc(p.client_name)}</span> / <span style="color:var(--t2)">${esc(p.name)}</span>
-          <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} days × ${fmt(dailyRate)}/day</span></div>
-          <span class="bold" style="color:var(--amber)">${fmt(rev)}</span></div>`).join('')}
+          <span style="font-size:9px;color:var(--t3);margin-left:6px">${activeDays} active days · €${rpwVal.toLocaleString('nl-NL',{minimumFractionDigits:2,maximumFractionDigits:4})}/wk (${wkCount} wks)</span></div>
+          <span class="bold" style="color:var(--amber)">€${rev.toLocaleString('nl-NL',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>`).join('')}
         <div class="flex-between" style="padding:5px 0;font-size:11px;color:var(--amber)"><span>Draft subtotal</span><span>${fmt(totalDraftRev)}</span></div>
       `:''}
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px"><span>Total Revenue${_modalInclDraft&&totalDraftRev>0?' (conf + draft)':''}</span><span style="color:var(--blue)">${fmt(_modalInclDraft?totalRevInclDraft:totalProjRev)}</span></div>
@@ -9347,8 +9348,7 @@ function showRevenueDrilldown(year,mo){
     </div>
     <div style="background:var(--green-p);border:1px solid #7fd4a8;border-radius:var(--r);padding:13px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--green);margin-bottom:10px">🏦 Bank Cashflow — ${lbl} (Cashflow Module)</div>
-      ${hasCFEntry?`
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+      ${hasCFEntry?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
         <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Opening Balance</span><span style="font-weight:600">${fmt(openBal)}</span></div>
         <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Closing Balance</span><span style="font-weight:700;color:${closeBal>=0?'var(--blue)':'var(--red)'}">${fmt(closeBal)}</span></div>
         <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Bank Inflow</span><span style="color:var(--green);font-weight:700">${fmt(bankIn)}</span></div>
@@ -9357,8 +9357,8 @@ function showRevenueDrilldown(year,mo){
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid rgba(39,174,114,.25);margin-top:2px">
         <span>Net Cash Movement</span>
         <span style="color:${bankIn-bankOut>=0?'var(--green)':'var(--red)'}"><strong>${fmt(bankIn-bankOut)}</strong></span>
-      </div>`:`<div style="color:var(--t3);font-size:11.5px;padding:8px 0">No cashflow entry for this month. Add data in the Cashflow tab.</div>`}
-      <div style="font-size:9.5px;color:var(--t2);margin-top:6px;padding:6px 8px;background:rgba(39,174,114,.08);border-radius:var(--rsm)">ℹ Cashflow data is from the Cashflow module (opening/closing balances). P&amp;L and Cashflow always show identical figures.</div>
+      </div>`:'<div style="color:var(--t3);font-size:11.5px;padding:8px 0">No cashflow entry for this month.</div>'}
+      <div style="font-size:9.5px;color:var(--t2);margin-top:6px;padding:6px 8px;background:rgba(39,174,114,.08);border-radius:var(--rsm)">ℹ Cashflow data from the Cashflow module. P&amp;L and Cashflow always match.</div>
     </div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Close</button></div>`;
@@ -9540,92 +9540,7 @@ async function cleanOrphanedStaffing(){alert('Read-only snapshot — editing is 
   let snap=originalHtml;
   // Inject readonly banner right after <body>
   snap=snap.replace(/<body[^>]*>/, m=>m+readonlyBanner);
-  // Inject readonly script right before 
-<script>
-(function(){
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
-})();
-</script>
-
-
-<script>
-// SAFE RENDER GUARD (prevents empty dashboards)
-(function(){
-  if (typeof renderFinancial === 'function') {
-    const _rf = renderFinancial;
-    renderFinancial = function(){
-      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
-    }
-  }
-  if (typeof renderDashboard === 'function') {
-    const _rd = renderDashboard;
-    renderDashboard = function(){
-      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
-    }
-  }
-})();
-</script>
-
-</body>
-  snap=snap.replace('
-<script>
-(function(){
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
-})();
-</script>
-
-
-<script>
-// SAFE RENDER GUARD (prevents empty dashboards)
-(function(){
-  if (typeof renderFinancial === 'function') {
-    const _rf = renderFinancial;
-    renderFinancial = function(){
-      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
-    }
-  }
-  if (typeof renderDashboard === 'function') {
-    const _rd = renderDashboard;
-    renderDashboard = function(){
-      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
-    }
-  }
-})();
-</script>
-
-</body>',readonlyScript+'
-<script>
-(function(){
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
-})();
-</script>
-
-
-<script>
-// SAFE RENDER GUARD (prevents empty dashboards)
-(function(){
-  if (typeof renderFinancial === 'function') {
-    const _rf = renderFinancial;
-    renderFinancial = function(){
-      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
-    }
-  }
-  if (typeof renderDashboard === 'function') {
-    const _rd = renderDashboard;
-    renderDashboard = function(){
-      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
-    }
-  }
-})();
-</script>
-
-</body>');
+  snap=snap.replace(/<\/head>/, s=>readonlyScript+s);
   // Add readonly CSS to disable pointer events on interactive elements
   snap=snap.replace('</style>',`
 /* ── READ-ONLY SNAPSHOT STYLES ── */
@@ -10216,32 +10131,8 @@ ${cf?`<div class="section"><div class="section-title">Bank / Cashflow</div>
 </div>`:`<div class="section"><div class="section-title">Bank / Cashflow</div><p style="color:#9ca3af;font-size:11px;padding:8px 0">No cashflow data for this month. Enter data in the Cashflow module.</p></div>`}
 <div class="footer"><span>NXT Phase AI · staffingnxtphase.vercel.app</span><span>Monthly Report ${moLabel}</span></div>
 
-<script>
-(function(){
-  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
-  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
-  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
-})();
-</script>
 
 
-<script>
-// SAFE RENDER GUARD (prevents empty dashboards)
-(function(){
-  if (typeof renderFinancial === 'function') {
-    const _rf = renderFinancial;
-    renderFinancial = function(){
-      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
-    }
-  }
-  if (typeof renderDashboard === 'function') {
-    const _rd = renderDashboard;
-    renderDashboard = function(){
-      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
-    }
-  }
-})();
-</script>
 
 </body></html>`;
   closeModal();
@@ -10721,9 +10612,9 @@ function wkFmtLabel(mon,fri){
       })();
       return;
     }
-    // init() called normally for admin/viewer
+    init(); // resume admin/viewer session
   }
-  // else: overlay remains visible, init() called after auth
+  // else: overlay remains visible, init() called after authSubmit()
   }); // end syncPins.finally
 })();
 
@@ -10938,6 +10829,7 @@ function initBankPlanner(){
 
 <script>
 (function(){
+  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
   const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
   if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
   else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
