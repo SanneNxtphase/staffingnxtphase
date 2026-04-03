@@ -422,6 +422,18 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
 
   </div>
 </div>
+<!-- FILE:// WARNING — shown only when opened locally, not on Vercel -->
+<div id="file-protocol-warning" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99998;background:#dc2626;color:#fff;padding:10px 16px;font-size:13px;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)">
+  ⚠ Je opent dit bestand lokaal — wijzigingen worden NIET opgeslagen in Supabase. Gebruik altijd de <span style="text-decoration:underline">Vercel URL</span>.
+</div>
+<script>
+if(location.protocol==='file:'){
+  document.addEventListener('DOMContentLoaded',function(){
+    var w=document.getElementById('file-protocol-warning');
+    if(w)w.style.display='block';
+  });
+}
+</script>
 <div class="app">
 <!-- Mobile bottom nav -->
 <nav class="mobile-nav" id="mobile-nav">
@@ -3160,6 +3172,9 @@ async function saveExtCost(id){
     ok=false;
   }
   if(!ok) showToast('⚠ Ext cost opslaan mislukt — zie Supabase Diagnostics in sidebar','error');
+  renderExtCosts&&renderExtCosts();
+  renderProjects&&renderProjects();
+  renderDashboard&&renderDashboard();
   await loadData();
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
@@ -5028,7 +5043,7 @@ async function saveSickLeave(id){
     console.error('[saveSickLeave] exception:',e);
     showToast('⚠ Opslaan mislukt: '+e.message,'error');
   }
-  await loadData();renderSickLeave();renderPage('schedule');
+  renderSickLeave();renderPage('schedule');await loadData();renderSickLeave();renderPage('schedule');
 }
 async function deleteSickLeave(id){
   if(!confirm('Delete this sick leave entry?'))return;
@@ -7158,7 +7173,7 @@ async function saveProject(id){
   };
   if(!data.client_name||!data.name)return alert('Client name and project name are required.');
   if(id)await DB.update('projects',id,data);else await DB.insert('projects',data);
-  closeModal();await loadData();renderProjects();
+  closeModal();renderProjects();await loadData();renderProjects();
 }
 
 function modalEmployee(e){
@@ -7180,7 +7195,7 @@ async function saveEmployee(id){
   const data={name:document.getElementById('f-name').value.trim(),role:document.getElementById('f-role').value.trim(),daily_cost:parseFloat(document.getElementById('f-rate').value)||0,available_days_per_week:parseFloat(document.getElementById('f-avail').value)||5,vacation_days_per_year:parseFloat(document.getElementById('f-vacdays').value)||25};
   if(!data.name)return alert('Name required.');
   if(id)await DB.update('employees',id,data);else await DB.insert('employees',data);
-  closeModal();await loadData();renderEmployees();
+  closeModal();renderEmployees();await loadData();renderEmployees();
 }
 
 function countWorkdays(startStr,endStr){
@@ -7232,7 +7247,7 @@ async function saveVacation(id){
   if(!days)days=countWorkdays(sd,ed);
   const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
   if(id)await DB.update('vacations',id,data);else await DB.insert('vacations',data);
-  closeModal();await loadData();renderVacation();
+  closeModal();renderVacation();await loadData();renderVacation();
 }
 
 function modalInvoiceBody(inv,preselectedProjectId){
@@ -7272,14 +7287,21 @@ function modalInvoice(inv,preselectedProjectId){
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveInvoice(${inv?.id||''})">Save</button></div>`;
 }
 async function _refreshAllFinancialViews(){
+  // Step 1: render immediately with current in-memory data (instant UI update)
+  function _doRender(){
+    try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){}
+    try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){}
+    try{ if(typeof renderProjects==='function') renderProjects(); }catch(e){}
+    try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
+    try{ if(typeof renderForecast==='function') renderForecast(); }catch(e){}
+    try{ if(typeof renderCashflow==='function') renderCashflow(); }catch(e){}
+  }
+  _doRender();
+  // Step 2: fetch fresh from Supabase and re-render to confirm
   await loadData();
-  try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){}
-  try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){}
-  try{ if(typeof renderProjects==='function') renderProjects(); }catch(e){}
-  try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){}
+  _doRender();
+  // Step 3: renderFinancial has its own Supabase fetch - call separately
   try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){}
-  try{ if(typeof renderForecast==='function') renderForecast(); }catch(e){}
-  try{ if(typeof renderCashflow==='function') renderCashflow(); }catch(e){}
 }
 async function saveInvoice(id){
   const amount=parseMoneyInput(document.getElementById('f-amount')?.value);
@@ -8597,7 +8619,7 @@ async function saveFutureCost(id){
   const data={description:document.getElementById('f-desc').value.trim(),month:document.getElementById('f-month').value,amount:parseFloat(document.getElementById('f-amount').value)||0,category:document.getElementById('f-cat').value.trim(),recurring:document.getElementById('f-recurring').checked?1:0};
   if(!data.description)return alert('Description required.');
   if(id)await DB.update('future_costs',id,data);else await DB.insert('future_costs',data);
-  closeModal();await loadData();renderForecast();
+  closeModal();renderForecast();await loadData();renderForecast();
 }
 
 // ══ IMPORT CSV ══
