@@ -8110,6 +8110,7 @@ function renderFinancial(){
   if(_kpis)_kpis.innerHTML='';
 
   // Always fetch ALL required data fresh — never depend on prior state
+  // projects is required by showRevenueDrilldown — must always be fresh
   const _fetches=[
     _supaReq('GET','cashflow_months',null,'?select=*&order=id.asc'),
     _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc'),
@@ -8119,8 +8120,10 @@ function renderFinancial(){
     _supaReq('GET','settings',null,'?select=*'),
     _supaReq('GET','bank_transactions',null,'?select=*&order=date.asc'),
     _supaReq('GET','external_costs',null,'?select=*&order=id.asc'),
+    _supaReq('GET','projects',null,'?select=*&order=id.asc'),
+    _supaReq('GET','employees',null,'?select=*&order=id.asc'),
   ];
-  Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows,txRows,ecRows])=>{
+  Promise.all(_fetches).then(([cfRows,fcRows,invRows,stRows,futRows,setRows,txRows,ecRows,prRows,emRows])=>{
     // Apply fetched data into S (only override if we got real data)
     if(cfRows&&cfRows.length>0){S.cashflowMonths=cfRows;_parseCFNotes(S.cashflowMonths);}
     if(fcRows&&fcRows.length>0){
@@ -8177,6 +8180,13 @@ function renderFinancial(){
     if(ecRows&&ecRows.length>0){
       ecRows.forEach(e=>{e.id=parseInt(e.id)||e.id;e.project_id=parseInt(e.project_id)||e.project_id;});
       S.externalCosts=ecRows;
+    }
+    // projects + employees are required for revenue drilldown and staffing cost calculations
+    if(prRows&&prRows.length>0){
+      S.projects=prRows.map(p=>({...p,id:parseInt(p.id)||p.id,is_partner:p.is_partner||0,recurring_amount:p.recurring_amount||0,recurring_freq:p.recurring_freq||'monthly'}));
+    }
+    if(emRows&&emRows.length>0){
+      S.employees=emRows.map(e=>({...e,id:parseInt(e.id)||e.id}));
     }
     _renderFinancialActual();
   }).catch(()=>_renderFinancialActual());
@@ -8354,7 +8364,9 @@ function _renderFinancialActual(){
   const totRev=months.reduce((s,m)=>s+m.revenue,0);
   const totFixed=months.reduce((s,m)=>s+m.fixedCosts,0);
   const totForecast=months.reduce((s,m)=>s+m.forecastCosts,0);
-  const totOpCosts=totFixed+totForecast+totExtCosts;
+  const totStaffing=months.reduce((s,m)=>s+m.staffingCosts,0);
+  const totExtCosts2=months.reduce((s,m)=>s+m.extCosts,0);
+  const totOpCosts=totFixed+totForecast+totStaffing+totExtCosts2;
   const totRes=totRev-totOpCosts;
   const totMg=totRev>0?totRes/totRev*100:0;
   const totIn=months.reduce((s,m)=>s+m.bankIn,0);
@@ -8367,7 +8379,7 @@ function _renderFinancialActual(){
     <td class="right" style="color:var(--blue)">${fmt(totRev)}</td>
     <td class="right" style="color:var(--red)">${fmt(totFixed)}</td>
     <td class="right" style="color:var(--amber)">${fmt(totForecast)}</td>
-    <td class="right" style="color:var(--orange,#f97316)">${totExtCosts?fmt(totExtCosts):'-'}</td>
+    <td class="right" style="color:var(--orange,#f97316)">${totExtCosts2?fmt(totExtCosts2):'-'}</td>
     <td class="right">${fmt(totOpCosts)}</td>
     <td class="right${totRes>=0?' f-pos':' f-neg'}">${fmt(totRes)}</td>
     <td class="right" style="color:${totMg>=0?'var(--green)':'var(--red)'}">${totMg.toFixed(1)}%</td>
@@ -9260,11 +9272,9 @@ function showRevenueDrilldown(year,mo){
     const pE=_dateToUTCDays(p.end_date);
     const mS=Math.floor(Date.UTC(year,mo-1,1)/86400000);
     const mE=Math.floor(Date.UTC(year,mo,0)/86400000);
-    const activeDays=Math.min(pE,mE)-Math.max(pS,mS)+1;
-    const wkCount=Math.max(1,projectWkCount(p));
-    const rpw=p.revenue/wkCount;
-    const dailyRate=rpw/7;
-    return{p,rev,activeDays,rpw,dailyRate,isDraft:false};
+    const activeDays=Math.max(1,Math.min(pE,mE)-Math.max(pS,mS)+1);
+    const dailyRate=rev/activeDays; // always rev÷days — correct for fixed-fee and recurring
+    return{p,rev,activeDays,dailyRate,isDraft:false};
   }).filter(Boolean);
 
   // Draft projects — only when incl. draft is checked
@@ -9275,14 +9285,12 @@ function showRevenueDrilldown(year,mo){
     const pE=_dateToUTCDays(p.end_date);
     const mS=Math.floor(Date.UTC(year,mo-1,1)/86400000);
     const mE=Math.floor(Date.UTC(year,mo,0)/86400000);
-    const activeDays=Math.min(pE,mE)-Math.max(pS,mS)+1;
-    const wkCount=Math.max(1,projectWkCount(p));
-    const rpw=p.revenue/wkCount;
-    const dailyRate=rpw/7;
-    return{p,rev,activeDays,rpw,dailyRate,isDraft:true};
+    const activeDays=Math.max(1,Math.min(pE,mE)-Math.max(pS,mS)+1);
+    const dailyRate=rev/activeDays;
+    return{p,rev,activeDays,dailyRate,isDraft:true};
   }).filter(Boolean):[];
   
-  // Financial summary using same revForMonth as P&L
+  // Financial summary — identical formula to _renderFinancialActual P&L table
   const totalProjRev=projRev.reduce((s,r)=>s+r.rev,0);
   const totalDraftRev=draftProjRev.reduce((s,r)=>s+r.rev,0);
   const fixedCosts=fixedMonthly(year,mo);
@@ -9290,18 +9298,21 @@ function showRevenueDrilldown(year,mo){
   S.futureCosts.forEach(fc=>{
     if(fc.recurring||fc.month===moStr){forecastCosts+=Math.abs(parseFloat(fc.amount||0));}
   });
-  const totalOpCosts=fixedCosts+forecastCosts+staffCostMonth(year,mo)+totalExtCostMonth(moStr);
+  const staffingCosts=staffCostMonth(year,mo);
+  const extCosts=totalExtCostMonth(moStr);
+  const totalOpCosts=fixedCosts+forecastCosts+staffingCosts+extCosts;
   const opResult=totalProjRev-totalOpCosts;
   const opMargin=totalProjRev>0?(opResult/totalProjRev*100):0;
-  
-  // Cashflow (separate)
-  const bankIn=getBankInForMonth(moStr);
-  const bankOut=getBankOutForMonth(moStr);
-  const bankInGross=S.transactions.filter(t=>t.date&&t.date.startsWith(moStr)&&getTxType(t)==='revenue').reduce((s,t)=>s+Math.abs(parseFloat(t.amount||0)),0);
-  const bankOutGross=S.transactions.filter(t=>t.date&&t.date.startsWith(moStr)&&getTxType(t)==='cost').reduce((s,t)=>s+Math.abs(parseFloat(t.amount||0)),0);
-  const vatOnIn=bankInGross-bankIn;
-  const vatOnOut=bankOutGross-bankOut;
-  
+
+  // Cashflow — use Cashflow module (same source as P&L table, not raw bank_transactions)
+  const cfEntry=getCFEntryForMonth(moStr);
+  const cfNet=cfEntry?(parseFloat(cfEntry.closing||0)-parseFloat(cfEntry.opening||0)):null;
+  const bankIn=cfEntry?(cfEntry.inflow!=null?parseFloat(cfEntry.inflow||0):Math.max(0,cfNet)):0;
+  const bankOut=cfEntry?(cfEntry.outflow!=null?parseFloat(cfEntry.outflow||0):Math.max(0,-cfNet)):0;
+  const openBal=cfEntry?parseFloat(cfEntry.opening||0):null;
+  const closeBal=cfEntry?parseFloat(cfEntry.closing||0):null;
+  const hasCFEntry=cfEntry!==null;
+
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
   const totalRevInclDraft=totalProjRev+totalDraftRev;
@@ -9327,28 +9338,27 @@ function showRevenueDrilldown(year,mo){
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px"><span>Total Revenue${_modalInclDraft&&totalDraftRev>0?' (conf + draft)':''}</span><span style="color:var(--blue)">${fmt(_modalInclDraft?totalRevInclDraft:totalProjRev)}</span></div>
       <div class="flex-between" style="padding:4px 0;color:var(--red)"><span>− Fixed Costs</span><span>${fmt(fixedCosts)}</span></div>
       ${forecastCosts>0?`<div class="flex-between" style="padding:4px 0;color:var(--amber)"><span>− Forecast Costs</span><span>${fmt(forecastCosts)}</span></div>`:''}
+      ${staffingCosts>0?`<div class="flex-between" style="padding:4px 0;color:var(--pink)"><span>− Staffing Costs</span><span>${fmt(staffingCosts)}</span></div>`:''}
+      ${extCosts>0?`<div class="flex-between" style="padding:4px 0;color:var(--orange,#f97316)"><span>− Ext. Project Costs</span><span>${fmt(extCosts)}</span></div>`:''}
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid var(--bdr2);margin-top:2px">
         <span>= Monthly Result</span>
         <span style="color:${(_modalInclDraft?opResultInclDraft:opResult)>=0?'var(--green)':'var(--red)'}"><strong>${fmt(_modalInclDraft?opResultInclDraft:opResult)}</strong> <span style="font-size:10px;font-weight:400">(${(_modalInclDraft?opMarginInclDraft:opMargin).toFixed(1)}%)</span></span>
       </div>
     </div>
     <div style="background:var(--green-p);border:1px solid #7fd4a8;border-radius:var(--r);padding:13px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--green);margin-bottom:10px">🏦 Bank Cashflow — ${lbl} (Actual Liquidity)</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--green);margin-bottom:10px">🏦 Bank Cashflow — ${lbl} (Cashflow Module)</div>
+      ${hasCFEntry?`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
-        <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Inflow excl. VAT</span><span style="color:var(--green);font-weight:700">${fmt(bankIn)}</span></div>
-        <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Outflow excl. VAT</span><span style="color:var(--red);font-weight:700">${fmt(bankOut)}</span></div>
-        <div class="flex-between" style="padding:4px 0;color:var(--t3)"><span style="font-size:10.5px">VAT on income</span><span style="font-size:10.5px">+${fmt(vatOnIn)}</span></div>
-        <div class="flex-between" style="padding:4px 0;color:var(--t3)"><span style="font-size:10.5px">VAT on costs</span><span style="font-size:10.5px">+${fmt(vatOnOut)}</span></div>
+        <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Opening Balance</span><span style="font-weight:600">${fmt(openBal)}</span></div>
+        <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Closing Balance</span><span style="font-weight:700;color:${closeBal>=0?'var(--blue)':'var(--red)'}">${fmt(closeBal)}</span></div>
+        <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Bank Inflow</span><span style="color:var(--green);font-weight:700">${fmt(bankIn)}</span></div>
+        <div class="flex-between" style="padding:4px 0"><span style="font-size:11.5px">Bank Outflow</span><span style="color:var(--red);font-weight:700">${fmt(bankOut)}</span></div>
       </div>
       <div class="flex-between" style="padding:7px 0;font-weight:700;border-top:2px solid rgba(39,174,114,.25);margin-top:2px">
-        <span>Net Cash Movement (excl. VAT)</span>
+        <span>Net Cash Movement</span>
         <span style="color:${bankIn-bankOut>=0?'var(--green)':'var(--red)'}"><strong>${fmt(bankIn-bankOut)}</strong></span>
-      </div>
-      <div class="flex-between" style="padding:3px 0;color:var(--t3);font-size:10.5px">
-        <span>Gross cash movement (incl. VAT)</span>
-        <span>${fmt(bankInGross-bankOutGross)}</span>
-      </div>
-      <div style="font-size:9.5px;color:var(--t2);margin-top:6px;padding:6px 8px;background:rgba(39,174,114,.08);border-radius:var(--rsm)">ℹ Bank cashflow uses <strong>excl. VAT</strong> amounts to match P&amp;L. VAT is tracked separately and does not affect the operational result.</div>
+      </div>`:`<div style="color:var(--t3);font-size:11.5px;padding:8px 0">No cashflow entry for this month. Add data in the Cashflow tab.</div>`}
+      <div style="font-size:9.5px;color:var(--t2);margin-top:6px;padding:6px 8px;background:rgba(39,174,114,.08);border-radius:var(--rsm)">ℹ Cashflow data is from the Cashflow module (opening/closing balances). P&amp;L and Cashflow always show identical figures.</div>
     </div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Close</button></div>`;
