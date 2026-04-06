@@ -6744,7 +6744,7 @@ function renderSimpleCashflow(){
   let totalBankIn=0,totalBankOut=0;
   entries.forEach(e=>{
     // Use explicit inflow/outflow if entered, otherwise derive from opening/closing delta
-    if(e.inflow!=null&&e.outflow!=null){
+    if(e.inflow!==undefined&&e.inflow!==null&&e.outflow!==undefined&&e.outflow!==null){
       totalBankIn+=parseFloat(e.inflow||0);
       totalBankOut+=parseFloat(e.outflow||0);
     } else {
@@ -6776,8 +6776,8 @@ function renderSimpleCashflow(){
       const barColor=mov>=0?'var(--green)':'var(--red)';
       const lbl=e.month.length>=7?new Date(e.month+'-01').toLocaleDateString('nl-NL',{month:'short',year:'2-digit'}):e.month;
       // Use explicit inflow/outflow if entered, otherwise derive from opening/closing
-      const explicitIn=e.inflow!=null?parseFloat(e.inflow||0):null;
-      const explicitOut=e.outflow!=null?parseFloat(e.outflow||0):null;
+      const explicitIn=(e.inflow!==undefined&&e.inflow!==null)?parseFloat(e.inflow||0):null;
+      const explicitOut=(e.outflow!==undefined&&e.outflow!==null)?parseFloat(e.outflow||0):null;
       const displayIn=explicitIn!=null?explicitIn:Math.max(0,mov);
       const displayOut=explicitOut!=null?explicitOut:Math.max(0,-mov);
       const hasDetail=explicitIn!=null||explicitOut!=null;
@@ -6809,10 +6809,10 @@ function renderSimpleCashflow(){
     }).join('')+'<tr style="border-top:2px solid var(--bdr2);background:var(--bg2)">'+
       (()=>{
         const tIn=entries.reduce((s,e)=>{
-          if(e.inflow!=null)return s+parseFloat(e.inflow||0);
+          if(e.inflow!==undefined&&e.inflow!==null)return s+parseFloat(e.inflow||0);
           const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,m);},0);
         const tOut=entries.reduce((s,e)=>{
-          if(e.outflow!=null)return s+parseFloat(e.outflow||0);
+          if(e.outflow!==undefined&&e.outflow!==null)return s+parseFloat(e.outflow||0);
           const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,-m);},0);
         const tNet=tIn-tOut;
         return`<td class="bold" style="padding:8px 14px;font-size:11px">TOTAL</td>
