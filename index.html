@@ -7262,22 +7262,22 @@ async function saveVacation(id){
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
   const empId=parseInt(document.getElementById('f-emp').value);
-  // Build payloads with fallbacks for missing columns (end_date, notes may not exist in DB)
+  // Build payloads - try most compatible first, then richer versions
   const notes=document.getElementById('f-note')?.value?.trim()||'';
-  const payFull={employee_id:empId,start_date:sd,end_date:ed,days,notes};
-  const payNoNotes={employee_id:empId,start_date:sd,end_date:ed,days};
-  const payNoEndDate={employee_id:empId,start_date:sd,days,notes};
   const payMinimal={employee_id:empId,start_date:sd,days};
+  const payNoEndDate={employee_id:empId,start_date:sd,days,notes};
+  const payNoNotes={employee_id:empId,start_date:sd,end_date:ed,days};
+  const payFull={employee_id:empId,start_date:sd,end_date:ed,days,notes};
   if(id){
     // Update: try variants in order until one succeeds
     let ok=false;
     const hdrsU={..._supaHdr(),'Prefer':'return=minimal'};
     const uUrl=_supaUrl('vacations','?id=eq.'+id);
     const tryU=async(p)=>fetch(uUrl,{method:'PATCH',headers:hdrsU,body:JSON.stringify(p)});
-    let ru=await tryU(payFull);
-    if(!ru.ok) ru=await tryU(payNoNotes);
+    let ru=await tryU(payMinimal);
     if(!ru.ok) ru=await tryU(payNoEndDate);
-    if(!ru.ok) ru=await tryU(payMinimal);
+    if(!ru.ok) ru=await tryU(payNoNotes);
+    if(!ru.ok) ru=await tryU(payFull);
     ok=ru.ok;
     if(!ok){const t=await ru.text().catch(()=>'');showToast('⚠ Update mislukt ('+ru.status+'): '+t.substring(0,60),'error');}
     // Also update localStorage
@@ -7290,10 +7290,10 @@ async function saveVacation(id){
     const hdrsI={..._supaHdr(),'Prefer':'return=representation'};
     const url=_supaUrl('vacations','?select=id');
     const tryPay=async(p)=>fetch(url,{method:'POST',headers:hdrsI,body:JSON.stringify(p)});
-    let resp=await tryPay(payFull);
-    if(!resp.ok) resp=await tryPay(payNoNotes);
+    let resp=await tryPay(payMinimal);
     if(!resp.ok) resp=await tryPay(payNoEndDate);
-    if(!resp.ok) resp=await tryPay(payMinimal);
+    if(!resp.ok) resp=await tryPay(payNoNotes);
+    if(!resp.ok) resp=await tryPay(payFull);
     if(resp.ok){
       const rows=await resp.json().catch(()=>[]);
       const supaId=rows[0]?.id;
