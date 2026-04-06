@@ -7307,7 +7307,7 @@ async function saveVacation(id){
       S.vacations.push({...payFull,id:supaId||localId});
     } else {
       const errTxt=await resp.text().catch(()=>'');
-      showToast('⚠ Vakantie niet opgeslagen ('+resp.status+'): '+errTxt.substring(0,80),'error');
+      showToast('⚠ Vakantie niet opgeslagen ('+resp.status+'): '+errTxt.substring(0,300),'error');
       return;
     }
   }
@@ -10050,6 +10050,31 @@ async function runSupaDiag(){
   log('\n--- 7. vacations WRITE test ---');
   const vacEmp=S.employees[0];
   if(!vacEmp){log('⚠ No employees — skipping','#fbbf24');}else{
+    // First: discover what columns exist by fetching table info
+    try{
+      const colResp=await fetch(`${_SUPA_URL}/rest/v1/vacations?select=*&limit=0`,{headers:_supaHdr()});
+      const colHdr=colResp.headers.get('content-range')||'';
+      log('Table accessible: HTTP '+colResp.status);
+      // Try inserting with minimal fields to find which columns exist
+      const probes=[
+        {employee_id:vacEmp.id,start_date:'2099-01-01',days:1},
+        {employee_id:vacEmp.id,start_date:'2099-01-01',end_date:'2099-01-01',days:1},
+        {employee_id:vacEmp.id,start_date:'2099-01-01',end_date:'2099-01-01',days:1,notes:'test'},
+      ];
+      for(const probe of probes){
+        const pr=await fetch(`${_SUPA_URL}/rest/v1/vacations`,{method:'POST',headers:{..._supaHdr(),'Prefer':'return=representation'},body:JSON.stringify(probe)});
+        const pt=await pr.text();
+        if(pr.ok){
+          log('✅ Works with payload: '+JSON.stringify(probe),'#4ade80');
+          const rows=JSON.parse(pt);
+          if(rows[0]?.id) await fetch(`${_SUPA_URL}/rest/v1/vacations?id=eq.${rows[0].id}`,{method:'DELETE',headers:_supaHdr()});
+          log('   Columns in DB: '+JSON.stringify(Object.keys(rows[0]||{})),'#86efac');
+          break;
+        } else {
+          log('❌ Failed with: '+JSON.stringify(probe)+' → '+pt.substring(0,120),'#f87171');
+        }
+      }
+    }catch(e2){log('Exception: '+e2.message,'#f87171');}
     const testVac={employee_id:vacEmp.id,start_date:'2099-01-01',end_date:'2099-01-01',days:1,notes:''};
     log('Sending: '+JSON.stringify(testVac));
     try{
