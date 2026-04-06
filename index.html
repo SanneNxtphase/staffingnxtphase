@@ -3171,13 +3171,19 @@ async function saveExtCost(id){
       const cleanPayload=Object.fromEntries(Object.entries(_supaFilter('external_costs',rawPayload)).filter(([_,v])=>v!==null&&v!==undefined));
       const r=await _supaReq('POST','external_costs',cleanPayload);
       ok=(r!==null);
-      if(ok) showToast('External cost added');
+      if(ok){
+        // Update S.externalCosts immediately for instant UI refresh
+        const newEntry={...baseData,amount:totalAmount,week_key:startWk||null,week_count:1,id:Date.now()};
+        S.externalCosts=S.externalCosts||[];
+        S.externalCosts.push(newEntry);
+        showToast('External cost added');
+      }
     }
   }catch(e){
     console.error('[saveExtCost]',e);
     ok=false;
   }
-  if(!ok) showToast('⚠ Ext cost opslaan mislukt — zie Supabase Diagnostics in sidebar','error');
+  if(!ok) showToast('⚠ Ext cost niet opgeslagen. Open Diagnostics → Re-run om te zien welke fout er is.','error');
   renderExtCosts&&renderExtCosts();
   renderProjects&&renderProjects();
   renderDashboard&&renderDashboard();
@@ -7249,41 +7255,52 @@ function vacAutoCalcDays(){
   }
 }
 async function saveVacation(id){
-  const sd=document.getElementById('f-start').value,ed=document.getElementById('f-end').value;
+  const sd=document.getElementById('f-start').value;
+  const ed=document.getElementById('f-end').value;
   if(!sd||!ed)return alert('Start and end date required.');
   if(ed<sd)return alert('End date must be after start date.');
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
-  const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note')?.value?.trim()||''};
+  const empId=parseInt(document.getElementById('f-emp').value);
+  // Build payloads — one with notes, one without (in case column missing in DB)
+  const payWith={employee_id:empId,start_date:sd,end_date:ed,days,notes:document.getElementById('f-note')?.value?.trim()||''};
+  const payWithout={employee_id:empId,start_date:sd,end_date:ed,days};
   if(id){
-    await DB.update('vacations',id,data);
+    // Update: try with notes, fallback without
+    let ok=false;
+    const hdrsU={..._supaHdr()};
+    hdrsU['Prefer']='return=minimal';
+    let ru=await fetch(_supaUrl('vacations','?id=eq.'+id),{method:'PATCH',headers:hdrsU,body:JSON.stringify(payWith)});
+    if(!ru.ok){ru=await fetch(_supaUrl('vacations','?id=eq.'+id),{method:'PATCH',headers:hdrsU,body:JSON.stringify(payWithout)});}
+    ok=ru.ok;
+    if(!ok){const t=await ru.text().catch(()=>'');showToast('⚠ Update mislukt ('+ru.status+'): '+t.substring(0,60),'error');}
+    // Also update localStorage
+    const store=DB._gs();
+    const idx=(store.vacations||[]).findIndex(v=>v.id==id);
+    if(idx>=0) Object.assign(store.vacations[idx],payWith);
+    DB._sv(); DB._store=null;
   } else {
-    // Direct Supabase insert with fallback (notes column may not exist)
-    const pay=_supaFilter('vacations',data);
-    // Remove empty string notes to avoid column-not-exists errors
-    const pay2={...pay};
-    if(pay2.notes==='') delete pay2.notes;
-    const hdrs={..._supaHdr(),'Prefer':'return=representation'};
-    let resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(pay2)});
-    if(!resp.ok && pay2.notes!==undefined){
-      // Retry without notes
-      const {notes:_n,...payNoNotes}=pay2;
-      resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(payNoNotes)});
+    // Insert: try with notes first, then without if 4xx
+    const hdrsI={..._supaHdr(),'Prefer':'return=representation'};
+    let resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrsI,body:JSON.stringify(payWith)});
+    if(!resp.ok){
+      resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrsI,body:JSON.stringify(payWithout)});
     }
     if(resp.ok){
       const rows=await resp.json().catch(()=>[]);
       const supaId=rows[0]?.id;
-      // Also store in localStorage with Supabase ID
       const store=DB._gs();
       if(!store._ids) store._ids={};
-      const localId=(store._ids.vacations||1);
+      const localId=store._ids.vacations||1;
       store._ids.vacations=localId+1;
       if(!store.vacations) store.vacations=[];
-      store.vacations.push({...data,id:supaId||localId,created_at:new Date().toISOString()});
+      store.vacations.push({...payWith,id:supaId||localId,created_at:new Date().toISOString()});
       DB._sv(); DB._store=null;
+      S.vacations.push({...payWith,id:supaId||localId});
     } else {
       const errTxt=await resp.text().catch(()=>'');
-      showToast('⚠ Vakantie niet opgeslagen (HTTP '+resp.status+'): '+errTxt.substring(0,80),'error');
+      showToast('⚠ Vakantie niet opgeslagen ('+resp.status+'): '+errTxt.substring(0,80),'error');
+      return;
     }
   }
   closeModal();
