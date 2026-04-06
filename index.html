@@ -6616,10 +6616,31 @@ async function fcSaveEntry(){
   }
   // Encode VAT in notes as backup
   const _newNotes='||VT:'+vatType+'||||VP:'+vatPct+'||';
-  await DB.insert('fixed_costs',{name,amount,category:cat==='Uncategorised'?'':cat,vat_pct:vatPct,vat_type:vatType,active:1,notes:_newNotes});
-  closeModal();
-  await _fcReloadAndRender();
-  showToast(`"${name}" added`);
+  // Direct Supabase insert with full error visibility
+  const _fcPay={name,amount,category:cat==='Uncategorised'?'':cat,vat_pct:vatPct,vat_type:vatType,active:1,notes:_newNotes};
+  const _fcHdrs={..._supaHdr(),'Prefer':'return=representation'};
+  const _fcResp=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:_fcHdrs,body:JSON.stringify(_fcPay)});
+  if(_fcResp.ok){
+    const _fcRows=await _fcResp.json().catch(()=>[]);
+    const _fcId=_fcRows[0]?.id;
+    // Add to S.fixedCosts immediately
+    S.fixedCosts.push({..._fcPay,id:_fcId||Date.now(),active:1});
+    // Also write to localStorage
+    const _st=DB._gs();
+    if(!_st.fixed_costs) _st.fixed_costs=[];
+    _st.fixed_costs.push({..._fcPay,id:_fcId||Date.now(),created_at:new Date().toISOString()});
+    DB._sv(); DB._store=null;
+    closeModal();
+    await _fcReloadAndRender();
+    showToast(`"${name}" added`);
+  } else {
+    const _fcErr=await _fcResp.text().catch(()=>'');
+    if(_fcResp.status===409){
+      showToast('⚠ Fout bij opslaan (409 sequence conflict). Run in Supabase SQL Editor: SELECT setval(pg_get_serial_sequence($$fixed_costs$$,$$id$$),(SELECT MAX(id) FROM fixed_costs)+1)','error');
+    } else {
+      showToast('⚠ Fixed cost niet opgeslagen ('+_fcResp.status+'): '+_fcErr.substring(0,150),'error');
+    }
+  }
 }
 async function deleteFCEntry(id){
   if(!confirm('Delete this fixed cost entry?'))return;
@@ -7704,15 +7725,15 @@ async function saveFixedCost(id){
     fcHdrs['Prefer']='return=representation';
     let ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_patchPayload)});
     const riTxt=await ri.clone().text().catch(()=>'');
-    showToast('DEBUG POST '+ri.status+': '+riTxt.substring(0,120), ri.ok?'info':'error');
+    
     if(!ri.ok){
       ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_safePayload)});
       const riTxt2=await ri.clone().text().catch(()=>'');
-      showToast('DEBUG safe POST '+ri.status+': '+riTxt2.substring(0,120), ri.ok?'info':'error');
+      
     }
     if(ri.ok){
       const rows=await ri.json().catch(()=>[]);
-      showToast('DEBUG rows: '+JSON.stringify(rows).substring(0,80),'info');
+      
       const supaId=rows[0]?.id;
       data.id=supaId||Date.now();
       // Insert into localStorage with Supabase ID
@@ -7771,7 +7792,7 @@ async function saveFixedCost(id){
   showToast(id?`"${name}" updated`:`"${name}" added`);
   // Reload from Supabase to confirm and get real IDs
   await loadData();
-  showToast('Na reload: '+S.fixedCosts.length+' vaste kosten in lijst','info');
+  
   renderFixedCosts();
   if(typeof _renderFinancialActual==='function')_renderFinancialActual();
 }
