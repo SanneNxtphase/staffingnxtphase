@@ -7662,40 +7662,43 @@ async function saveFixedCost(id){
 
   console.log('[FC SAVE] id='+id+' vat_type='+data.vat_type+' vat_pct='+data.vat_pct);
 
+  const fcHdrs={..._supaHdr()};
   if(id){
     const numId=parseInt(id);
-    // Try full PATCH — _supaReq handles timeout/errors, returns {} on success, null on fail
-    let r=await _supaReq('PATCH','fixed_costs',_patchPayload,'?id=eq.'+numId,true); // suppress toast — we have fallback
-    if(r===null){
-      // HTTP 400 usually means vat_type/vat_pct columns don't exist in this deployment
-      // VAT is already encoded in notes — safe payload will work
-      console.warn('[FC SAVE] Full PATCH failed, retrying with safe payload');
-      r=await _supaReq('PATCH','fixed_costs',_safePayload,'?id=eq.'+numId);
-      if(r!==null){
-        console.log('[FC SAVE] Safe PATCH OK — VAT stored in notes field');
-      }
-    } else {
-      console.log('[FC SAVE] Full PATCH OK');
+    fcHdrs['Prefer']='return=minimal';
+    let ru=await fetch(_supaUrl('fixed_costs','?id=eq.'+numId),{method:'PATCH',headers:fcHdrs,body:JSON.stringify(_patchPayload)});
+    if(!ru.ok){
+      ru=await fetch(_supaUrl('fixed_costs','?id=eq.'+numId),{method:'PATCH',headers:fcHdrs,body:JSON.stringify(_safePayload)});
     }
-
-    // Always update localStorage regardless of Supabase result
-    try{
-      const store=DB._gs();
-      const li=(store.fixed_costs||[]).findIndex(c=>parseInt(c.id)===numId);
-      if(li>=0) Object.assign(store.fixed_costs[li],_patchPayload);
-      else store.fixed_costs.push({..._patchPayload, id:numId});
-      DB._sv(); DB._store=null;
-      console.log('[FC SAVE] localStorage updated');
-    }catch(e){ console.error('[FC SAVE] localStorage failed:',e); }
-
+    if(!ru.ok){
+      const et=await ru.text().catch(()=>'');
+      showToast('⚠ Fixed cost update mislukt ('+ru.status+'): '+et.substring(0,120),'error');
+    }
+    // Update localStorage
+    const store=DB._gs();
+    const li=(store.fixed_costs||[]).findIndex(c=>parseInt(c.id)===numId);
+    if(li>=0) Object.assign(store.fixed_costs[li],_patchPayload);
+    DB._sv(); DB._store=null;
   } else {
-    // New entry: try full POST then safe POST
-    let r=await _supaReq('POST','fixed_costs',_patchPayload,'?select=id',true);
-    if(r===null) r=await _supaReq('POST','fixed_costs',_safePayload,'?select=id');
-    if(r&&Array.isArray(r)&&r[0]&&r[0].id) data.id=parseInt(r[0].id)||r[0].id;
-    // Insert into localStorage
-    const ins=await DB.insert('fixed_costs',_patchPayload);
-    if(ins&&ins.lastInsertRowid) data.id=data.id||ins.lastInsertRowid;
+    fcHdrs['Prefer']='return=representation';
+    let ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_patchPayload)});
+    if(!ri.ok) ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_safePayload)});
+    if(ri.ok){
+      const rows=await ri.json().catch(()=>[]);
+      const supaId=rows[0]?.id;
+      data.id=supaId||Date.now();
+      // Insert into localStorage with Supabase ID
+      const store=DB._gs();
+      if(!store._ids) store._ids={};
+      const localId=store._ids.fixed_costs||1;
+      store._ids.fixed_costs=localId+1;
+      if(!store.fixed_costs) store.fixed_costs=[];
+      store.fixed_costs.push({..._patchPayload,id:supaId||localId,created_at:new Date().toISOString()});
+      DB._sv(); DB._store=null;
+    } else {
+      const et=await ri.text().catch(()=>'');
+      showToast('⚠ Fixed cost niet opgeslagen ('+ri.status+'): '+et.substring(0,200),'error');
+    }
   }
 
   // Step 2: Update in memory immediately with the exact values the user set
@@ -10024,6 +10027,30 @@ async function runSupaDiag(){
         const sql=tables.map(t=>`-- ${t}\nALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;\nDROP POLICY IF EXISTS allow_all ON ${t};\nCREATE POLICY allow_all ON ${t} FOR ALL USING (true) WITH CHECK (true);`).join('\n\n');
         log('\n'+sql,'#86efac');
       }
+    }
+  }catch(e){log('❌ Exception: '+e.message,'#f87171');}
+
+  // Step 5c: Test fixed_costs INSERT
+  log('\n--- 5c. fixed_costs WRITE test ---');
+  try{
+    const testFC={name:'__DIAG_TEST__',category:'Test',amount:0.01,active:1,notes:'diag-delete-me'};
+    const fcResp=await fetch(`${_SUPA_URL}/rest/v1/fixed_costs`,{
+      method:'POST',
+      headers:{..._supaHdr(),'Prefer':'return=representation'},
+      body:JSON.stringify(testFC)
+    });
+    const fcTxt=await fcResp.text();
+    if(fcResp.ok){
+      const rows=JSON.parse(fcTxt);
+      const newId=rows[0]?.id;
+      log('✅ INSERT fixed_costs OK — id='+newId,'#4ade80');
+      if(newId){
+        await fetch(`${_SUPA_URL}/rest/v1/fixed_costs?id=eq.${newId}`,{method:'DELETE',headers:_supaHdr()});
+        log('✅ DELETE cleanup OK','#4ade80');
+      }
+    } else {
+      log('❌ INSERT fixed_costs FAILED HTTP '+fcResp.status,'#f87171');
+      log('   '+fcTxt.substring(0,300),'#fbbf24');
     }
   }catch(e){log('❌ Exception: '+e.message,'#f87171');}
 
