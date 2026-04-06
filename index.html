@@ -7703,12 +7703,19 @@ async function saveFixedCost(id){
   } else {
     fcHdrs['Prefer']='return=representation';
     let ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_patchPayload)});
+    const riTxt=await ri.clone().text().catch(()=>'');
+    console.log('[FC SAVE] POST status:',ri.status,'body:',riTxt.substring(0,200));
     if(!ri.ok){
+      console.log('[FC SAVE] Retrying with safe payload');
       ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_safePayload)});
+      const riTxt2=await ri.clone().text().catch(()=>'');
+      console.log('[FC SAVE] Safe POST status:',ri.status,'body:',riTxt2.substring(0,200));
     }
     if(ri.ok){
       const rows=await ri.json().catch(()=>[]);
+      console.log('[FC SAVE] rows returned:',JSON.stringify(rows));
       const supaId=rows[0]?.id;
+      console.log('[FC SAVE] supaId:',supaId,'data.id will be:',supaId||'Date.now()');
       data.id=supaId||Date.now();
       // Insert into localStorage with Supabase ID
       const store=DB._gs();
@@ -7761,11 +7768,13 @@ async function saveFixedCost(id){
   _fcSaveDateOverrides();
   _finData=null;
   closeModal();
+  console.log('[FC SAVE] S.fixedCosts before render:',S.fixedCosts.length,'items');
   renderFixedCosts();
   renderDashboard();
   showToast(id?`"${name}" updated`:`"${name}" added`);
   // Reload from Supabase to confirm and get real IDs
   await loadData();
+  console.log('[FC SAVE] S.fixedCosts after loadData:',S.fixedCosts.length,'items, last:',JSON.stringify(S.fixedCosts[S.fixedCosts.length-1]));
   renderFixedCosts();
   if(typeof _renderFinancialActual==='function')_renderFinancialActual();
 }
