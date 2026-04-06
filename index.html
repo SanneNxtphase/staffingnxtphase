@@ -7702,11 +7702,8 @@ async function saveFixedCost(id){
     DB._sv(); DB._store=null;
   } else {
     fcHdrs['Prefer']='return=representation';
-    // Use upsert to avoid 409 from broken auto-increment sequences
-    fcHdrs['Prefer']='return=representation,resolution=ignore-duplicates';
     let ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_patchPayload)});
     if(!ri.ok){
-      fcHdrs['Prefer']='return=representation,resolution=ignore-duplicates';
       ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_safePayload)});
     }
     if(ri.ok){
