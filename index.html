@@ -7255,8 +7255,37 @@ async function saveVacation(id){
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
   const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note')?.value?.trim()||''};
-  if(id) await DB.update('vacations',id,data);
-  else await DB.insert('vacations',data);
+  if(id){
+    await DB.update('vacations',id,data);
+  } else {
+    // Direct Supabase insert with fallback (notes column may not exist)
+    const pay=_supaFilter('vacations',data);
+    // Remove empty string notes to avoid column-not-exists errors
+    const pay2={...pay};
+    if(pay2.notes==='') delete pay2.notes;
+    const hdrs={..._supaHdr(),'Prefer':'return=representation'};
+    let resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(pay2)});
+    if(!resp.ok && pay2.notes!==undefined){
+      // Retry without notes
+      const {notes:_n,...payNoNotes}=pay2;
+      resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(payNoNotes)});
+    }
+    if(resp.ok){
+      const rows=await resp.json().catch(()=>[]);
+      const supaId=rows[0]?.id;
+      // Also store in localStorage with Supabase ID
+      const store=DB._gs();
+      if(!store._ids) store._ids={};
+      const localId=(store._ids.vacations||1);
+      store._ids.vacations=localId+1;
+      if(!store.vacations) store.vacations=[];
+      store.vacations.push({...data,id:supaId||localId,created_at:new Date().toISOString()});
+      DB._sv(); DB._store=null;
+    } else {
+      const errTxt=await resp.text().catch(()=>'');
+      showToast('⚠ Vakantie niet opgeslagen (HTTP '+resp.status+'): '+errTxt.substring(0,80),'error');
+    }
+  }
   closeModal();
   renderVacation();
   await loadData();
@@ -8350,7 +8379,7 @@ function _renderFinancialActual(){
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const staffingCosts=staffCostMonth(year,mo); // staffing costs for this month
     const extCosts=totalExtCostMonth(moStr); // external/outsourced project costs this month
-    const totalOpCosts=fixedCosts+forecastCosts+staffingCosts+extCosts; // include staffing costs in operating result
+    const totalOpCosts=fixedCosts+forecastCosts+extCosts; // staffing shown separately in KPI, not in P&L
     const opResult=revenue-totalOpCosts;
     const opMargin=revenue>0?(opResult/revenue*100):0;
     // Active projects this month
@@ -8450,7 +8479,7 @@ function _renderFinancialActual(){
   const totForecast=months.reduce((s,m)=>s+m.forecastCosts,0);
   const totStaffing=months.reduce((s,m)=>s+m.staffingCosts,0);
   const totExtCosts2=months.reduce((s,m)=>s+m.extCosts,0);
-  const totOpCosts=totFixed+totForecast+totStaffing+totExtCosts2;
+  const totOpCosts=totFixed+totForecast+totExtCosts2; // staffing excluded per P&L design
   const totRes=totRev-totOpCosts;
   const totMg=totRev>0?totRes/totRev*100:0;
   const totIn=months.reduce((s,m)=>s+m.bankIn,0);
@@ -9411,7 +9440,7 @@ function showRevenueDrilldown(year,mo){
   });
   const staffingCosts=staffCostMonth(year,mo);
   const extCosts=totalExtCostMonth(moStr);
-  const totalOpCosts=fixedCosts+forecastCosts+staffingCosts+extCosts;
+  const totalOpCosts=fixedCosts+forecastCosts+extCosts; // staffing excluded from P&L per dashboard design
   const opResult=totalProjRev-totalOpCosts;
   const opMargin=totalProjRev>0?(opResult/totalProjRev*100):0;
   // Cashflow from Cashflow module (same source as P&L table)
@@ -9991,6 +10020,47 @@ async function runSupaDiag(){
   log('ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_project_id_month_key;','#86efac');
   log('ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_project_id_month_unique;','#86efac');
   log('This allows multiple invoices per project per month (required for partial billing).','#86efac');
+
+  // Step 7: Test vacations INSERT with exact same payload as saveVacation
+  log('\n--- 7. vacations WRITE test ---');
+  const vacEmp=S.employees[0];
+  if(!vacEmp){log('⚠ No employees — skipping','#fbbf24');}else{
+    const testVac={employee_id:vacEmp.id,start_date:'2099-01-01',end_date:'2099-01-01',days:1,notes:''};
+    log('Sending: '+JSON.stringify(testVac));
+    try{
+      const resp=await fetch(`${_SUPA_URL}/rest/v1/vacations`,{
+        method:'POST',
+        headers:{..._supaHdr(),'Prefer':'return=representation'},
+        body:JSON.stringify(testVac)
+      });
+      const txt=await resp.text();
+      if(resp.ok){
+        const rows=JSON.parse(txt);
+        const newId=rows[0]?.id;
+        log('✅ INSERT vacations OK — id='+newId,'#4ade80');
+        if(newId){
+          await fetch(`${_SUPA_URL}/rest/v1/vacations?id=eq.${newId}`,{method:'DELETE',headers:_supaHdr()});
+          log('✅ DELETE cleanup OK','#4ade80');
+        }
+      } else {
+        log('❌ INSERT vacations FAILED HTTP '+resp.status,'#f87171');
+        log('   '+txt.substring(0,300),'#fbbf24');
+        // Try without notes
+        const testVac2={employee_id:vacEmp.id,start_date:'2099-01-01',end_date:'2099-01-01',days:1};
+        const resp2=await fetch(`${_SUPA_URL}/rest/v1/vacations`,{
+          method:'POST',headers:{..._supaHdr(),'Prefer':'return=representation'},body:JSON.stringify(testVac2)
+        });
+        if(resp2.ok){
+          const rows2=JSON.parse(await resp2.text());
+          log('✅ INSERT without notes OK — notes column likely missing from DB','#fb923c');
+          if(rows2[0]?.id) await fetch(`${_SUPA_URL}/rest/v1/vacations?id=eq.${rows2[0].id}`,{method:'DELETE',headers:_supaHdr()});
+          log('   → FIX: run SQL: ALTER TABLE vacations ADD COLUMN IF NOT EXISTS notes text;','#86efac');
+        } else {
+          log('❌ Also failed without notes — check RLS policy on vacations table','#f87171');
+        }
+      }
+    }catch(e){log('❌ Exception: '+e.message,'#f87171');}
+  }
 
   log('\n=== DONE ===');
 }
