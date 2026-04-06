@@ -6953,21 +6953,24 @@ async function saveCFMonth(id){
   }
 
   // Push to Supabase
+  let cfOk=false;
   try{
     const ex=await _supaReq('GET','cashflow_months',null,'?month=eq.'+month+'&select=id');
     if(ex&&ex.length>0){
       const r=await _supaReq('PATCH','cashflow_months',{month,opening,closing,notes:notesEncoded},'?month=eq.'+month);
-      if(r===null) console.warn('[CF SAVE] PATCH failed for month',month);
+      cfOk=(r!==null);
     } else {
       const r=await _supaReq('POST','cashflow_months',{month,opening,closing,notes:notesEncoded});
-      if(r===null) console.warn('[CF SAVE] POST failed for month',month);
+      cfOk=(r!==null);
     }
   }catch(e){console.error('[CF SAVE] Supabase error:',e);}
+
+  if(!cfOk) showToast('⚠ Cashflow opgeslagen lokaal maar Supabase sync mislukt','warning');
 
   closeModal();
   _parseCFNotes(S.cashflowMonths);
   renderSimpleCashflow();
-  showToast(_id?'Month updated':'Month added');
+  if(cfOk) showToast(_id?'Month updated':'Month added');
 }
 async function deleteCFMonth(id){
   if(!confirm('Delete this month entry?'))return;
@@ -7246,8 +7249,35 @@ async function saveVacation(id){
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
   const data={employee_id:parseInt(document.getElementById('f-emp').value),start_date:sd,end_date:ed,days,notes:document.getElementById('f-note').value||null};
-  if(id)await DB.update('vacations',id,data);else await DB.insert('vacations',data);
-  closeModal();renderVacation();await loadData();renderVacation();
+  if(id){
+    await DB.update('vacations',id,data);
+  } else {
+    // Try Supabase directly with notes, fallback without notes if column missing
+    const pay=_supaFilter('vacations',data);
+    let r=await _supaReq('POST','vacations',pay,'?select=id',true);
+    if(!r){
+      // Retry without notes (in case column doesn't exist)
+      const {notes:_n,...payNoNotes}=pay;
+      r=await _supaReq('POST','vacations',payNoNotes,'?select=id');
+    }
+    if(r){
+      // Also update localStorage
+      const store=DB._gs();
+      const localId=(store._ids?.vacations)||1;
+      if(store._ids) store._ids.vacations=(localId+1);
+      store.vacations=store.vacations||[];
+      const supaId=Array.isArray(r)&&r[0]?.id?parseInt(r[0].id):localId;
+      store.vacations.push({...data,id:supaId,created_at:new Date().toISOString()});
+      DB._sv(); DB._store=null;
+    } else {
+      showToast('⚠ Vakantie kon niet worden opgeslagen in Supabase','error');
+    }
+  }
+  closeModal();
+  renderVacation();
+  await loadData();
+  renderVacation();
+  showToast(id?'Vakantie bijgewerkt':'Vakantie opgeslagen');
 }
 
 function modalInvoiceBody(inv,preselectedProjectId){
@@ -7533,19 +7563,22 @@ function fcModalPreview(){
 }
 // ── One-time repair: push all fixed cost overrides to Supabase columns ────────
 async function repairFixedCostsSupabase(){
+  // Only repair fixed costs that have NULL or missing vat_type (not valid values like 'excl')
   const items = S.fixedCosts || [];
   let patched = 0;
   for(const fc of items){
-    const needsSync = fc.vat_type === 'none' || fc.vat_type === 'excl';
+    const needsSync = !fc.vat_type || fc.vat_type === '';
     if(!needsSync) continue;
-    // Only send columns that exist in Supabase — frequency/frequency_month stored in notes
     const res = await _supaReq('PATCH','fixed_costs',{
-      vat_type: fc.vat_type||'incl',
-      vat_pct: parseFloat(fc.vat_pct)||0
+      vat_type: 'incl',
+      vat_pct: parseFloat(fc.vat_pct)||21
     },'?id=eq.'+fc.id);
-    if(res!==null) patched++;
+    if(res!==null){
+      fc.vat_type='incl'; // update in memory so it won't trigger again
+      patched++;
+    }
   }
-  if(patched>0) showToast(`✓ Synced ${patched} fixed cost(s) to Supabase`);
+  // No toast - this is a silent background repair
   return patched;
 }
 async function saveFixedCost(id){
