@@ -2619,7 +2619,12 @@ function navigate(page,el){
             if(t==='vacations') base.start_date=base.start_date||base.week_key||'';
             return base;
           });
-          if(sKey&&S[sKey]!==undefined){ S[sKey]=norm; changed=true; }
+          if(sKey&&S[sKey]!==undefined){
+            S[sKey]=norm;
+            // Parse encoded fields (inflow/outflow from notes) for cashflow
+            if(t==='cashflow_months') _parseCFNotes(S[sKey]);
+            changed=true;
+          }
           store[t]=norm;
         });
         if(changed){ DB._sv(); DB._store=null; renderPage(page); }
