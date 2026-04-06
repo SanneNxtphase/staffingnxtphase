@@ -1893,7 +1893,7 @@ var _SUPA_SCHEMA = {
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
-  vacations: ['employee_id','start_date','end_date','days','notes'],
+  vacations: ['employee_id','start_date','days','notes'], // end_date handled separately (column may not exist)
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
   external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_key_end','week_count','total_amount','usd_amount','usd_rate'],
@@ -7262,30 +7262,38 @@ async function saveVacation(id){
   let days=parseFloat(document.getElementById('f-days').value)||0;
   if(!days)days=countWorkdays(sd,ed);
   const empId=parseInt(document.getElementById('f-emp').value);
-  // Build payloads — one with notes, one without (in case column missing in DB)
-  const payWith={employee_id:empId,start_date:sd,end_date:ed,days,notes:document.getElementById('f-note')?.value?.trim()||''};
-  const payWithout={employee_id:empId,start_date:sd,end_date:ed,days};
+  // Build payloads with fallbacks for missing columns (end_date, notes may not exist in DB)
+  const notes=document.getElementById('f-note')?.value?.trim()||'';
+  const payFull={employee_id:empId,start_date:sd,end_date:ed,days,notes};
+  const payNoNotes={employee_id:empId,start_date:sd,end_date:ed,days};
+  const payNoEndDate={employee_id:empId,start_date:sd,days,notes};
+  const payMinimal={employee_id:empId,start_date:sd,days};
   if(id){
-    // Update: try with notes, fallback without
+    // Update: try variants in order until one succeeds
     let ok=false;
-    const hdrsU={..._supaHdr()};
-    hdrsU['Prefer']='return=minimal';
-    let ru=await fetch(_supaUrl('vacations','?id=eq.'+id),{method:'PATCH',headers:hdrsU,body:JSON.stringify(payWith)});
-    if(!ru.ok){ru=await fetch(_supaUrl('vacations','?id=eq.'+id),{method:'PATCH',headers:hdrsU,body:JSON.stringify(payWithout)});}
+    const hdrsU={..._supaHdr(),'Prefer':'return=minimal'};
+    const uUrl=_supaUrl('vacations','?id=eq.'+id);
+    const tryU=async(p)=>fetch(uUrl,{method:'PATCH',headers:hdrsU,body:JSON.stringify(p)});
+    let ru=await tryU(payFull);
+    if(!ru.ok) ru=await tryU(payNoNotes);
+    if(!ru.ok) ru=await tryU(payNoEndDate);
+    if(!ru.ok) ru=await tryU(payMinimal);
     ok=ru.ok;
     if(!ok){const t=await ru.text().catch(()=>'');showToast('⚠ Update mislukt ('+ru.status+'): '+t.substring(0,60),'error');}
     // Also update localStorage
     const store=DB._gs();
     const idx=(store.vacations||[]).findIndex(v=>v.id==id);
-    if(idx>=0) Object.assign(store.vacations[idx],payWith);
+    if(idx>=0) Object.assign(store.vacations[idx],payFull);
     DB._sv(); DB._store=null;
   } else {
-    // Insert: try with notes first, then without if 4xx
+    // Insert: try variants in order until one succeeds
     const hdrsI={..._supaHdr(),'Prefer':'return=representation'};
-    let resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrsI,body:JSON.stringify(payWith)});
-    if(!resp.ok){
-      resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrsI,body:JSON.stringify(payWithout)});
-    }
+    const url=_supaUrl('vacations','?select=id');
+    const tryPay=async(p)=>fetch(url,{method:'POST',headers:hdrsI,body:JSON.stringify(p)});
+    let resp=await tryPay(payFull);
+    if(!resp.ok) resp=await tryPay(payNoNotes);
+    if(!resp.ok) resp=await tryPay(payNoEndDate);
+    if(!resp.ok) resp=await tryPay(payMinimal);
     if(resp.ok){
       const rows=await resp.json().catch(()=>[]);
       const supaId=rows[0]?.id;
@@ -7294,9 +7302,9 @@ async function saveVacation(id){
       const localId=store._ids.vacations||1;
       store._ids.vacations=localId+1;
       if(!store.vacations) store.vacations=[];
-      store.vacations.push({...payWith,id:supaId||localId,created_at:new Date().toISOString()});
+      store.vacations.push({...payFull,id:supaId||localId,created_at:new Date().toISOString()});
       DB._sv(); DB._store=null;
-      S.vacations.push({...payWith,id:supaId||localId});
+      S.vacations.push({...payFull,id:supaId||localId});
     } else {
       const errTxt=await resp.text().catch(()=>'');
       showToast('⚠ Vakantie niet opgeslagen ('+resp.status+'): '+errTxt.substring(0,80),'error');
@@ -10071,7 +10079,9 @@ async function runSupaDiag(){
           const rows2=JSON.parse(await resp2.text());
           log('✅ INSERT without notes OK — notes column likely missing from DB','#fb923c');
           if(rows2[0]?.id) await fetch(`${_SUPA_URL}/rest/v1/vacations?id=eq.${rows2[0].id}`,{method:'DELETE',headers:_supaHdr()});
-          log('   → FIX: run SQL: ALTER TABLE vacations ADD COLUMN IF NOT EXISTS notes text;','#86efac');
+          log('   → FIX: run this SQL in Supabase SQL Editor:','#fb923c');
+          log('ALTER TABLE vacations ADD COLUMN IF NOT EXISTS end_date date;','#86efac');
+          log('ALTER TABLE vacations ADD COLUMN IF NOT EXISTS notes text;','#86efac');
         } else {
           log('❌ Also failed without notes — check RLS policy on vacations table','#f87171');
         }
