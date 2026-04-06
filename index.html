@@ -9028,11 +9028,15 @@ async function exportAllExcel(){
   const ok=await _ensureXLSX();
   if(!ok)return alert('Could not load Excel library. Check internet connection.');
 
+  showToast('Preparing export — fetching latest data…','info');
+  // Always fetch fresh from Supabase before export so nothing is stale
+  await loadData();
+
   const wb=window.XLSX.utils.book_new();
   const now=new Date();
   const dateStr=now.toISOString().split('T')[0];
 
-  // Helper: array of objects → worksheet with styled header row
+  // Helper: array of objects → worksheet
   function makeSheet(data,cols){
     if(!data||data.length===0){
       return window.XLSX.utils.aoa_to_sheet([cols.map(c=>c.label),[...cols.map(()=>'(no data)')]]);
@@ -9040,6 +9044,7 @@ async function exportAllExcel(){
     const rows=[cols.map(c=>c.label),...data.map(row=>cols.map(c=>{
       const v=row[c.key];
       if(v===null||v===undefined||v==='')return '';
+      if(typeof v==='boolean')return v?1:0;
       return v;
     }))];
     return window.XLSX.utils.aoa_to_sheet(rows);
@@ -9112,11 +9117,34 @@ async function exportAllExcel(){
   window.XLSX.utils.book_append_sheet(wb,makeSheet(vacEnriched,vacCols),'Vacations');
 
   // ── 7. Fixed Costs ────────────────────────────────────────────────────────
+  // Decode start_month/end_month from notes field
+  const fcExport=S.fixedCosts.map(fc=>{
+    const sm=fc.notes&&fc.notes.match(/\|\|SM:([^|]+)\|\|/)?.[1]||fc.start_month||'';
+    const em=fc.notes&&fc.notes.match(/\|\|EM:([^|]+)\|\|/)?.[1]||fc.end_month||'';
+    return{...fc,start_month:sm,end_month:em};
+  });
   const fcCols=[
     {label:'ID',key:'id'},{label:'Name',key:'name'},{label:'Category',key:'category'},
-    {label:'Monthly Amount (€)',key:'amount'},{label:'Active',key:'active'}
+    {label:'Monthly Amount (€)',key:'amount'},{label:'VAT Type',key:'vat_type'},
+    {label:'VAT %',key:'vat_pct'},{label:'Active',key:'active'},
+    {label:'Start Month',key:'start_month'},{label:'End Month',key:'end_month'},
+    {label:'Notes',key:'notes'}
   ];
-  window.XLSX.utils.book_append_sheet(wb,makeSheet(S.fixedCosts,fcCols),'Fixed Costs');
+  window.XLSX.utils.book_append_sheet(wb,makeSheet(fcExport,fcCols),'Fixed Costs');
+
+  // ── 7b. External Costs ───────────────────────────────────────────────────
+  const ecExport=S.externalCosts.map(ec=>{
+    const p=S.projects.find(x=>x.id===ec.project_id)||{};
+    return{...ec,client_name:p.client_name||'',project_name:p.name||''};
+  });
+  const ecCols=[
+    {label:'ID',key:'id'},{label:'Client',key:'client_name'},{label:'Project',key:'project_name'},
+    {label:'Vendor',key:'vendor'},{label:'Description',key:'description'},
+    {label:'Amount (€)',key:'amount'},{label:'Total Amount (€)',key:'total_amount'},
+    {label:'Week',key:'week_key'},{label:'Date',key:'date'},{label:'Hours',key:'hours'},
+    {label:'Rate (€)',key:'rate'}
+  ];
+  window.XLSX.utils.book_append_sheet(wb,makeSheet(ecExport,ecCols),'External Costs');
 
   // ── 8. Bank Transactions ─────────────────────────────────────────────────
   const txCols=[
@@ -9133,6 +9161,34 @@ async function exportAllExcel(){
     {label:'Amount (€)',key:'amount'},{label:'Category',key:'category'},{label:'Recurring',key:'recurring'}
   ];
   window.XLSX.utils.book_append_sheet(wb,makeSheet(S.futureCosts,futureCols),'Future Costs');
+
+  // ── 9b. Cashflow Months ──────────────────────────────────────────────────
+  _parseCFNotes(S.cashflowMonths);
+  const cfExport=S.cashflowMonths.map(e=>({
+    ...e,
+    inflow_explicit:e.inflow!==undefined&&e.inflow!==null?e.inflow:'',
+    outflow_explicit:e.outflow!==undefined&&e.outflow!==null?e.outflow:'',
+    net:parseFloat(e.closing||0)-parseFloat(e.opening||0)
+  }));
+  const cfCols=[
+    {label:'Month',key:'month'},{label:'Opening Balance (€)',key:'opening'},
+    {label:'Closing Balance (€)',key:'closing'},{label:'Net (€)',key:'net'},
+    {label:'Inflow (€)',key:'inflow_explicit'},{label:'Outflow (€)',key:'outflow_explicit'},
+    {label:'Notes',key:'notes'}
+  ];
+  window.XLSX.utils.book_append_sheet(wb,makeSheet(cfExport,cfCols),'Cashflow');
+
+  // ── 9c. Sick Leave ────────────────────────────────────────────────────────
+  const slExport=(S.sickLeave||[]).map(sl=>{
+    const e=S.employees.find(x=>x.id===sl.employee_id)||{};
+    return{...sl,employee_name:e.name||''};
+  });
+  const slCols=[
+    {label:'ID',key:'id'},{label:'Employee',key:'employee_name'},
+    {label:'Start Date',key:'start_date'},{label:'End Date',key:'end_date'},
+    {label:'Days',key:'days'},{label:'Notes',key:'notes'}
+  ];
+  window.XLSX.utils.book_append_sheet(wb,makeSheet(slExport,slCols),'Sick Leave');
 
   // ── 10. Financial Summary (computed) ─────────────────────────────────────
   const finYear=parseInt(document.getElementById('fin-year')?.value||new Date().getFullYear());
@@ -9177,7 +9233,13 @@ async function exportAllExcel(){
     [''],
     ['Sheets included','Projects, Partner Invoices, Invoices, Staffing, Team, Vacations, Fixed Costs, Bank Transactions, Future Costs, Financial Summary'],
     [''],
-    ['Note','This file can be used as a backup. To restore, use the JSON Export option which preserves full structure for re-import.']
+    ['Vacations',S.vacations.length],
+    ['External Costs',(S.externalCosts||[]).length],
+    ['Cashflow Months',S.cashflowMonths.length],
+    ['Sick Leave',(S.sickLeave||[]).length],
+    [''],
+    ['Sheets','Projects | Invoices | Partner Invoices | Staffing | Team | Vacations | Fixed Costs | External Costs | Bank Transactions | Future Costs | Cashflow | Sick Leave | Financial Summary'],
+    ['Note','Export bevat alle live data van Supabase op het moment van export.']
   ]);
   window.XLSX.utils.book_append_sheet(wb,infoSheet,'Export Info');
   // Move Export Info to front
