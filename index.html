@@ -2613,7 +2613,12 @@ function navigate(page,el){
           if(!rows||!rows.length)return;
           const sKey=tableToS[t];
           // Normalize IDs
-          const norm=rows.map(r=>({...r,id:parseInt(r.id)||r.id}));
+          const norm=rows.map(r=>{
+            const base={...r,id:parseInt(r.id)||r.id};
+            // For vacations: alias week_key as start_date fallback
+            if(t==='vacations') base.start_date=base.start_date||base.week_key||'';
+            return base;
+          });
           if(sKey&&S[sKey]!==undefined){ S[sKey]=norm; changed=true; }
           store[t]=norm;
         });
@@ -7281,6 +7286,7 @@ async function saveVacation(id){
     DB._sv(); DB._store=null;
   } else {
     hdrs['Prefer']='return=representation';
+    hdrs['Prefer']='return=representation,resolution=ignore-duplicates';
     const resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(pay)});
     if(resp.ok){
       const rows=await resp.json().catch(()=>[]);
@@ -7681,8 +7687,13 @@ async function saveFixedCost(id){
     DB._sv(); DB._store=null;
   } else {
     fcHdrs['Prefer']='return=representation';
+    // Use upsert to avoid 409 from broken auto-increment sequences
+    fcHdrs['Prefer']='return=representation,resolution=ignore-duplicates';
     let ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_patchPayload)});
-    if(!ri.ok) ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_safePayload)});
+    if(!ri.ok){
+      fcHdrs['Prefer']='return=representation,resolution=ignore-duplicates';
+      ri=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:fcHdrs,body:JSON.stringify(_safePayload)});
+    }
     if(ri.ok){
       const rows=await ri.json().catch(()=>[]);
       const supaId=rows[0]?.id;
@@ -10055,6 +10066,14 @@ async function runSupaDiag(){
     } else {
       log('❌ INSERT fixed_costs FAILED HTTP '+fcResp.status,'#f87171');
       log('   '+fcTxt.substring(0,300),'#fbbf24');
+      if(fcResp.status===409){
+        log('   → Sequence out of sync. Run this SQL in Supabase SQL Editor:','#fb923c');
+        log('   SELECT setval(pg_get_serial_sequence(\'fixed_costs\',\'id\'), (SELECT MAX(id) FROM fixed_costs)+1);','#86efac');
+      }
+      if(fcResp.status===409){
+        log('   → ID sequence out of sync. Fix with this SQL:','#fb923c');
+        log("   SELECT setval('fixed_costs_id_seq', (SELECT MAX(id) FROM fixed_costs) + 1);",'#86efac');
+      }
     }
   }catch(e){log('❌ Exception: '+e.message,'#f87171');}
 
