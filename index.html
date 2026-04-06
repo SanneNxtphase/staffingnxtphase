@@ -1893,7 +1893,7 @@ var _SUPA_SCHEMA = {
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
-  vacations: ['employee_id','week_key','end_date','days','notes'],
+  vacations: ['employee_id','start_date','end_date','days','notes'],
   sick_leave: ['employee_id','start_date','end_date','days','notes'],
   future_costs: ['description','month','amount','category','recurring'],
   external_costs: ['project_id','vendor','description','hours','rate','amount','date','week_key','week_key_end','week_count','total_amount','usd_amount','usd_rate'],
@@ -7265,7 +7265,7 @@ async function saveVacation(id){
   const notes=document.getElementById('f-note')?.value?.trim()||'';
   // Actual Supabase columns: employee_id, week_key, end_date, days, notes
   // week_key maps to start_date (the start of the vacation period)
-  const pay={employee_id:empId,week_key:sd,end_date:ed,days,notes};
+  const pay={employee_id:empId,start_date:sd,end_date:ed,days,notes};
   const hdrs={..._supaHdr()};
   if(id){
     hdrs['Prefer']='return=minimal';
@@ -7698,6 +7698,7 @@ async function saveFixedCost(id){
     } else {
       const et=await ri.text().catch(()=>'');
       showToast('⚠ Fixed cost niet opgeslagen ('+ri.status+'): '+et.substring(0,200),'error');
+      return; // stop here — don't show success toast
     }
   }
 
@@ -7717,7 +7718,7 @@ async function saveFixedCost(id){
     // Clear override after 10 seconds (Supabase should have it by then)
     setTimeout(()=>{if(window._fcLocalOverrides)delete window._fcLocalOverrides[String(parseInt(id))];},10000);
   } else {
-    S.fixedCosts.push({...data, id:Date.now(), notes:notesEncoded});
+    S.fixedCosts.push({...data, id:data.id||Date.now(), notes:notesEncoded});
   }
 
   // Step 3: Also update localStorage
@@ -7739,8 +7740,11 @@ async function saveFixedCost(id){
   closeModal();
   renderFixedCosts();
   renderDashboard();
-  if(typeof _renderFinancialActual==='function')_renderFinancialActual();
   showToast(id?`"${name}" updated`:`"${name}" added`);
+  // Reload from Supabase to confirm and get real IDs
+  await loadData();
+  renderFixedCosts();
+  if(typeof _renderFinancialActual==='function')_renderFinancialActual();
 }
 
 async function deleteItem(table,id){
