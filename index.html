@@ -1879,6 +1879,16 @@ function _normFixedCosts(arr){
     // none type → vat_pct must be 0
     if(c.vat_type==='none') c.vat_pct=0;
   });
+  // Deduplicate by id — keep highest id (most recent insert wins)
+  const seen=new Map();
+  (arr||[]).forEach(c=>{
+    const existing=seen.get(c.name+'|'+(c.category||''));
+    if(!existing||parseInt(c.id)>parseInt(existing.id)) seen.set(c.name+'|'+(c.category||''),c);
+  });
+  const deduped=Array.from(seen.values());
+  if(deduped.length<arr.length){
+    arr.splice(0,arr.length,...deduped);
+  }
   return arr;
 }
 // Sync version kept for compatibility but no longer overrides VAT
@@ -5955,11 +5965,11 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  return Math.round(S.fixedCosts.filter(c=>fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  return Math.round(S.fixedCosts.filter(c=>c.active===1&&fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
-  const planningItems=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
+  const planningItems=S.fixedCosts.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
   // Use fcMonthlyAmount (frequency-adjusted excl VAT) — same as fixedMonthly() and dashboards
   const planningTotal=Math.round(planningItems.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   const catMap={};
