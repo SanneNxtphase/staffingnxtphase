@@ -570,6 +570,7 @@ if(location.protocol==='file:'){
     </div>
   </div>
   <div class="alert alert-info" style="margin-bottom:14px"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="6"/><path d="M7 6v4M7 4.5v.5"/></svg><span><strong>Dual-view Company Dashboard:</strong> <strong>Op. Result</strong> = Revenue – Fixed Costs (from Fixed Costs register) – Forecast Costs. <strong>Cashflow columns</strong> (Bank In/Out) are shown <em>separately</em> for liquidity monitoring only — they never influence the P&amp;L calculation. Starting balance and balance changes can be tracked in the Bank &amp; Cashflow section.</span></div>
+  <div id="fin-goal-tracker" style="margin-bottom:12px"></div>
   <div class="kpi-row" id="fin-kpis"></div>
   <!-- Mobile card view (hidden on desktop via CSS) -->
   <div class="fin-mobile-cards" id="fin-mobile-cards"></div>
@@ -8507,6 +8508,64 @@ function _renderFinancialActual(){
   const ytdBankOut=ytdMos.reduce((s,m)=>s+m.bankOut,0);
   const ytdNetCash=ytdBankIn-ytdBankOut;
   const hasCFData=S.cashflowMonths.length>0;
+  // ── REVENUE GOAL TRACKER ──────────────────────────────────────────────────
+  const REVENUE_GOAL=1800000;
+  // Revenue up to TODAY (day-accurate for current month)
+  const todayStr=now.toISOString().split('T')[0];
+  const todayYear=now.getFullYear();
+  const todayMonth=now.getMonth()+1;
+  const todayDay=now.getDate();
+  let revToToday=0;
+  if(year===todayYear){
+    // Sum full past months
+    for(let mo=1;mo<todayMonth;mo++) revToToday+=revForMonth(year,mo,'confirmed');
+    // Add partial current month: (days elapsed / total days) * monthly revenue
+    const daysInMonth=new Date(todayYear,todayMonth,0).getDate();
+    const partialFactor=todayDay/daysInMonth;
+    const currentMonthRev=revForMonth(year,todayMonth,'confirmed');
+    revToToday+=currentMonthRev*partialFactor;
+    revToToday=Math.round(revToToday);
+  } else {
+    revToToday=ytdRev; // other years: use full YTD
+  }
+  const goalPct=Math.min(100,revToToday/REVENUE_GOAL*100);
+  const goalRemaining=Math.max(0,REVENUE_GOAL-revToToday);
+  const goalOvershoot=revToToday>REVENUE_GOAL?revToToday-REVENUE_GOAL:0;
+  // Days elapsed in year vs total days
+  const startOfYear=new Date(todayYear,0,1);
+  const dayOfYear=Math.ceil((now-startOfYear)/86400000)+1;
+  const daysInYear=((todayYear%4===0&&todayYear%100!==0)||todayYear%400===0)?366:365;
+  const yearPct=dayOfYear/daysInYear*100;
+  // Are we ahead or behind pace?
+  const expectedRevByNow=REVENUE_GOAL*(yearPct/100);
+  const paceGap=revToToday-expectedRevByNow;
+  const paceColor=paceGap>=0?'var(--green)':'var(--red)';
+  const goalEl=document.getElementById('fin-goal-tracker');
+  if(goalEl) goalEl.innerHTML=`
+    <div style="background:var(--bg);border:1.5px solid var(--bdr2);border-radius:var(--r);padding:14px 18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">🎯 Jaardoel Omzet</span>
+          <span style="font-size:13px;font-weight:700;color:var(--navy)">${fmt(REVENUE_GOAL)}</span>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--t2)">Gerealiseerd t/m vandaag: <strong style="color:var(--blue)">${fmt(revToToday)}</strong></span>
+          <span style="font-size:11px;color:var(--t2)">Nog te gaan: <strong style="color:${goalRemaining>0?'var(--amber)':'var(--green)'}">${goalRemaining>0?fmt(goalRemaining):'✓ Doel bereikt!'}</strong></span>
+          <span style="font-size:11px;color:${paceColor}">Pace: ${paceGap>=0?'+':''}${fmt(Math.round(paceGap))} t.o.v. verwacht</span>
+        </div>
+      </div>
+      <div style="position:relative;height:12px;background:var(--bdr);border-radius:6px;overflow:hidden">
+        <div style="height:100%;width:${goalPct.toFixed(1)}%;background:${goalPct>=100?'var(--green)':goalPct>=yearPct?'var(--blue)':'var(--amber)'};border-radius:6px;transition:width .4s"></div>
+        <!-- Year progress indicator -->
+        <div style="position:absolute;top:0;bottom:0;left:${yearPct.toFixed(1)}%;width:2px;background:var(--t3);opacity:.6"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px">
+        <span style="font-size:9px;color:var(--t3)">${goalPct.toFixed(1)}% van doel</span>
+        <span style="font-size:9px;color:var(--t3)">Streepje = positie in het jaar (${yearPct.toFixed(0)}%)</span>
+        <span style="font-size:9px;color:var(--t3)">${fmt(REVENUE_GOAL)}</span>
+      </div>
+    </div>`;
+
   document.getElementById('fin-kpis').innerHTML=`
     <div class="kpi ab"><div class="kpi-lbl">YTD Revenue</div><div class="kpi-val blue">${fmtS(ytdRev)}</div><div class="kpi-sub">${inclDraft?'Conf+draft':'Confirmed'}</div></div>
     <div class="kpi ar"><div class="kpi-lbl">YTD Fixed Costs</div><div class="kpi-val red">${fmtS(ytdFixed)}</div><div class="kpi-sub">Excl. VAT · Fixed Costs register</div></div>
