@@ -5965,11 +5965,11 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  return Math.round(S.fixedCosts.filter(c=>c.active===1&&fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  return Math.round(S.fixedCosts.filter(c=>fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
-  const planningItems=S.fixedCosts.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
+  const planningItems=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
   // Use fcMonthlyAmount (frequency-adjusted excl VAT) — same as fixedMonthly() and dashboards
   const planningTotal=Math.round(planningItems.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   const catMap={};
@@ -8344,6 +8344,7 @@ function renderFinancial(){
           }});
         }
       }catch(e){}
+      _normFixedCosts(fcRows);
       S.fixedCosts=fcRows;
     }
     if(invRows&&invRows.length>0) S.invoices=invRows;
