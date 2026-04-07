@@ -2713,6 +2713,11 @@ async function loadData(){
       try{
         const sb=await _supaReq('GET','settings',null,'?key=eq.starting_balance&select=value');
         if(sb&&sb[0]) S.startingBalance=parseFloat(sb[0].value)||0;
+      // Load revenue goal
+      try{
+        const rg=await _supaReq('GET','settings',null,'?key=eq.revenue_goal&select=value');
+        if(rg&&rg[0]) window._revenueGoal=parseFloat(rg[0].value)||1800000;
+      }catch(e){}
       }catch(e){}
 
       if(anyLoaded){
@@ -8284,6 +8289,21 @@ function setFinTab(t){
   }
 }
 
+async function editRevenueGoal(){
+  const cur=window._revenueGoal||1800000;
+  const input=prompt('Jaardoel omzet aanpassen (€):',cur);
+  if(input===null) return;
+  const val=parseFloat(String(input).replace(/[^0-9.]/g,''));
+  if(!val||val<=0) return alert('Voer een geldig bedrag in.');
+  window._revenueGoal=val;
+  try{
+    const ex=await _supaReq('GET','settings',null,'?key=eq.revenue_goal&select=id');
+    if(ex&&ex.length>0) await _supaReq('PATCH','settings',{value:String(val)},'?key=eq.revenue_goal');
+    else await _supaReq('POST','settings',{key:'revenue_goal',value:String(val)});
+    showToast('Jaardoel opgeslagen: '+fmt(val));
+  }catch(e){showToast('Doel lokaal opgeslagen','warning');}
+  if(typeof _renderFinancialActual==='function') _renderFinancialActual();
+}
 function renderFinancial(){
   // One-time repair: ensure all fixed cost overrides are in Supabase
   // Run repair on every Financial page open (not just first time)
@@ -8509,24 +8529,31 @@ function _renderFinancialActual(){
   const ytdNetCash=ytdBankIn-ytdBankOut;
   const hasCFData=S.cashflowMonths.length>0;
   // ── REVENUE GOAL TRACKER ──────────────────────────────────────────────────
-  const REVENUE_GOAL=1800000;
-  // Revenue up to TODAY (day-accurate for current month)
-  const todayStr=now.toISOString().split('T')[0];
+  // Load saved goal (default 1.800.000), stored in window for edits
+  if(window._revenueGoal===undefined){
+    const _gs=S.settings||[];
+    const _gRow=_gs.find(s=>s.key==='revenue_goal');
+    window._revenueGoal=_gRow?parseFloat(_gRow.value)||1800000:1800000;
+  }
+  const REVENUE_GOAL=window._revenueGoal;
+  // Revenue up to TODAY — use same months[] data as ytdRev for consistency
+  // past months: full confirmed revenue; current month: pro-rated to today
   const todayYear=now.getFullYear();
   const todayMonth=now.getMonth()+1;
   const todayDay=now.getDate();
   let revToToday=0;
   if(year===todayYear){
-    // Sum full past months
-    for(let mo=1;mo<todayMonth;mo++) revToToday+=revForMonth(year,mo,'confirmed');
-    // Add partial current month: (days elapsed / total days) * monthly revenue
-    const daysInMonth=new Date(todayYear,todayMonth,0).getDate();
-    const partialFactor=todayDay/daysInMonth;
-    const currentMonthRev=revForMonth(year,todayMonth,'confirmed');
-    revToToday+=currentMonthRev*partialFactor;
+    months.forEach(m=>{
+      if(m.mo<todayMonth) revToToday+=m.confRev; // full past months (confirmed only)
+      else if(m.mo===todayMonth){
+        // Pro-rate: days elapsed / days in month
+        const daysInMonth=new Date(todayYear,todayMonth,0).getDate();
+        revToToday+=m.confRev*(todayDay/daysInMonth);
+      }
+    });
     revToToday=Math.round(revToToday);
   } else {
-    revToToday=ytdRev; // other years: use full YTD
+    revToToday=months.reduce((s,m)=>s+m.confRev,0);
   }
   const goalPct=Math.min(100,revToToday/REVENUE_GOAL*100);
   const goalRemaining=Math.max(0,REVENUE_GOAL-revToToday);
@@ -8545,23 +8572,23 @@ function _renderFinancialActual(){
     <div style="background:var(--bg);border:1.5px solid var(--bdr2);border-radius:var(--r);padding:14px 18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">🎯 Jaardoel Omzet</span>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">🎯 Jaardoel Omzet ${year}</span>
           <span style="font-size:13px;font-weight:700;color:var(--navy)">${fmt(REVENUE_GOAL)}</span>
+          <button onclick="editRevenueGoal()" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--bdr2);background:var(--bg2);cursor:pointer;color:var(--t2)">✏ Aanpassen</button>
         </div>
         <div style="display:flex;gap:16px;flex-wrap:wrap">
-          <span style="font-size:11px;color:var(--t2)">Gerealiseerd t/m vandaag: <strong style="color:var(--blue)">${fmt(revToToday)}</strong></span>
+          <span style="font-size:11px;color:var(--t2)">T/m vandaag (${todayDay} ${['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'][todayMonth-1]}): <strong style="color:var(--blue)">${fmt(revToToday)}</strong></span>
           <span style="font-size:11px;color:var(--t2)">Nog te gaan: <strong style="color:${goalRemaining>0?'var(--amber)':'var(--green)'}">${goalRemaining>0?fmt(goalRemaining):'✓ Doel bereikt!'}</strong></span>
           <span style="font-size:11px;color:${paceColor}">Pace: ${paceGap>=0?'+':''}${fmt(Math.round(paceGap))} t.o.v. verwacht</span>
         </div>
       </div>
       <div style="position:relative;height:12px;background:var(--bdr);border-radius:6px;overflow:hidden">
         <div style="height:100%;width:${goalPct.toFixed(1)}%;background:${goalPct>=100?'var(--green)':goalPct>=yearPct?'var(--blue)':'var(--amber)'};border-radius:6px;transition:width .4s"></div>
-        <!-- Year progress indicator -->
-        <div style="position:absolute;top:0;bottom:0;left:${yearPct.toFixed(1)}%;width:2px;background:var(--t3);opacity:.6"></div>
+        <div style="position:absolute;top:0;bottom:0;left:${Math.min(99.5,yearPct).toFixed(1)}%;width:2px;background:rgba(0,0,0,.25);border-radius:1px"></div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:4px">
-        <span style="font-size:9px;color:var(--t3)">${goalPct.toFixed(1)}% van doel</span>
-        <span style="font-size:9px;color:var(--t3)">Streepje = positie in het jaar (${yearPct.toFixed(0)}%)</span>
+        <span style="font-size:9px;color:var(--t3)">${goalPct.toFixed(1)}% van doel gerealiseerd</span>
+        <span style="font-size:9px;color:var(--t3)">Streepje = huidig punt in jaar (${yearPct.toFixed(0)}%)</span>
         <span style="font-size:9px;color:var(--t3)">${fmt(REVENUE_GOAL)}</span>
       </div>
     </div>`;
