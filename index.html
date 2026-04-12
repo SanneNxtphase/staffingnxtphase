@@ -383,6 +383,43 @@ hr{border:none;border-top:1px solid var(--bdr);margin:12px 0;}
   .fin-row-lbl { color: var(--t2); }
   .fin-row-val { font-weight: 600; }
 }
+
+/* Mobile project cards */
+.proj-mobile-cards { display: none; }
+@media (max-width: 768px) {
+  .proj-mobile-cards { display: block; }
+  .proj-desktop-tables { display: none !important; }
+  .proj-mobile-card {
+    background: var(--bg);
+    border: 1.5px solid var(--bdr);
+    border-radius: var(--r);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .proj-mobile-card.confirmed-card { border-left: 3px solid #1d4ed8; }
+  .proj-mobile-card.draft-card     { border-left: 3px solid var(--amber); }
+  .proj-mobile-card.completed-card { opacity: .65; }
+  .proj-card-header {
+    background: var(--bg2);
+    padding: 9px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .proj-card-client { font-weight: 700; font-size: 12px; color: var(--navy); }
+  .proj-card-name   { font-size: 11px; color: var(--t2); margin-top: 1px; }
+  .proj-card-rev    { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--green); }
+  .proj-card-body   { padding: 8px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+  .proj-card-row    { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+  .proj-card-row span:first-child { color: var(--t3); }
+  .proj-card-row span:last-child  { font-weight: 600; color: var(--navy); font-family: var(--mono); }
+  .proj-card-actions { padding: 6px 12px; border-top: 1px solid var(--bdr); display: flex; gap: 6px; }
+  .proj-section-lbl {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .8px; color: var(--t3); padding: 6px 2px 4px;
+    margin-top: 8px;
+  }
+}
 </style>
 </head>
 
@@ -780,6 +817,8 @@ if(location.protocol==='file:'){
       <button class="btn btn-primary" onclick="openModal('project')">+ New Project</button>
     </div>
   </div>
+  <!-- Desktop tables (hidden on mobile) -->
+  <div class="proj-desktop-tables">
   <div class="sec-lbl confirmed">&#10003; Confirmed Projects</div>
   <div class="card mb-14"><div class="table-wrap"><table>
     <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
@@ -795,6 +834,9 @@ if(location.protocol==='file:'){
     <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
     <tbody id="stopped-tbody"></tbody>
   </table></div></div>
+  </div><!-- end proj-desktop-tables -->
+  <!-- Mobile project cards (shown on mobile only) -->
+  <div class="proj-mobile-cards" id="proj-mobile-cards"></div>
   <!-- Year Overview -->
   <div class="sec-lbl" style="color:var(--purple)">&#128200; Year Overview</div>
   <div class="card">
@@ -3961,6 +4003,64 @@ function renderProjects(){
   // STOPPED
   const stopEl=document.getElementById('stopped-tbody');
   if(stopEl)stopEl.innerHTML=stop.map(p=>mkRow(p,true)).join('')||'<tr><td colspan="11" class="empty">No stopped projects.</td></tr>';
+
+  // ── MOBILE CARDS ─────────────────────────────────────────────────────────
+  const mobileEl = document.getElementById('proj-mobile-cards');
+  if (mobileEl) {
+    const mkCard = (p, type) => {
+      const isComp = isCompleted(p);
+      const cost = projStaffCost(p.id);
+      const extCost = projExtCost(p.id);
+      const totalCost = cost + extCost;
+      const mg = p.revenue > 0 ? ((p.revenue - totalCost) / p.revenue * 100) : 0;
+      const mgColor = mg > 40 ? 'var(--green)' : mg > 10 ? 'var(--blue)' : 'var(--red)';
+      const statusBadge = type === 'confirmed' ? '✓ Confirmed' : type === 'draft' ? '○ Draft' : '✕ Stopped';
+      return `<div class="proj-mobile-card ${type}-card ${isComp ? 'completed-card' : ''}">
+        <div class="proj-card-header">
+          <div>
+            <div class="proj-card-client">${esc(p.client_name||'—')}</div>
+            <div class="proj-card-name">${esc(p.name||'—')}</div>
+          </div>
+          <div class="proj-card-rev">${fmt(p.revenue||0)}</div>
+        </div>
+        <div class="proj-card-body">
+          <div class="proj-card-row"><span>Start</span><span>${p.start_date||'—'}</span></div>
+          <div class="proj-card-row"><span>Einde</span><span>${p.end_date||'—'}</span></div>
+          <div class="proj-card-row"><span>Staff</span><span style="color:var(--pink)">${cost > 0 ? fmt(cost) : '—'}</span></div>
+          <div class="proj-card-row"><span>Ext.</span><span style="color:var(--orange,#f97316)">${extCost > 0 ? fmt(extCost) : '—'}</span></div>
+          <div class="proj-card-row" style="grid-column:1/-1"><span>Marge</span><span style="color:${mgColor}">${mg.toFixed(1)}% (${fmt(p.revenue - totalCost)})</span></div>
+        </div>
+        <div class="proj-card-actions">
+          <button class="btn btn-sm btn-ghost" onclick="openModal('project',${parseInt(p.id)||p.id})">Edit</button>
+          <button class="btn btn-sm btn-ghost" style="color:var(--orange,#f97316)" onclick="openModal('extcost',null,${parseInt(p.id)||p.id})">+ Ext</button>
+          ${p.is_partner ? `<button class="btn btn-sm btn-ghost" style="color:var(--blue)" onclick="openPartnerInvoice(${p.id})">+ Invoice</button>` : ''}
+          <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteItem('projects',${p.id})">✕</button>
+        </div>
+      </div>`;
+    };
+    let mHtml = '';
+    if (confActive.length) {
+      mHtml += `<div class="proj-section-lbl" style="color:#1d4ed8">✓ Actief (${confActive.length})</div>`;
+      mHtml += confActive.map(p => mkCard(p, 'confirmed')).join('');
+    }
+    if (confUpcoming.length) {
+      mHtml += `<div class="proj-section-lbl" style="color:var(--blue)">↑ Upcoming (${confUpcoming.length})</div>`;
+      mHtml += confUpcoming.map(p => mkCard(p, 'confirmed')).join('');
+    }
+    if (drft.length) {
+      mHtml += `<div class="proj-section-lbl" style="color:var(--amber)">○ Draft (${drft.length})</div>`;
+      mHtml += drft.map(p => mkCard(p, 'draft')).join('');
+    }
+    if (confCompleted.length) {
+      mHtml += `<div class="proj-section-lbl">✓ Afgerond (${confCompleted.length})</div>`;
+      mHtml += confCompleted.map(p => mkCard(p, 'confirmed')).join('');
+    }
+    if (stop.length) {
+      mHtml += `<div class="proj-section-lbl" style="color:var(--red)">✕ Gestopt (${stop.length})</div>`;
+      mHtml += stop.map(p => mkCard(p, 'stopped')).join('');
+    }
+    mobileEl.innerHTML = mHtml || '<p style="color:var(--t3);text-align:center;padding:20px">Geen projecten gevonden.</p>';
+  }
   // Year overview
   renderProjectYearOverview();
 }
@@ -5354,7 +5454,13 @@ function fcFreqPreview(){
   } else if(freq==='yearly'){
     firesIn=[months[baseMonth-1]];
   }
-  preview.innerHTML='&#128197; Billed in: <strong>'+firesIn.join(', ')+'</strong>';
+  const amt = parseFloat(document.getElementById('f-amount')?.value) || 0;
+  let monthlyNote = '';
+  if (amt > 0) {
+    if (freq === 'yearly')    monthlyNote = ' &nbsp;·&nbsp; <strong>€' + (amt/12).toLocaleString('nl-NL',{maximumFractionDigits:2}) + '/mnd</strong>';
+    if (freq === 'quarterly') monthlyNote = ' &nbsp;·&nbsp; <strong>€' + (amt/3).toLocaleString('nl-NL',{maximumFractionDigits:2}) + '/mnd</strong>';
+  }
+  preview.innerHTML='&#128197; Billed in: <strong>'+firesIn.join(', ')+'</strong>'+monthlyNote;
 }
 
 // Reactivate an inactive fixed cost
@@ -7566,6 +7672,7 @@ function modalFixedCost(c){
       <label class="check-wrap"><input type="checkbox" id="f-active"${!c||c?.active?' checked':''}> <span style="font-weight:600">Active</span> <span style="font-size:10px;color:var(--t3);margin-left:4px">(inactive items excluded from totals)</span></label>
     </div>
   </div>
+  <div style="font-size:10px;color:var(--t3);padding:0 16px 8px">💡 Voer het bedrag in per factuurperiode. Kies <strong>Yearly</strong> voor jaarbedragen — het systeem deelt dit automatisch door 12 voor maandoverzichten.</div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveFixedCost(${c?.id||''})">Save</button></div>`;
   setTimeout(()=>fcFreqPreview(),30);
 }
