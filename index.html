@@ -2274,8 +2274,10 @@ function revForWeekInMonth(p,wk,y,m){
 function sickInWeek(empId,wk){
   if(!S.sickLeave||!S.sickLeave.length)return 0;
   const wkS=wkMonday(wk),wkE=new Date(wkS);wkE.setDate(wkE.getDate()+4);
+  const _parseL=function(s){if(!s)return null;const p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);};
   return S.sickLeave.filter(v=>v.employee_id===empId).reduce((sum,v)=>{
-    const vs=new Date(v.start_date),ve=new Date(v.end_date);
+    const vs=_parseL(v.start_date),ve=_parseL(v.end_date);
+    if(!vs||!ve)return sum;
     if(vs>wkE||ve<wkS)return sum;
     let days=0;const d=new Date(Math.max(wkS,vs));const end=new Date(Math.min(wkE,ve));
     while(d<=end){if(d.getDay()>=1&&d.getDay()<=5)days++;d.setDate(d.getDate()+1);}
@@ -2292,14 +2294,16 @@ function vacInWeek(empId,wk){
     const ds=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     return !holSet.has(ds); // not a public holiday
   };
+  // Parse date string as LOCAL midnight (not UTC) to avoid timezone off-by-one
+  const parseLocal=function(s){if(!s)return null;const p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);};
   return S.vacations.filter(v=>v.employee_id===empId).reduce((sum,v)=>{
-    const vs=v.start_date?new Date(v.start_date):null;
-    const ve=v.end_date?new Date(v.end_date):null;
+    const vs=parseLocal(v.start_date);
+    const ve=parseLocal(v.end_date);
     if(!vs||!ve)return sum; // skip entries without proper dates
     if(vs>wkE||ve<wkS)return sum;
     let days=0;const d=new Date(Math.max(wkS,vs));const end=new Date(Math.min(wkE,ve));
     while(d<=end){if(isWorkDay(d))days++;d.setDate(d.getDate()+1);}
-    return sum+Math.min(days,v.days||days);
+    return sum+Math.min(days,parseFloat(v.days)||days);
   },0);
 }
 function staffCostMonth(y,m){
