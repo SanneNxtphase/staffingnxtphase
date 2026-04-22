@@ -2111,6 +2111,19 @@ function wkMonday(key){
 }
 function wkFriday(key){const d=wkMonday(key);d.setDate(d.getDate()+4);return d;}
 function wkShort(key){const d=wkMonday(key);return d.toLocaleDateString('en',{month:'short',day:'numeric'});}
+// Working days in a week excluding Dutch public holidays
+function workingDaysInWeek(wkKey){
+  const mon=wkMonday(wkKey);
+  const hols=typeof getNLHolidays==='function'?getNLHolidays(mon.getFullYear()):[];
+  const holSet=new Set(hols.map(function(h){return h.date;}));
+  let days=0;
+  for(let i=0;i<5;i++){
+    const d=new Date(mon);d.setDate(mon.getDate()+i);
+    const ds=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    if(!holSet.has(ds)) days++;
+  }
+  return days;
+}
 function wkRange(key){const d=wkMonday(key),f=wkFriday(key);return d.toLocaleDateString('en',{month:'short',day:'numeric'})+' – '+f.getDate();}
 function addWeeks(dateStr,n){
   const d=new Date(dateStr);
@@ -2271,11 +2284,21 @@ function sickInWeek(empId,wk){
 }
 function vacInWeek(empId,wk){
   const wkS=wkMonday(wk),wkE=new Date(wkS);wkE.setDate(wkE.getDate()+4);
+  // Get public holidays this week to exclude from vacation count
+  const hols=typeof getNLHolidays==='function'?getNLHolidays(wkS.getFullYear()):[];
+  const holSet=new Set(hols.map(function(h){return h.date;}));
+  const isWorkDay=function(d){
+    if(d.getDay()<1||d.getDay()>5)return false; // weekend
+    const ds=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    return !holSet.has(ds); // not a public holiday
+  };
   return S.vacations.filter(v=>v.employee_id===empId).reduce((sum,v)=>{
-    const vs=new Date(v.start_date),ve=new Date(v.end_date);
+    const vs=v.start_date?new Date(v.start_date):null;
+    const ve=v.end_date?new Date(v.end_date):null;
+    if(!vs||!ve)return sum; // skip entries without proper dates
     if(vs>wkE||ve<wkS)return sum;
     let days=0;const d=new Date(Math.max(wkS,vs));const end=new Date(Math.min(wkE,ve));
-    while(d<=end){if(d.getDay()>=1&&d.getDay()<=5)days++;d.setDate(d.getDate()+1);}
+    while(d<=end){if(isWorkDay(d))days++;d.setDate(d.getDate()+1);}
     return sum+Math.min(days,v.days||days);
   },0);
 }
@@ -4179,7 +4202,7 @@ function renderStaffing(){
       const wkData=weeks.map(wk=>{
         const vac=vacInWeek(emp.id,wk);
         const sick=sickInWeek(emp.id,wk);
-        const avail=Math.max(0,(emp.available_days_per_week||5)-vac-sick);
+        const _wkMaxDays=Math.min(emp.available_days_per_week||5,workingDaysInWeek(wk));const avail=Math.max(0,_wkMaxDays-vac-sick);
         const assigned=assignedInWeek(emp.id,wk);
         empTotalDays+=assigned;empTotalVac+=vac;
         const cost=S.staffing.filter(s=>s.employee_id===emp.id&&s.week_key===wk).reduce((s,x)=>{
@@ -10756,7 +10779,8 @@ function getNLHolidays(year){
     {date:fmt(easter),name:'1e Paasdag'},
     {date:fmt(add(easter,1)),name:'2e Paasdag'},
     {date:year+'-04-27',name:'Koningsdag 🎉'},
-    {date:year+'-05-05',name:'Bevrijdingsdag'},
+    // Bevrijdingsdag (5 mei) is alleen vrij in lustrumjaren (2025, 2030 etc)
+    ...(year%5===0?[{date:year+'-05-05',name:'Bevrijdingsdag 🎉'}]:[]),
     {date:fmt(add(easter,39)),name:'Hemelvaartsdag'},
     {date:fmt(add(easter,49)),name:'1e Pinksterdag'},
     {date:fmt(add(easter,50)),name:'2e Pinksterdag'},
