@@ -4833,13 +4833,21 @@ async function editCellSave(empId,projId,wk,days,note){
     showToast('⚠ Staffing opslaan mislukt (network error)','error');
   }
 
-  // Step 4: Reload and refresh all dependent views
-  await loadData();
+  // Step 4: Update S.staffing in-memory immediately (no full loadData needed)
+  // Update or insert in S.staffing directly
+  const existIdx=S.staffing.findIndex(s=>s.employee_id===empId&&s.project_id===projId&&s.week_key===wk);
+  if(days===0){
+    if(existIdx>=0) S.staffing.splice(existIdx,1);
+  } else if(existIdx>=0){
+    S.staffing[existIdx].days=days;
+    if(note!==undefined) S.staffing[existIdx].note=note;
+  } else {
+    S.staffing.push({id:Date.now(),employee_id:empId,project_id:projId,week_key:wk,days,note:note||''});
+  }
+  // Re-render immediately with updated in-memory data
   try{renderStaffing();}catch(e){}
-  try{renderProjects();}catch(e){}
   try{renderSchedule();}catch(e){}
   try{renderDashboard();}catch(e){}
-  try{renderFinancial();}catch(e){}
 }
 
 
