@@ -2273,36 +2273,42 @@ function revForWeekInMonth(p,wk,y,m){
 }
 function sickInWeek(empId,wk){
   if(!S.sickLeave||!S.sickLeave.length)return 0;
-  const wkS=wkMonday(wk),wkE=new Date(wkS);wkE.setDate(wkE.getDate()+4);
-  const _parseL=function(s){if(!s)return null;const p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);};
-  return S.sickLeave.filter(v=>v.employee_id===empId).reduce((sum,v)=>{
-    const vs=_parseL(v.start_date),ve=_parseL(v.end_date);
+  const wkMon=wkMonday(wk);
+  const toStr=function(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+  const wkDays=[];
+  for(var i=0;i<5;i++){const d=new Date(wkMon);d.setDate(wkMon.getDate()+i);wkDays.push(toStr(d));}
+  const wkStart=wkDays[0],wkEnd=wkDays[4];
+  return S.sickLeave.filter(function(v){return v.employee_id===empId;}).reduce(function(sum,v){
+    const vs=v.start_date||'',ve=v.end_date||'';
     if(!vs||!ve)return sum;
-    if(vs>wkE||ve<wkS)return sum;
-    let days=0;const d=new Date(Math.max(wkS,vs));const end=new Date(Math.min(wkE,ve));
-    while(d<=end){if(d.getDay()>=1&&d.getDay()<=5)days++;d.setDate(d.getDate()+1);}
+    if(vs>wkEnd||ve<wkStart)return sum;
+    var days=0;
+    wkDays.forEach(function(ds){if(ds>=vs&&ds<=ve)days++;});
     return sum+days;
   },0);
 }
 function vacInWeek(empId,wk){
-  const wkS=wkMonday(wk),wkE=new Date(wkS);wkE.setDate(wkE.getDate()+4);
-  // Get public holidays this week to exclude from vacation count
-  const hols=typeof getNLHolidays==='function'?getNLHolidays(wkS.getFullYear()):[];
+  // Use date STRINGS throughout to avoid all timezone issues
+  const wkMon=wkMonday(wk);
+  const toStr=function(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+  // Build array of date strings for Mon-Fri of this week
+  const wkDays=[];
+  for(var i=0;i<5;i++){const d=new Date(wkMon);d.setDate(wkMon.getDate()+i);wkDays.push(toStr(d));}
+  const wkStart=wkDays[0],wkEnd=wkDays[4];
+  // Public holidays as strings
+  const hols=typeof getNLHolidays==='function'?getNLHolidays(wkMon.getFullYear()):[];
   const holSet=new Set(hols.map(function(h){return h.date;}));
-  const isWorkDay=function(d){
-    if(d.getDay()<1||d.getDay()>5)return false; // weekend
-    const ds=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    return !holSet.has(ds); // not a public holiday
-  };
-  // Parse date string as LOCAL midnight (not UTC) to avoid timezone off-by-one
-  const parseLocal=function(s){if(!s)return null;const p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);};
-  return S.vacations.filter(v=>v.employee_id===empId).reduce((sum,v)=>{
-    const vs=parseLocal(v.start_date);
-    const ve=parseLocal(v.end_date);
-    if(!vs||!ve)return sum; // skip entries without proper dates
-    if(vs>wkE||ve<wkS)return sum;
-    let days=0;const d=new Date(Math.max(wkS,vs));const end=new Date(Math.min(wkE,ve));
-    while(d<=end){if(isWorkDay(d))days++;d.setDate(d.getDate()+1);}
+  return S.vacations.filter(function(v){return v.employee_id===empId;}).reduce(function(sum,v){
+    const vs=v.start_date||v.week_key||'';
+    const ve=v.end_date||'';
+    if(!vs||!ve)return sum;
+    // String comparison works for YYYY-MM-DD format
+    if(vs>wkEnd||ve<wkStart)return sum;
+    // Count weekdays in overlap using string comparison
+    var days=0;
+    wkDays.forEach(function(ds){
+      if(ds>=vs&&ds<=ve&&!holSet.has(ds))days++;
+    });
     return sum+Math.min(days,parseFloat(v.days)||days);
   },0);
 }
