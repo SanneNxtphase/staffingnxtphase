@@ -4180,7 +4180,7 @@ function renderStaffing(){
         totalDays+=dayTotal;
         // Always show editable cell — clicking opens Assign Full Project modal
         if(!inRange){
-          td+=`<td class="center" style="opacity:.6;cursor:not-allowed;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — adjust start/end date to enable staffing">🔒</td>`;
+          td+=`<td class="center editable" style="opacity:.7;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — click to staff anyway" onclick="sfProjectCellClick(${p.id},'${wk}',this)">+</td>`;
         } else {
           td+=`<td class="center editable" style="${isDraft?'color:var(--amber)':''}" onclick="sfProjectCellClick(${p.id},'${wk}',this)" title="Click to assign staffing">${dayTotal||''}</td>`;
         }
@@ -4281,7 +4281,7 @@ function renderStaffing(){
             pTotalDays+=d;
             const _note=entry?.note||'';
             if(!inRange){
-              return`<td class="center" style="opacity:.6;cursor:not-allowed;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — adjust start/end date to enable staffing">🔒</td>`;
+              return`<td class="center editable" style="opacity:.7;background:var(--amber-p);color:var(--amber);font-size:10px" title="Outside project dates — click to staff anyway" onclick="editCell(${emp.id},${p.id},'${wk}',this)">+</td>`;
             }
             return`<td class="center editable${_note?' has-note':''}" onclick="editCell(${emp.id},${p.id},'${wk}',this)" title="${_note?esc(_note):'Click to edit'}">${d||''}${_note?`<span style="font-size:7px;color:var(--blue);display:block;line-height:1.1;overflow:hidden;max-width:52px;white-space:nowrap;text-overflow:ellipsis">${esc(_note)}</span>`:''}</td>`;
           }).join('');
