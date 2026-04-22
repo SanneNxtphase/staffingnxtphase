@@ -4724,7 +4724,18 @@ async function bulkStaffConfirm(){
 
   let done=0;
   for(const wk of toWrite){
+    // Write to localStorage immediately
     await DB.upsertStaffing({employee_id:empId,project_id:projId,week_key:wk,days});
+    // Write to Supabase (same logic as editCellSave)
+    try{
+      const qs=`?employee_id=eq.${empId}&project_id=eq.${projId}&week_key=eq.${wk}&select=id`;
+      const ex=await _supaReq('GET','staffing',null,qs);
+      if(ex&&ex.length>0){
+        await _supaReq('PATCH','staffing',{days},'?id=eq.'+ex[0].id);
+      } else {
+        await _supaReq('POST','staffing',{employee_id:empId,project_id:projId,week_key:wk,days});
+      }
+    }catch(e){console.error('[BULK STAFFING] Supabase error wk='+wk,e);}
     done++;
     const pct=Math.round(done/toWrite.length*100);
     const bar=document.getElementById('bs-prog-bar');
