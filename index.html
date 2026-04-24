@@ -2042,6 +2042,7 @@ const S={
   staffingMonth:{y:_now.getFullYear(),m:_now.getMonth()+1},
   schedWeek:null,
   schedView:'full',
+  salaryOverrides:{}, // {"empId_YYYY-MM": amount}
   fcStart:{y:_now.getFullYear(),m:1},
   staffingView:'project',
   wwHorizon:2,
@@ -2313,11 +2314,31 @@ function vacInWeek(empId,wk){
   },0);
 }
 function staffCostMonth(y,m){
-  const weeks=getWeeksInMonth(y,m);let c=0;
+  const weeks=getWeeksInMonth(y,m);
+  const mo=(y+'-'+String(m).padStart(2,'0'));
+  // Per employee: check if salary override exists for this month
+  // If yes: use override amount directly (replaces days*rate for that employee)
+  // If no: use days * daily_cost as normal
+  const overrideMap=S.salaryOverrides||{};
+  const empContrib={};
   S.staffing.filter(s=>weeks.includes(s.week_key)).forEach(s=>{
-    const e=S.employees.find(e=>e.id==s.employee_id);// == handles string/int mismatch
-    if(e&&e.daily_cost)c+=parseFloat(e.daily_cost)*parseFloat(s.days||0);
-  });return c;
+    const e=S.employees.find(e=>e.id==s.employee_id);
+    if(!e) return;
+    const key=e.id+'_'+mo;
+    if(overrideMap[key]!==undefined){
+      // Override: just mark this employee as having an override (amount set once below)
+      empContrib[e.id]={override:parseFloat(overrideMap[key]),days:0};
+    } else {
+      if(!empContrib[e.id]) empContrib[e.id]={override:null,days:0,rate:parseFloat(e.daily_cost)||0};
+      empContrib[e.id].days+=parseFloat(s.days||0);
+    }
+  });
+  let c=0;
+  Object.values(empContrib).forEach(v=>{
+    if(v.override!==null) c+=v.override;
+    else c+=v.days*v.rate;
+  });
+  return c;
 }
 // ── FIXED COST CALCULATION — Unified Bank + Manual ───────────────────────
 // Fixed Costs total = sum of two distinct sources:
@@ -2751,6 +2772,12 @@ async function loadData(){
       try{
         const rg=await _supaReq('GET','settings',null,'?key=eq.revenue_goal&select=value');
         if(rg&&rg[0]) window._revenueGoal=parseFloat(rg[0].value)||1800000;
+      }catch(e){}
+      // Load salary overrides
+      try{
+        const so=await _supaReq('GET','settings',null,'?key=eq.salary_overrides&select=value');
+        if(so&&so[0]) S.salaryOverrides=JSON.parse(so[0].value||'{}');
+        else S.salaryOverrides=S.salaryOverrides||{};
       }catch(e){}
       }catch(e){}
 
@@ -5268,6 +5295,73 @@ function renderVacation(){
 }
 
 // ══ EMPLOYEES ══
+// ── SALARY OVERRIDES ─────────────────────────────────────────────────────────
+// Stores exact monthly salary costs per employee, overrides days*rate in dashboard
+function openSalaryOverride(empId, empName){
+  const overrides=S.salaryOverrides||{};
+  const now=new Date();
+  // Show last 3 months + current + next 9 months = 13 months
+  const months=[];
+  for(let i=-3;i<=9;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+    const key=empId+'_'+d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    const lbl=d.toLocaleDateString('nl',{month:'long',year:'numeric'});
+    months.push({key,lbl,val:overrides[key]||''});
+  }
+  const rows=months.map(mo=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bdr)">
+      <span style="flex:1;font-size:12px;color:var(--t2)">${mo.lbl}</span>
+      <input type="number" min="0" step="0.01"
+        id="so_${mo.key}"
+        value="${mo.val}"
+        placeholder="Gebruik dagtarief"
+        style="width:130px;padding:4px 8px;border:1px solid var(--bdr2);border-radius:4px;font-size:12px;text-align:right">
+    </div>`).join('');
+  const m=document.getElementById('modal-content');
+  document.getElementById('modal-overlay').classList.add('open');
+  m.innerHTML=`
+    <div class="modal-header">
+      <div class="modal-title">💰 Salariskosten — ${empName}</div>
+      <div class="modal-x" onclick="closeModal()">&#x2715;</div>
+    </div>
+    <div class="modal-body">
+      <div class="alert" style="background:var(--blue-p);color:var(--blue);border-radius:6px;padding:10px 14px;font-size:12px;margin-bottom:12px">
+        Vul hier het exacte maandsalaris in. Dit vervangt de dagtarief-berekening voor die maand op het dashboard.<br>
+        Laat leeg om de standaard berekening (dagen × dagtarief) te gebruiken.
+      </div>
+      <div style="max-height:340px;overflow-y:auto">${rows}</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Annuleren</button>
+      <button class="btn btn-primary" onclick="saveSalaryOverride(${empId})">Opslaan</button>
+    </div>`;
+}
+
+async function saveSalaryOverride(empId){
+  const overrides={...S.salaryOverrides||{}};
+  // Read all input fields for this employee
+  document.querySelectorAll('[id^="so_'+empId+'_"]').forEach(inp=>{
+    const key=inp.id.replace('so_','');
+    const val=inp.value.trim();
+    if(val!=='') overrides[key]=parseFloat(val)||0;
+    else delete overrides[key]; // empty = use default calculation
+  });
+  S.salaryOverrides=overrides;
+  // Save to Supabase settings
+  try{
+    const ex=await _supaReq('GET','settings',null,'?key=eq.salary_overrides&select=id');
+    const payload={key:'salary_overrides',value:JSON.stringify(overrides)};
+    if(ex&&ex.length>0) await _supaReq('PATCH','settings',{value:JSON.stringify(overrides)},'?key=eq.salary_overrides');
+    else await _supaReq('POST','settings',payload);
+    showToast('Salariskosten opgeslagen');
+  }catch(e){showToast('⚠ Opslaan mislukt','error');}
+  closeModal();
+  // Refresh dashboard calculations
+  _finData=null;
+  try{renderDashboard();}catch(e){}
+  try{if(typeof _renderFinancialActual==='function')_renderFinancialActual();}catch(e){}
+}
+
 function renderEmployees(){
   document.getElementById('emp-tbody').innerHTML=S.employees.map(e=>{
     const wkCost=e.daily_cost*e.available_days_per_week;
@@ -5280,6 +5374,7 @@ function renderEmployees(){
       <td class="right"><span class="badge badge-vacation">${e.vacation_days_per_year||25}d</span></td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('employee',${e.id})">Edit</button>
+        <button class="btn btn-sm btn-ghost" style="color:var(--blue)" onclick="openSalaryOverride(${e.id},'${esc(e.name)}')">💰 Salaris</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteItem('employees',${e.id})">&#x2715;</button>
       </div></td>
     </tr>`;
