@@ -6431,7 +6431,7 @@ function renderFixedCosts(){
   }
 
   // ── STAFFING-GRID STYLE TABLE ──────────────────────────────────────────────
-  const activeTotal=sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0);
+  const activeTotal=sorted.filter(c=>c.active&&fcInDateRange(c,_y,_m)).reduce((s,c)=>s+fcMonthlyAmount(c),0);
 
   let html=`<div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -6450,7 +6450,7 @@ function renderFixedCosts(){
   cats.forEach(cat=>{
     const ces=grouped[cat]||[];
     if(!ces.length)return;
-    const activeCes=ces.filter(c=>c.active);
+    const activeCes=ces.filter(c=>c.active&&fcInDateRange(c,_y,_m));
     const cGross=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
     const cVat=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
     const cNet=Math.round(activeCes.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
@@ -6552,11 +6552,11 @@ function renderFixedCosts(){
   });
 
   // Grand total row
-  const totalNet=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
-  const totalGross=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
-  const totalVat=Math.round(sorted.filter(c=>c.active).reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
+  const totalNet=Math.round(sorted.filter(c=>c.active&&fcInDateRange(c,_y,_m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  const totalGross=Math.round(sorted.filter(c=>c.active&&fcInDateRange(c,_y,_m)).reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
+  const totalVat=Math.round(sorted.filter(c=>c.active&&fcInDateRange(c,_y,_m)).reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   html+=`<tr style="background:var(--navy);color:#fff;border-top:2px solid var(--bdr2)">
-    <td style="padding:9px 14px;font-weight:700;font-size:12px">TOTAL — ${sorted.filter(c=>c.active).length} active entries</td>
+    <td style="padding:9px 14px;font-weight:700;font-size:12px">TOTAL — ${sorted.filter(c=>c.active&&fcInDateRange(c,_y,_m)).length} actief deze maand</td>
     <td colspan="2" style="text-align:right;padding:9px 10px;font-family:var(--mono);font-weight:600;color:#e0eeff">${fmt(totalGross)}</td>
     <td></td>
     <td style="text-align:right;padding:9px 10px;font-family:var(--mono);color:#ffd080">${fmt(totalVat)}</td>
