@@ -2314,31 +2314,11 @@ function vacInWeek(empId,wk){
   },0);
 }
 function staffCostMonth(y,m){
-  const weeks=getWeeksInMonth(y,m);
-  const mo=(y+'-'+String(m).padStart(2,'0'));
-  // Per employee: check if salary override exists for this month
-  // If yes: use override amount directly (replaces days*rate for that employee)
-  // If no: use days * daily_cost as normal
-  const overrideMap=S.salaryOverrides||{};
-  const empContrib={};
+  const weeks=getWeeksInMonth(y,m);let c=0;
   S.staffing.filter(s=>weeks.includes(s.week_key)).forEach(s=>{
     const e=S.employees.find(e=>e.id==s.employee_id);
-    if(!e) return;
-    const key=e.id+'_'+mo;
-    if(overrideMap[key]!==undefined){
-      // Override: just mark this employee as having an override (amount set once below)
-      empContrib[e.id]={override:parseFloat(overrideMap[key]),days:0};
-    } else {
-      if(!empContrib[e.id]) empContrib[e.id]={override:null,days:0,rate:parseFloat(e.daily_cost)||0};
-      empContrib[e.id].days+=parseFloat(s.days||0);
-    }
-  });
-  let c=0;
-  Object.values(empContrib).forEach(v=>{
-    if(v.override!==null) c+=v.override;
-    else c+=v.days*v.rate;
-  });
-  return c;
+    if(e&&e.daily_cost)c+=parseFloat(e.daily_cost)*parseFloat(s.days||0);
+  });return c;
 }
 // ── FIXED COST CALCULATION — Unified Bank + Manual ───────────────────────
 // Fixed Costs total = sum of two distinct sources:
@@ -5298,15 +5278,18 @@ function renderVacation(){
 // ── SALARY OVERRIDES ─────────────────────────────────────────────────────────
 // Stores exact monthly salary costs per employee, overrides days*rate in dashboard
 function openSalaryOverride(empId, empName){
-  const overrides=S.salaryOverrides||{};
   const now=new Date();
   // Show last 3 months + current + next 9 months = 13 months
   const months=[];
   for(let i=-3;i<=9;i++){
     const d=new Date(now.getFullYear(),now.getMonth()+i,1);
-    const key=empId+'_'+d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    const mo=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    const key=empId+'_'+mo;
     const lbl=d.toLocaleDateString('nl',{month:'long',year:'numeric'});
-    months.push({key,lbl,val:overrides[key]||''});
+    // Look up existing fixed cost entry for this employee+month
+    const fcName=empName+' - '+mo;
+    const existing=S.fixedCosts.find(fc=>fc.name===fcName&&fc.category==='Loonkosten');
+    months.push({key,mo,lbl,val:existing?parseFloat(existing.amount)||'':''});
   }
   const rows=months.map(mo=>`
     <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bdr)">
@@ -5314,8 +5297,8 @@ function openSalaryOverride(empId, empName){
       <input type="number" min="0" step="0.01"
         id="so_${mo.key}"
         value="${mo.val}"
-        placeholder="Gebruik dagtarief"
-        style="width:130px;padding:4px 8px;border:1px solid var(--bdr2);border-radius:4px;font-size:12px;text-align:right">
+        placeholder="leeg = geen override"
+        style="width:140px;padding:4px 8px;border:1px solid var(--bdr2);border-radius:4px;font-size:12px;text-align:right;${mo.val?'background:var(--blue-p);border-color:var(--blue)':''}">
     </div>`).join('');
   const m=document.getElementById('modal-content');
   document.getElementById('modal-overlay').classList.add('open');
@@ -5338,26 +5321,47 @@ function openSalaryOverride(empId, empName){
 }
 
 async function saveSalaryOverride(empId){
-  const overrides={...S.salaryOverrides||{}};
-  // Read all input fields for this employee
-  document.querySelectorAll('[id^="so_'+empId+'_"]').forEach(inp=>{
-    const key=inp.id.replace('so_','');
+  // Each month with a value → create/update a fixed cost entry for that employee+month
+  // Name format: "Paul Snijders - 2026-04", category: Loonkosten
+  // start_month = end_month = that month → only active in that specific month
+  const inputs=document.querySelectorAll('[id^="so_'+empId+'_"]');
+  const empName=(S.employees.find(e=>e.id==empId)||{}).name||'Employee '+empId;
+  let saved=0,errors=0;
+  for(const inp of inputs){
+    const mo=inp.id.replace('so_'+empId+'_',''); // e.g. "2026-04"
     const val=inp.value.trim();
-    if(val!=='') overrides[key]=parseFloat(val)||0;
-    else delete overrides[key]; // empty = use default calculation
-  });
-  S.salaryOverrides=overrides;
-  // Save to Supabase settings
-  try{
-    const ex=await _supaReq('GET','settings',null,'?key=eq.salary_overrides&select=id');
-    const payload={key:'salary_overrides',value:JSON.stringify(overrides)};
-    if(ex&&ex.length>0) await _supaReq('PATCH','settings',{value:JSON.stringify(overrides)},'?key=eq.salary_overrides');
-    else await _supaReq('POST','settings',payload);
-    showToast('Salariskosten opgeslagen');
-  }catch(e){showToast('⚠ Opslaan mislukt','error');}
+    if(!val) continue; // empty = skip, keep existing or use default
+    const amount=parseFloat(val)||0;
+    const fcName=empName+' - '+mo;
+    const notes='||VT:none||||VP:0||||SM:'+mo+'||||EM:'+mo+'||';
+    // Check if entry already exists
+    const existing=S.fixedCosts.find(fc=>fc.name===fcName&&fc.category==='Loonkosten');
+    const hdrs={..._supaHdr(),'Prefer':'return=representation'};
+    try{
+      if(existing){
+        // Update amount
+        hdrs['Prefer']='return=minimal';
+        await fetch(_supaUrl('fixed_costs','?id=eq.'+existing.id),{method:'PATCH',headers:hdrs,body:JSON.stringify({amount,notes})});
+        existing.amount=amount; existing.notes=notes;
+      } else {
+        // Create new fixed cost entry
+        const pay={name:fcName,category:'Loonkosten',amount,active:1,notes,vat_type:'none',vat_pct:0};
+        const r=await fetch(_supaUrl('fixed_costs','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(pay)});
+        if(r.ok){
+          const rows=await r.json().catch(()=>[]);
+          const newId=rows[0]?.id||Date.now();
+          S.fixedCosts.push({...pay,id:newId,start_month:mo,end_month:mo});
+        } else { errors++; continue; }
+      }
+      saved++;
+    }catch(e){errors++;}
+  }
   closeModal();
-  // Refresh dashboard calculations
+  _normFixedCosts(S.fixedCosts);
   _finData=null;
+  if(errors>0) showToast('⚠ '+errors+' maanden niet opgeslagen','error');
+  else showToast(saved+' maandsalaris'+(saved!==1?'sen':'')+' opgeslagen in vaste kosten');
+  try{renderFixedCosts();}catch(e){}
   try{renderDashboard();}catch(e){}
   try{if(typeof _renderFinancialActual==='function')_renderFinancialActual();}catch(e){}
 }
