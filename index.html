@@ -7327,8 +7327,30 @@ function modalEmployee(e){
 async function saveEmployee(id){
   const data={name:document.getElementById('f-name').value.trim(),role:document.getElementById('f-role').value.trim(),daily_cost:parseFloat(document.getElementById('f-rate').value)||0,available_days_per_week:parseFloat(document.getElementById('f-avail').value)||5,vacation_days_per_year:parseFloat(document.getElementById('f-vacdays').value)||25};
   if(!data.name)return alert('Name required.');
-  if(id)await DB.update('employees',id,data);else await DB.insert('employees',data);
-  closeModal();renderEmployees();await loadData();renderEmployees();
+  const hdrs={..._supaHdr(),'Prefer':'return=representation'};
+  if(id){
+    // Update existing employee
+    hdrs['Prefer']='return=minimal';
+    const r=await fetch(_supaUrl('employees','?id=eq.'+parseInt(id)),{method:'PATCH',headers:hdrs,body:JSON.stringify(data)});
+    if(!r.ok){const t=await r.text();return showToast('⚠ Update mislukt: '+t.substring(0,100),'error');}
+    // Update S.employees in-memory
+    const idx=S.employees.findIndex(e=>e.id===parseInt(id));
+    if(idx>=0) Object.assign(S.employees[idx],data);
+  } else {
+    // Check: employee with same name already exists?
+    if(S.employees.some(e=>e.name.toLowerCase()===data.name.toLowerCase())){
+      return alert('Er bestaat al een medewerker met de naam "'+data.name+'".');
+    }
+    // Insert new employee directly to Supabase
+    const r=await fetch(_supaUrl('employees','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(data)});
+    if(!r.ok){const t=await r.text();return showToast('⚠ Opslaan mislukt: '+t.substring(0,100),'error');}
+    const rows=await r.json().catch(()=>[]);
+    const newId=parseInt(rows[0]?.id)||Date.now();
+    // Add to S.employees in-memory with real Supabase id
+    S.employees.push({...data,id:newId,created_at:new Date().toISOString()});
+  }
+  closeModal();
+  renderEmployees();
 }
 
 function countWorkdays(startStr,endStr){
