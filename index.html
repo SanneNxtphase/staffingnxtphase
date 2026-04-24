@@ -6478,20 +6478,62 @@ function renderFixedCosts(){
       </td>
     </tr>`;
 
-    // Entry rows (like project rows in staffing grid)
+    // Entry rows — salary month-entries (pattern "Name - YYYY-MM") are grouped
+    const salaryGroups={};
+    const regularEntries=[];
     ces.forEach(c=>{
+      const m=c.name&&c.name.match(/^(.+) - (\d{4}-\d{2})$/);
+      if(m){const base=m[1];if(!salaryGroups[base])salaryGroups[base]=[];salaryGroups[base].push(c);}
+      else regularEntries.push(c);
+    });
+
+    // Render salary groups as one row, expand on click
+    Object.entries(salaryGroups).forEach(([base,entries])=>{
+      entries.sort((a,b)=>(a.start_month||'').localeCompare(b.start_month||''));
+      const now=new Date();
+      const curMo=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+      const cur=entries.find(e=>e.start_month===curMo)||entries[entries.length-1];
+      const net=cur?fcMonthlyAmount(cur):0;
+      const gross=cur?fcMonthlyAmountIncl(cur):0;
+      const gid='sg_'+base.replace(/[^a-z0-9]/gi,'_');
+      const rateKey=cur?(S.employees.find(e=>e.name===base)||{}).id+'_'+curMo:'';
+      const rate=rateKey&&S.salaryDailyRates&&S.salaryDailyRates[rateKey]?'≈ €'+S.salaryDailyRates[rateKey]+'/dag':'';
+      html+=`<tr class="row-proj" style="cursor:pointer" onclick="var el=document.getElementById('${gid}');el.style.display=el.style.display==='none'?'':'none'" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
+        <td style="padding:7px 14px 7px 28px;font-weight:600">${esc(base)}<span style="font-size:9px;background:var(--blue-p);color:var(--blue);padding:1px 5px;border-radius:3px;margin-left:6px">💰 ${entries.length}mnd ▾</span></td>
+        <td style="padding:7px 10px"><span style="font-size:10px;color:var(--t3)">${curMo}${rate?' · <em>'+rate+'</em>':''}</span></td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono)">${fmt(gross)}</td>
+        <td style="text-align:center;padding:7px 10px"><span style="color:#27ae60;font-size:10px;font-weight:700">No VAT</span></td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--amber)">€0</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(net)}</td>
+        <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--t3)">—</td>
+        <td style="padding:7px 10px;text-align:right"><span style="font-size:9px;color:var(--t3)">▾ klik voor historie</span></td>
+      </tr>`;
+      html+=`<tr id="${gid}" style="display:none"><td colspan="8" style="padding:0">
+        <table style="width:100%;border-collapse:collapse">
+        ${entries.map(e=>{const en=fcMonthlyAmount(e);return`<tr style="background:var(--blue-p)">
+          <td style="padding:5px 14px 5px 48px;font-size:11px;color:var(--t3);width:200px">${esc(e.start_month||e.name)}</td>
+          <td style="padding:5px 10px"><span style="font-size:10px;color:var(--t3)">${e.start_month||''}${e.end_month&&e.end_month!==e.start_month?' → '+e.end_month:''}</span></td>
+          <td style="text-align:right;padding:5px 10px;font-family:var(--mono);font-size:11px">${fmt(fcMonthlyAmountIncl(e))}</td>
+          <td></td><td></td>
+          <td style="text-align:right;padding:5px 10px;font-family:var(--mono);font-weight:600;color:var(--red);font-size:11px">${fmt(en)}</td>
+          <td></td>
+          <td style="padding:5px 10px;text-align:right">
+            <button class="btn btn-sm btn-ghost" style="font-size:9px" onclick="event.stopPropagation();openModal('fixedcost',${e.id})">Edit</button>
+            <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red)" onclick="event.stopPropagation();deleteFCEntry(${e.id})">✕</button>
+          </td>
+        </tr>`;}).join('')}
+        </table></td></tr>`;
+    });
+
+    // Regular entries
+    regularEntries.forEach(c=>{
       const gross=fcMonthlyAmountIncl(c);
       const vat=fcMonthlyVatAmt(c);
       const net=fcMonthlyAmount(c);
-      const freqBadge=(c.frequency||'monthly')!=='monthly'
-        ?`<span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700;margin-left:4px">${c.frequency==='quarterly'?'÷3':'÷12'}</span>`:'';
-      const period=c.start_month||c.end_month
-        ?`<span style="font-size:10px;color:var(--t3)">${c.start_month||'…'}${c.end_month?' → '+c.end_month:''}</span>`:'';
+      const freqBadge=(c.frequency||'monthly')!=='monthly'?`<span style="font-size:9px;background:var(--amber-p);color:var(--amber);padding:1px 5px;border-radius:3px;font-weight:700">${(c.frequency||'monthly').charAt(0).toUpperCase()+(c.frequency||'monthly').slice(1)}</span>`:'';
+      const period=c.start_month||c.end_month?`<span style="font-size:10px;color:var(--t3)">${c.start_month||'…'}${c.end_month?' → '+c.end_month:''}</span>`:'';
       html+=`<tr class="row-proj" style="${!c.active?'opacity:.45':''}" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
-        <td style="padding:7px 14px 7px 28px;${!c.active?'text-decoration:line-through;color:var(--t3)':''}">
-          ${esc(c.name)}
-          ${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 4px;border-radius:3px;margin-left:4px">INACTIVE</span>':''}
-        </td>
+        <td style="padding:7px 14px 7px 28px;${!c.active?'text-decoration:line-through;color:var(--t3)':''}">${esc(c.name)}${!c.active?'<span style="font-size:9px;background:var(--red-p);color:var(--red);padding:1px 4px;border-radius:3px;margin-left:4px">inactive</span>':''}</td>
         <td style="padding:7px 10px">${period}${freqBadge}</td>
         <td style="text-align:right;padding:7px 10px;font-family:var(--mono)">${fmt(gross)}</td>
         <td style="text-align:center;padding:7px 10px">${vatBadge(c)}</td>
