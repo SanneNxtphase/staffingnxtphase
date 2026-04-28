@@ -6499,7 +6499,11 @@ function renderFixedCosts(){
       const rateKey=cur?(S.employees.find(e=>e.name===base)||{}).id+'_'+curMo:'';
       const rate=rateKey&&S.salaryDailyRates&&S.salaryDailyRates[rateKey]?'≈ €'+S.salaryDailyRates[rateKey]+'/dag':'';
       html+=`<tr class="row-proj" style="cursor:pointer" onclick="var el=document.getElementById('${gid}');el.style.display=el.style.display==='none'?'':'none'" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
-        <td style="padding:7px 14px 7px 28px;font-weight:600">${esc(base)}<span style="font-size:9px;background:var(--blue-p);color:var(--blue);padding:1px 5px;border-radius:3px;margin-left:6px">💰 ${entries.length}mnd ▾</span></td>
+        <td style="padding:7px 14px 7px 28px;font-weight:600">
+          ${esc(base)}
+          <span style="font-size:9px;background:var(--blue-p);color:var(--blue);padding:1px 5px;border-radius:3px;margin-left:6px">💰 ${entries.length}mnd ▾</span>
+          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--blue);margin-left:8px" onclick="event.stopPropagation();openSalaryOverride(${(S.employees.find(e=>e.name===base)||{}).id||0},'${esc(base)}')">✏ Bewerk</button>
+        </td>
         <td style="padding:7px 10px"><span style="font-size:10px;color:var(--t3)">${curMo}${rate?' · <em>'+rate+'</em>':''}</span></td>
         <td style="text-align:right;padding:7px 10px;font-family:var(--mono)">${fmt(gross)}</td>
         <td style="text-align:center;padding:7px 10px"><span style="color:#27ae60;font-size:10px;font-weight:700">No VAT</span></td>
@@ -6507,8 +6511,7 @@ function renderFixedCosts(){
         <td style="text-align:right;padding:7px 10px;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(net)}</td>
         <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--t3)">—</td>
         <td style="padding:7px 10px;text-align:right">
-          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--blue)" onclick="event.stopPropagation();openSalaryOverride(${(S.employees.find(e=>e.name===base)||{}).id||0},'${esc(base)}')">💰 Aanpassen</button>
-          <span style="font-size:9px;color:var(--t3)">▾ historie</span>
+          <span style="font-size:9px;color:var(--t3)">▾ klik voor historie</span>
         </td>
       </tr>`;
       html+=`<tr id="${gid}" style="display:none"><td colspan="8" style="padding:0">
