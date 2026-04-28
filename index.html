@@ -6506,7 +6506,10 @@ function renderFixedCosts(){
         <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--amber)">€0</td>
         <td style="text-align:right;padding:7px 10px;font-family:var(--mono);font-weight:700;color:var(--red)">${fmt(net)}</td>
         <td style="text-align:right;padding:7px 10px;font-family:var(--mono);color:var(--t3)">—</td>
-        <td style="padding:7px 10px;text-align:right"><span style="font-size:9px;color:var(--t3)">▾ klik voor historie</span></td>
+        <td style="padding:7px 10px;text-align:right">
+          <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--blue)" onclick="event.stopPropagation();openSalaryOverride(${(S.employees.find(e=>e.name===base)||{}).id||0},'${esc(base)}')">💰 Aanpassen</button>
+          <span style="font-size:9px;color:var(--t3)">▾ historie</span>
+        </td>
       </tr>`;
       html+=`<tr id="${gid}" style="display:none"><td colspan="8" style="padding:0">
         <table style="width:100%;border-collapse:collapse">
@@ -8733,6 +8736,8 @@ function _renderFinancialActual(){
   const year=parseInt(yearEl?.value)||new Date().getFullYear();
   const inclDraft=document.getElementById('fin-incl-draft')?.checked||false;
   const now=new Date(); // fixed costs calculated per-month in loop below
+  // Always normalize fixed costs before rendering (ensures SM/EM decoded from notes)
+  _normFixedCosts(S.fixedCosts||[]);
 
   // Helper: future costs that fall within a specific month
   const getFutureCostsForMonth=(y,m)=>{
