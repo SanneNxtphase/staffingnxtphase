@@ -6908,12 +6908,15 @@ async function _fcReloadAndRender(){
   _normFixedCosts(S.fixedCosts);
   _finData=null;
   renderFixedCosts();renderDashboard();
+  if(typeof _renderFinancialActual==='function') _renderFinancialActual();
   setTimeout(async()=>{
     try{
       const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
       if(fcFresh&&fcFresh.length>0){
         _normFixedCosts(fcFresh);
-        S.fixedCosts=fcFresh;renderFixedCosts();renderDashboard();
+        S.fixedCosts=fcFresh;
+        renderFixedCosts();renderDashboard();
+        if(typeof _renderFinancialActual==='function') _renderFinancialActual();
       }
     }catch(e){}
   },600);
