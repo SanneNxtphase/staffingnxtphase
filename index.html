@@ -7624,19 +7624,17 @@ async function saveVacation(id){
     DB._sv(); DB._store=null;
   } else {
     hdrs['Prefer']='return=representation';
-    hdrs['Prefer']='return=representation,resolution=ignore-duplicates';
     const resp=await fetch(_supaUrl('vacations','?select=id'),{method:'POST',headers:hdrs,body:JSON.stringify(pay)});
     if(resp.ok){
       const rows=await resp.json().catch(()=>[]);
       const supaId=rows[0]?.id;
-      const store=DB._gs();
-      if(!store._ids) store._ids={};
-      const localId=store._ids.vacations||1;
-      store._ids.vacations=localId+1;
-      if(!store.vacations) store.vacations=[];
-      store.vacations.push({...pay,id:supaId||localId,created_at:new Date().toISOString()});
-      DB._sv(); DB._store=null;
-      S.vacations.push({...pay,id:supaId||localId,start_date:sd});
+      if(!supaId){
+        // Empty response = silently ignored (duplicate?) - show warning
+        showToast('⚠ Vakantie mogelijk al bestaat of kon niet worden opgeslagen','error');
+        return;
+      }
+      // Add to S.vacations with real Supabase id
+      S.vacations.push({...pay,id:supaId,start_date:sd});
     } else {
       const errTxt=await resp.text().catch(()=>'');
       showToast('⚠ Vakantie niet opgeslagen ('+resp.status+'): '+errTxt.substring(0,200),'error');
