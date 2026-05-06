@@ -1608,28 +1608,8 @@ async function supaLoadAll() {
     // This fixes: Ralph missing if he was never seeded in Supabase employees
     // Only seed employees if truly empty (prevents duplicates)
     if(store.employees.length<5) DB._ensureRealEmployees();
-    // Insert any newly added employees into Supabase
-    const _supaEmpNames=new Set((store.employees||[]).map(e=>e.name));
-    const _realMembers=[
-      {name:'Koen',role:'Project Owner',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
-      {name:'Siebeline',role:'Project Manager',daily_cost:365,available_days_per_week:5,vacation_days_per_year:25},
-      {name:'Marco',role:'Techlead',daily_cost:462,available_days_per_week:5,vacation_days_per_year:25},
-      {name:'Kamiel',role:'Developer',daily_cost:185,available_days_per_week:5,vacation_days_per_year:25},
-      {name:'Paul',role:'Developer',daily_cost:535,available_days_per_week:4,vacation_days_per_year:20},
-      {name:'Mees',role:'Developer',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25},
-      {name:'Stein',role:'AI Delivery Manager',daily_cost:369,available_days_per_week:5,vacation_days_per_year:25},
-      {name:'Ralph',role:'Project Manager',daily_cost:427,available_days_per_week:4,vacation_days_per_year:25},
-      {name:'Sanne',role:'Operations',daily_cost:222,available_days_per_week:5,vacation_days_per_year:25}
-    ];
-    for(const m of _realMembers){
-      if(!_supaEmpNames.has(m.name)){
-        try{
-          const res=await _supaReq('POST','employees',m);
-          const row=Array.isArray(res)?res[0]:res;
-          if(row&&row.id){store.employees.push(row);console.log('[supaLoadAll] Added missing employee:',m.name);}
-        }catch(e){}
-      }
-    }
+    // Employee seeding disabled — employees are managed via Team page
+    // Hardcoded seeding caused duplicates on every app load
     // Data integrity: for any project that has invoices entries,
     // remove partner_invoices entries to prevent double-counting.
     if(Array.isArray(store.invoices)&&Array.isArray(store.partner_invoices)){
@@ -7107,7 +7087,12 @@ function renderSimpleCashflow(){
         const tOut=entries.reduce((s,e)=>{
           if(e.outflow!==undefined&&e.outflow!==null)return s+parseFloat(e.outflow||0);
           const m=parseFloat(e.closing||0)-parseFloat(e.opening||0);return s+Math.max(0,-m);},0);
-        const tNet=tIn-tOut;
+        // Sum net directly per month to avoid floating point accumulation errors
+        const tNet=Math.round(entries.reduce((s,e)=>{
+          if(e.inflow!==undefined&&e.inflow!==null&&e.outflow!==undefined&&e.outflow!==null)
+            return s+parseFloat(e.inflow||0)-parseFloat(e.outflow||0);
+          return s+parseFloat(e.closing||0)-parseFloat(e.opening||0);
+        },0)*100)/100;
         return`<td class="bold" style="padding:8px 14px;font-size:11px">TOTAL</td>
           <td></td>
           <td class="right mono" style="color:var(--green);font-weight:800">+${fmt(tIn)}</td>
