@@ -475,7 +475,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v62</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v63-1205-0820</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -6183,16 +6183,19 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  // Deduplicate by id first (prevents double-counting if array has duplicates)
-  const seen=new Set();
-  const unique=S.fixedCosts.filter(c=>{
+  const _bad=new Set([12,55]);
+  const _seen=new Set();
+  let _sum=0;
+  (S.fixedCosts||[]).forEach(function(c){
     const id=parseInt(c.id);
-    if(id===12||id===55) return false; // hard-exclude deleted/replaced entries
-    if(seen.has(id)) return false;
-    seen.add(id);
-    return true;
+    if(_bad.has(id)) return;
+    if(_seen.has(id)) return;
+    _seen.add(id);
+    if(c.active!==1&&c.active!==true) return;
+    if(!fcInDateRange(c,y,m)) return;
+    _sum+=fcMonthlyAmount(c);
   });
-  return Math.round(unique.filter(c=>c.active===1&&fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  return Math.round(_sum*100)/100;
 }
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
