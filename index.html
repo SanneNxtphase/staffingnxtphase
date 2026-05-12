@@ -1842,8 +1842,8 @@ async function pullFromSupabase(){
 //   Notes field is authoritative backup for vat_type/vat_pct (Supabase may have stale values)
 function _normFixedCosts(arr){const _bad=[12,55,78];
   if(arr&&arr.length)for(let _i=arr.length-1;_i>=0;_i--){if(_bad.includes(parseInt(arr[_i].id)))arr.splice(_i,1);}
-  // Hard-remove deleted entries that may survive in browser cache
-  const _del=[12,55];
+// Hard-remove deleted entries that may survive in browser cache
+  const _del=[12,55,78,79];
   if(arr&&arr.length) for(let _i=arr.length-1;_i>=0;_i--){if(_del.includes(parseInt(arr[_i].id)))arr.splice(_i,1);}
   (arr||[]).forEach(function(c){
     // Normalize active
