@@ -463,7 +463,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v61 · Live</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v62·0747</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1306,6 +1306,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
+console.log('%c NXTPhase v62-0748 loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -6168,12 +6169,16 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  // Exclude any entry with id<=12 that is named Copilot (catches all cache variants)
-  return Math.round(S.fixedCosts.filter(c=>{
-    if(parseInt(c.id)===12) return false; // explicitly deleted duplicate
-    if(!c.active||c.active===0) return false;
-    return fcInDateRange(c,y,m);
-  }).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  // Deduplicate by id first (prevents double-counting if array has duplicates)
+  const seen=new Set();
+  const unique=S.fixedCosts.filter(c=>{
+    const id=parseInt(c.id);
+    if(id===12) return false; // hard-exclude deleted entry
+    if(seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  return Math.round(unique.filter(c=>c.active===1&&fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
@@ -6382,7 +6387,10 @@ function renderFixedCosts(){
 
   // KPI calculations
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
-  const _activeInMonth=S.fixedCosts.filter(c=>parseInt(c.id)!==12&&c.active===1&&fcInDateRange(c,_y,_m));
+  // Deduplicate S.fixedCosts by id before KPI calculation
+  const _seen2=new Set();
+  const _uniqueFC=S.fixedCosts.filter(c=>{const id=parseInt(c.id);if(id===12||_seen2.has(id))return false;_seen2.add(id);return true;});
+  const _activeInMonth=_uniqueFC.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
   const tNetThisMonth=Math.round(_activeInMonth.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   console.log('[FC KPI] month='+_y+'-'+_m+' entries='+_activeInMonth.length+' total='+tNetThisMonth);
   console.table(_activeInMonth.map(c=>({id:c.id,name:c.name,amount:c.amount,vat_type:c.vat_type,vat_pct:c.vat_pct,contrib:Math.round(fcMonthlyAmount(c)*100)/100})));
