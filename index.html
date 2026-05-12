@@ -6162,7 +6162,8 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  return Math.round(S.fixedCosts.filter(c=>fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  // Exclude id=12 (deleted duplicate Copilot entry that may survive in browser cache)
+  return Math.round(S.fixedCosts.filter(c=>parseInt(c.id)!==12&&c.active===1&&fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
@@ -6371,7 +6372,7 @@ function renderFixedCosts(){
 
   // KPI calculations
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
-  const _activeInMonth=S.fixedCosts.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
+  const _activeInMonth=S.fixedCosts.filter(c=>parseInt(c.id)!==12&&c.active===1&&fcInDateRange(c,_y,_m));
   const tNetThisMonth=Math.round(_activeInMonth.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   console.log('[FC KPI] month='+_y+'-'+_m+' entries='+_activeInMonth.length+' total='+tNetThisMonth);
   console.table(_activeInMonth.map(c=>({id:c.id,name:c.name,amount:c.amount,vat_type:c.vat_type,vat_pct:c.vat_pct,contrib:Math.round(fcMonthlyAmount(c)*100)/100})));
