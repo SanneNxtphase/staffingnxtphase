@@ -1842,7 +1842,7 @@ async function pullFromSupabase(){
 //   Notes field is authoritative backup for vat_type/vat_pct (Supabase may have stale values)
 function _normFixedCosts(arr){
   // Hard-remove deleted entries that may survive in browser cache
-  const _del=[12];
+  const _del=[12,55];
   if(arr&&arr.length) for(let _i=arr.length-1;_i>=0;_i--){if(_del.includes(parseInt(arr[_i].id)))arr.splice(_i,1);}
   (arr||[]).forEach(function(c){
     // Normalize active
@@ -6187,7 +6187,7 @@ function fixedMonthly(y,m){
   const seen=new Set();
   const unique=S.fixedCosts.filter(c=>{
     const id=parseInt(c.id);
-    if(id===12) return false; // hard-exclude deleted entry
+    if(id===12||id===55) return false; // hard-exclude deleted/replaced entries
     if(seen.has(id)) return false;
     seen.add(id);
     return true;
@@ -6360,7 +6360,9 @@ async function fcFixUncategorised(){
 
 function renderFixedCosts(){
   try{
-  _normFixedCosts(S.fixedCosts||[]);
+  // Hard-remove known stale entries before any calculation
+  S.fixedCosts=(S.fixedCosts||[]).filter(c=>parseInt(c.id)!==12&&parseInt(c.id)!==55);
+  _normFixedCosts(S.fixedCosts);
   const fActiveEl=document.getElementById('fc-filter-active');
   const fMonthEl=document.getElementById('fc-filter-month');
   const fCatEl=document.getElementById('fc-filter-cat');
@@ -6376,7 +6378,7 @@ function renderFixedCosts(){
   const _fcSeen=new Set();
   const _fcDeduped=S.fixedCosts.filter(c=>{
     const id=parseInt(c.id);
-    if(id===12||_fcSeen.has(id)) return false;
+    if(id===12||id===55||_fcSeen.has(id)) return false;
     _fcSeen.add(id); return true;
   });
   let allEntries=_fcDeduped.filter(c=>{
