@@ -780,15 +780,15 @@ if(location.protocol==='file:'){
       <button class="btn btn-primary" onclick="openModal('project')">+ New Project</button>
     </div>
   </div>
-  <div class="sec-lbl confirmed">&#10003; Confirmed Projects</div>
-  <div class="card mb-14"><div class="table-wrap"><table>
-    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
-    <tbody id="confirmed-tbody"></tbody>
-  </table></div></div>
   <div class="sec-lbl draft">&#9675; Draft / Pencil</div>
   <div class="card mb-14"><div class="table-wrap"><table>
     <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
     <tbody id="draft-tbody"></tbody>
+  </table></div></div>
+  <div class="sec-lbl confirmed">&#10003; Confirmed Projects</div>
+  <div class="card mb-14"><div class="table-wrap"><table>
+    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
+    <tbody id="confirmed-tbody"></tbody>
   </table></div></div>
   <div class="sec-lbl" style="background:var(--red-p);border-left-color:var(--red)">&#9675; Stopped / Cancelled</div>
   <div class="card mb-14"><div class="table-wrap"><table>
@@ -8627,9 +8627,9 @@ function renderFinancial(){
           if(em&&!fc.end_month)fc.end_month=em[1];
           if(freq&&(!fc.frequency||fc.frequency==='monthly'))fc.frequency=freq[1];
           if(freqm&&!fc.frequency_month)fc.frequency_month=parseInt(freqm[1]);
-          // VAT from notes takes precedence over null/undefined from Supabase
-          if(vt&&(!fc.vat_type||fc.vat_type===null))fc.vat_type=vt[1];
-          if(vp&&(fc.vat_pct===null||fc.vat_pct===undefined))fc.vat_pct=parseFloat(vp[1]);
+          // VAT from notes is ALWAYS authoritative (same as _normFixedCosts)
+          if(vt&&vt[1]){fc.vat_type=vt[1];}
+          if(vp){fc.vat_pct=parseFloat(vp[1]);}else if(vt&&vt[1]==='none'){fc.vat_pct=0;}
         }
       });
       // Apply fc_date_overrides from settings (includes frequency overrides)
