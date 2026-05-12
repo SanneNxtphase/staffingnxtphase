@@ -780,22 +780,11 @@ if(location.protocol==='file:'){
       <button class="btn btn-primary" onclick="openModal('project')">+ New Project</button>
     </div>
   </div>
-  <div class="sec-lbl confirmed">&#10003; Confirmed Projects</div>
   <div class="card mb-14"><div class="table-wrap"><table>
     <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
-    <tbody id="confirmed-tbody"></tbody>
+    <tbody id="projects-unified-tbody"></tbody>
   </table></div></div>
-  <div class="sec-lbl draft">&#9675; Draft / Pencil</div>
-  <div class="card mb-14"><div class="table-wrap"><table>
-    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
-    <tbody id="draft-tbody"></tbody>
-  </table></div></div>
-  <div class="sec-lbl" style="background:var(--red-p);border-left-color:var(--red)">&#9675; Stopped / Cancelled</div>
-  <div class="card mb-14"><div class="table-wrap"><table>
-    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
-    <tbody id="stopped-tbody"></tbody>
-  </table></div></div>
-  <!-- Year Overview -->
+    <!-- Year Overview -->
   <div class="sec-lbl" style="color:var(--purple)">&#128200; Year Overview</div>
   <div class="card">
     <div class="card-header">
@@ -1873,6 +1862,19 @@ function _normFixedCosts(arr){
   }
   return arr;
 }
+// On startup: purge stale fixed_costs localStorage cache to prevent stale KPI values
+(function(){
+  try{
+    const _st=DB._gs();
+    if(_st&&_st.fixed_costs){
+      // Remove duplicate/stale entries — force fresh fetch on next navigation
+      delete _st.fixed_costs;
+      DB._sv();
+      DB._store=null;
+    }
+  }catch(e){}
+})();
+
 // Sync version kept for compatibility but no longer overrides VAT
 async function _normFixedCostsAndSync(arr){
   _normFixedCosts(arr);
@@ -2524,10 +2526,9 @@ function navigate(page,el){
       // Page is already visible (navigate() called classList.add above)
       // Show loading indicator
       const cardsEl=document.getElementById('fc-category-cards');
-      if(cardsEl&&!S.fixedCosts.length)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading…</div>';
-      else renderFixedCosts(); // show existing data immediately
+      if(cardsEl)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading…</div>';
 
-      // Fetch fresh from Supabase
+      // Always fetch fresh from Supabase — never use stale cache for KPI
       try{
         const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
         if(fcFresh&&fcFresh.length>0){
@@ -3964,43 +3965,44 @@ function renderProjects(){
       ${label} (${count})
     </td></tr>`;
 
-  // CONFIRMED: split into active/upcoming, then completed at very bottom
-  const confActive=conf.filter(p=>!isCompleted(p)&&!isFuture(p));
-  const confUpcoming=conf.filter(p=>isFuture(p));
-  const confCompleted=conf.filter(p=>isCompleted(p));
+  // Unified project order: Confirmed → Upcoming → Draft → Completed → Stopped
+  const today3=new Date().toISOString().split('T')[0];
+  const isComp2  = p => p.end_date   && p.end_date   <  today3;
+  const isUp2    = p => p.start_date && p.start_date >  today3 && (!p.end_date || p.end_date >= today3);
+  const isActive2= p => !isComp2(p)  && !isUp2(p);
 
-  let confRows='';
-  if(confActive.length) confRows+=confActive.map(p=>mkRow(p,false)).join('');
-  if(confUpcoming.length){
-    confRows+=sectionDiv('↓ Upcoming — not yet started',confUpcoming.length,'var(--blue)');
-    confRows+=confUpcoming.map(p=>mkRow(p,false)).join('');
-  }
-  if(confCompleted.length){
-    confRows+=sectionDiv('↓ Completed confirmed',confCompleted.length);
-    confRows+=confCompleted.map(p=>mkRow(p,true)).join('');
-  }
-  document.getElementById('confirmed-tbody').innerHTML=confRows||'<tr><td colspan="11" class="empty">No confirmed projects yet.</td></tr>';
+  const sec_conf_active  = conf.filter(p => isActive2(p));
+  const sec_upcoming     = [...conf.filter(p => isUp2(p)), ...drft.filter(p => isUp2(p))];
+  const sec_draft_active = drft.filter(p => isActive2(p));
+  const sec_completed    = [...conf.filter(p => isComp2(p)), ...drft.filter(p => isComp2(p))];
+  const sec_stopped      = stop;
 
-  // DRAFT: split into active/upcoming + completed
-  const draftActive=drft.filter(p=>!isCompleted(p)&&!isFuture(p));
-  const draftUpcoming=drft.filter(p=>isFuture(p));
-  const draftCompleted=drft.filter(p=>isCompleted(p));
-  let draftRows='';
-  if(draftActive.length) draftRows+=draftActive.map(p=>mkRow(p,false)).join('');
-  if(draftUpcoming.length){
-    draftRows+=sectionDiv('↓ Upcoming draft',draftUpcoming.length,'var(--amber)');
-    draftRows+=draftUpcoming.map(p=>mkRow(p,false)).join('');
+  let unifiedRows = '';
+  if(sec_conf_active.length){
+    unifiedRows += sectionDiv('✓  Confirmed — actief', sec_conf_active.length, 'var(--green)');
+    unifiedRows += sec_conf_active.map(p => mkRow(p, false)).join('');
   }
-  if(draftCompleted.length){
-    draftRows+=sectionDiv('↓ Completed draft',draftCompleted.length);
-    draftRows+=draftCompleted.map(p=>mkRow(p,true)).join('');
+  if(sec_upcoming.length){
+    unifiedRows += sectionDiv('↑  Upcoming — nog niet gestart', sec_upcoming.length, 'var(--blue)');
+    unifiedRows += sec_upcoming.map(p => mkRow(p, false)).join('');
   }
-  document.getElementById('draft-tbody').innerHTML=draftRows||'<tr><td colspan="11" class="empty">No draft projects yet.</td></tr>';
+  if(sec_draft_active.length){
+    unifiedRows += sectionDiv('◦  Draft / Pencil — actief', sec_draft_active.length, 'var(--amber)');
+    unifiedRows += sec_draft_active.map(p => mkRow(p, false)).join('');
+  }
+  if(sec_completed.length){
+    unifiedRows += sectionDiv('✓  Afgerond', sec_completed.length, 'var(--t3)');
+    unifiedRows += sec_completed.map(p => mkRow(p, true)).join('');
+  }
+  if(sec_stopped.length){
+    unifiedRows += sectionDiv('✗  Gestopt / Geannuleerd', sec_stopped.length, 'var(--red)');
+    unifiedRows += sec_stopped.map(p => mkRow(p, true)).join('');
+  }
 
-  // STOPPED
-  const stopEl=document.getElementById('stopped-tbody');
-  if(stopEl)stopEl.innerHTML=stop.map(p=>mkRow(p,true)).join('')||'<tr><td colspan="11" class="empty">No stopped projects.</td></tr>';
-  // Year overview
+  const _utbody = document.getElementById('projects-unified-tbody');
+  if(_utbody) _utbody.innerHTML = unifiedRows || '<tr><td colspan="11" class="empty">Nog geen projecten.</td></tr>';
+
+    // Year overview
   renderProjectYearOverview();
 }
 
