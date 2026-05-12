@@ -1150,7 +1150,7 @@ const DB={
   _store:null,
   _gs(){
     if(this._store)return this._store;
-    var raw;try{raw=localStorage.getItem('sp-v5')||localStorage.getItem('sp-v4')||localStorage.getItem('sp-v3');}catch(e){raw=null;}
+    var raw;try{raw=localStorage.getItem('sp-v60');}catch(e){raw=null;}
     if(raw){
       try{this._store=JSON.parse(raw);}catch(e){this._store=null;}
     }
@@ -1244,7 +1244,7 @@ const DB={
       s.employees.forEach(e=>{if((!e.daily_cost||e.daily_cost===0)&&costMap.hasOwnProperty(e.name))e.daily_cost=costMap[e.name];});
     }
   },
-  _sv(){try{localStorage.setItem('sp-v5',JSON.stringify(this._store));}catch(e){console.warn('localStorage write failed:',e);}},
+  _sv(){try{localStorage.setItem('sp-v60',JSON.stringify(this._store));}catch(e){console.warn('localStorage write failed:',e);}},
   _ni(t){const s=this._gs();const id=s._ids[t]||1;s._ids[t]=id+1;return id;},
   _injectRealProjects(){this._ensureRealProjects();},
   _seed(){
@@ -1687,7 +1687,7 @@ async function supaLoadAll() {
       const _snSetting=supaSettings.find(function(s){return s.key==='staffing_notes';});
       if(_snSetting) try{localStorage.setItem('sp-staff-notes',_snSetting.value||'{}');}catch(e){}
     }catch(e){}
-    localStorage.setItem('sp-v5', JSON.stringify(store));
+    localStorage.setItem('sp-v60', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
     // Auto-repair: only push amount/notes if local has newer value than Supabase
     // Do NOT repair vat_type — that causes old localStorage values to override user changes
@@ -1726,7 +1726,7 @@ async function pushAllToSupabase() {
     var _pushCostMap = {Koen:462,Siebeline:365,Marco:462,Kamiel:185,Paul:535,Mees:222,Stein:369,Ralph:427};
     var store0 = DB._gs();
     store0.employees.forEach(function(e){if(_pushCostMap.hasOwnProperty(e.name))e.daily_cost=_pushCostMap[e.name];});
-    localStorage.setItem('sp-v5', JSON.stringify(store0));
+    localStorage.setItem('sp-v60', JSON.stringify(store0));
 
     var tables = ['projects','employees','fixed_costs','invoices','future_costs',
       'partner_invoices','bank_transactions','vacations','staffing','cashflow_months',
@@ -1858,22 +1858,12 @@ function _normFixedCosts(arr){
   });
   const deduped=Array.from(seen.values());
   if(deduped.length<arr.length){
+    console.log('[FC DEDUP] removed '+(arr.length-deduped.length)+' duplicates, kept '+deduped.length);
     arr.splice(0,arr.length,...deduped);
   }
   return arr;
 }
-// On startup: purge stale fixed_costs localStorage cache to prevent stale KPI values
-(function(){
-  try{
-    const _st=DB._gs();
-    if(_st&&_st.fixed_costs){
-      // Remove duplicate/stale entries — force fresh fetch on next navigation
-      delete _st.fixed_costs;
-      DB._sv();
-      DB._store=null;
-    }
-  }catch(e){}
-})();
+// Cache busted via sp-v60 key — no stale data possible
 
 // Sync version kept for compatibility but no longer overrides VAT
 async function _normFixedCostsAndSync(arr){
@@ -2506,7 +2496,7 @@ function navigate(page,el){
           try{
             const st=DB._gs();
             st.cashflow_months=rows;
-            localStorage.setItem('sp-v5',JSON.stringify(st));
+            localStorage.setItem('sp-v60',JSON.stringify(st));
             DB._store=null;
           }catch(e){}
         }
@@ -6370,6 +6360,7 @@ function renderFixedCosts(){
   // KPI calculations
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
   const tNetThisMonth=fixedMonthly(_y,_m);
+  console.log('[FC KPI] month='+_y+'-'+_m+' entries='+S.fixedCosts.filter(c=>c.active===1).length+' total='+tNetThisMonth);
   const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
   const tGrossThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
   const tVatThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
@@ -6377,7 +6368,7 @@ function renderFixedCosts(){
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
       <div class="kpi-lbl">This Month — Excl. VAT</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
-      <div class="kpi-sub">Matches all dashboards</div></div>
+      <div class="kpi-sub">Entries: ${S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m)&&c.active===1).length} — Check console for detail</div></div>
     <div class="kpi aa">
       <div class="kpi-lbl">This Month — Incl. VAT</div><div class="kpi-val amber">${fmt(tGrossThisMonth)}</div>
       <div class="kpi-sub">What you actually pay out</div></div>
@@ -9673,7 +9664,7 @@ async function exportAllExcel(){
 // ══ EXPORT JSON BACKUP ══
 function exportBackup(){
   var data;
-  try{data=localStorage.getItem('sp-v5')||localStorage.getItem('sp-v4')||localStorage.getItem('sp-v3');}catch(e){data=null;}
+  try{data=localStorage.getItem('sp-v60');}catch(e){data=null;}
   if(!data)return alert('No data to export.');
   const blob=new Blob([data],{type:'application/json'});
   const a=document.createElement('a');
