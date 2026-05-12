@@ -1872,8 +1872,10 @@ function _normFixedCosts(arr){
   // Deduplicate by id — keep highest id (most recent insert wins)
   const seen=new Map();
   (arr||[]).forEach(c=>{
-    const existing=seen.get(c.name+'|'+(c.category||''));
-    if(!existing||parseInt(c.id)>parseInt(existing.id)) seen.set(c.name+'|'+(c.category||''),c);
+    // Dedup by name only (category may differ between browser cache and Supabase)
+    const key=(c.name||'').trim().toLowerCase();
+    const existing=seen.get(key);
+    if(!existing||parseInt(c.id)>parseInt(existing.id)) seen.set(key,c);
   });
   const deduped=Array.from(seen.values());
   if(deduped.length<arr.length){
