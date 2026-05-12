@@ -6416,7 +6416,7 @@ function renderFixedCosts(){
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
       <div class="kpi-lbl">This Month — Excl. VAT</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
-      <div class="kpi-sub">Entries: ${_activeInMonth.length} — sum: ${_activeInMonth.reduce((s,c)=>+(s+fcMonthlyAmount(c)).toFixed(2),0)}</div></div>
+      <div class="kpi-sub">Matches all dashboards</div></div>
     <div class="kpi aa">
       <div class="kpi-lbl">This Month — Incl. VAT</div><div class="kpi-val amber">${fmt(tGrossThisMonth)}</div>
       <div class="kpi-sub">What you actually pay out</div></div>
