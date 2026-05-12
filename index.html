@@ -2530,7 +2530,7 @@ function navigate(page,el){
         fcFresh=null;
         if(!S.fixedCosts.length) await loadData();
       }
-      renderFixedCosts(fcFresh);
+      renderFixedCosts();
     })();
   } else if(page==='extcosts'){
     (async()=>{
@@ -6328,10 +6328,9 @@ async function fcFixUncategorised(){
   showToast(`✓ ${done} entries → Loonkosten`);
 }
 
-function renderFixedCosts(fcData){
-  const _fcArr = fcData || S.fixedCosts || [];
-  _normFixedCosts(_fcArr);
-  if(fcData) S.fixedCosts = _fcArr;
+function renderFixedCosts(){
+  try{
+  _normFixedCosts(S.fixedCosts||[]);
   const fActiveEl=document.getElementById('fc-filter-active');
   const fMonthEl=document.getElementById('fc-filter-month');
   const fCatEl=document.getElementById('fc-filter-cat');
@@ -6343,7 +6342,7 @@ function renderFixedCosts(fcData){
   const fVat=fVatEl?.value||'';
   const sMode=sortEl?.value||'cat';
 
-  let allEntries=_fcArr.filter(c=>{
+  let allEntries=S.fixedCosts.filter(c=>{
     if(activeFilter==='active'&&c.active!==1)return false;
     if(activeFilter==='inactive'&&c.active===1)return false;
     if(monthFilter){const[mfy,mfm]=monthFilter.split('-').map(Number);if(!fcInDateRange(c,mfy,mfm))return false;}
@@ -6356,7 +6355,7 @@ function renderFixedCosts(fcData){
   if(fCatEl){
     const cur=fCatEl.value;
     fCatEl.innerHTML='<option value="">All</option>'+
-      [...new Set(_fcArr.map(c=>c.category||'Uncategorised'))].sort()
+      [...new Set(S.fixedCosts.map(c=>c.category||'Uncategorised'))].sort()
        .map(c=>`<option value="${esc(c)}"${cur===c?' selected':''}>${esc(c)}</option>`).join('');
     fCatEl.value=cur;
   }
@@ -6370,9 +6369,9 @@ function renderFixedCosts(fcData){
     return(a.name||'').localeCompare(b.name||'');
   });
 
-  // KPI calculations — use _fcArr (local, freshly fetched data)
+  // KPI calculations
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
-  const _activeInMonth=_fcArr.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
+  const _activeInMonth=S.fixedCosts.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
   const tNetThisMonth=Math.round(_activeInMonth.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   console.log('[FC KPI] month='+_y+'-'+_m+' entries='+_activeInMonth.length+' total='+tNetThisMonth);
   console.table(_activeInMonth.map(c=>({id:c.id,name:c.name,amount:c.amount,vat_type:c.vat_type,vat_pct:c.vat_pct,contrib:Math.round(fcMonthlyAmount(c)*100)/100})));
@@ -6413,7 +6412,7 @@ function renderFixedCosts(fcData){
 
   if(!sorted.length){
     cardsEl.innerHTML=`<div style="padding:32px;text-align:center;color:var(--t3);font-size:13px">
-      ${_fcArr.length===0
+      ${S.fixedCosts.length===0
         ? 'No cost entries yet. Click <strong>+ Add Cost Entry</strong> to begin.'
         : 'No entries match the current filters.'}
     </div>`;
@@ -6565,6 +6564,11 @@ function renderFixedCosts(fcData){
   html+=`</tbody></table></div>`;
   cardsEl.innerHTML=html;
   const gt=document.getElementById('fc-grand-total-card');if(gt)gt.innerHTML='';
+  }catch(err){
+    console.error('[FC RENDER ERROR]',err);
+    const cardsEl2=document.getElementById('fc-category-cards');
+    if(cardsEl2)cardsEl2.innerHTML='<div style="padding:20px;color:var(--red)">Render error: '+err.message+'</div>';
+  }
 }
 
 
