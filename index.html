@@ -3610,14 +3610,10 @@ function renderDashboard(){
     });
     // Fixed costs line — drawn last so it's always visible on top
     const fcPts=trendData.map((d,i)=>`${xp(i).toFixed(1)},${yp(d.fc).toFixed(1)}`).join(' ');
-    // Subtle costs fill area
-    const fcAreaPath='M'+trendData.map((d,i)=>`${xp(i).toFixed(1)},${yp(d.fc).toFixed(1)}`).join(' L')+
-      ` L${xp(11).toFixed(1)},${yp(0).toFixed(1)} L${xp(0).toFixed(1)},${yp(0).toFixed(1)}Z`;
-    svg+=`<path d="${fcAreaPath}" fill="var(--red)" opacity=".05"/>`;
-    svg+=`<polyline points="${fcPts}" fill="none" stroke="var(--red)" stroke-width="2" stroke-dasharray="6,3" opacity=".8"/>`;
+    svg+=`<polyline points="${fcPts}" fill="none" stroke="var(--red)" stroke-width="2" stroke-dasharray="6,3" opacity=".85"/>`;
     // Costs dots
     trendData.forEach((d,i)=>{
-      if(d.fc>0) svg+=`<circle cx="${xp(i).toFixed(1)}" cy="${yp(d.fc).toFixed(1)}" r="2.5" fill="var(--red)" opacity=".7"/>`;
+      if(d.fc>0) svg+=`<circle cx="${xp(i).toFixed(1)}" cy="${yp(d.fc).toFixed(1)}" r="3" fill="var(--red)" opacity=".8"/>`;
     });
     // Year label
     svg+=`<text x="${(PAD.l+cW/2).toFixed(1)}" y="13" text-anchor="middle" font-size="10" fill="var(--t2)" font-weight="700">${trendYear} — Revenue Trend (Jan → Dec)</text>`;
