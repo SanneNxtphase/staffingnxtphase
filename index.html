@@ -3929,7 +3929,27 @@ function renderProjects(){
         ${!isComp&&p.status==='confirmed'?`<span style="display:inline-block;width:3px;height:16px;background:#1d4ed8;border-radius:2px;margin-right:6px;vertical-align:middle;opacity:.7"></span>`:''}${esc(p.client_name)}${partnerBadge}${compBadge}
         <span style="font-size:9px;color:var(--t4);margin-left:4px">▼</span></td><td style="${!isComp&&p.status==='confirmed'?'font-weight:600;color:var(--navy)':''}">${esc(p.name)}</td>
       <td><span class="badge badge-${p.status}">${p.status}</span></td>
-      <td class="text-muted">${p.start_date||'—'}</td><td class="text-muted" style="${isComp?'color:var(--amber)!important;font-weight:600':''}">${p.end_date||'—'}</td>
+      <td class="text-muted">${p.start_date||'—'}</td><td style="${(()=>{
+        if(!p.end_date) return '';
+        const today=new Date().toISOString().split('T')[0];
+        const end=p.end_date;
+        const daysLeft=Math.ceil((new Date(end)-new Date(today))/(1000*60*60*24));
+        if(isComp) return 'color:var(--amber);font-weight:600';
+        if(daysLeft<=0) return 'color:var(--red);font-weight:700';
+        if(daysLeft<=7) return 'color:var(--red);font-weight:600';
+        if(daysLeft<=14) return 'color:var(--orange,#f97316);font-weight:600';
+        if(daysLeft<=30) return 'color:var(--amber);font-weight:500';
+        return 'color:var(--t2)';
+      })()}">${p.end_date||'—'}${(()=>{
+        if(!p.end_date||isComp) return '';
+        const today=new Date().toISOString().split('T')[0];
+        const daysLeft=Math.ceil((new Date(p.end_date)-new Date(today))/(1000*60*60*24));
+        if(daysLeft<=0) return ' <span style="font-size:9px;background:var(--red);color:#fff;border-radius:3px;padding:1px 4px">VERLOPEN</span>';
+        if(daysLeft<=7) return ' <span style="font-size:9px;background:var(--red);color:#fff;border-radius:3px;padding:1px 4px">'+daysLeft+'d</span>';
+        if(daysLeft<=14) return ' <span style="font-size:9px;background:var(--orange,#f97316);color:#fff;border-radius:3px;padding:1px 4px">'+daysLeft+'d</span>';
+        if(daysLeft<=30) return ' <span style="font-size:9px;background:var(--amber-p,#fef3c7);color:var(--amber);border-radius:3px;padding:1px 4px">'+daysLeft+'d</span>';
+        return '';
+      })()}</td>
       <td class="right">${w}</td>
       <td class="right text-blue bold">${fmt(p.revenue)}${partnerProgress}</td>
       <td class="right text-muted" title="${w} wks × this rate = ${fmt(p.revenue)}">${w>0&&rpw>0?'€'+rpw.toLocaleString('nl-NL',{minimumFractionDigits:2,maximumFractionDigits:4})+'/wk':'—'}</td>
@@ -6364,6 +6384,7 @@ function renderFixedCosts(fcData){
   const _activeInMonth=_fcArr.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
   const tNetThisMonth=Math.round(_activeInMonth.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   console.log('[FC KPI] month='+_y+'-'+_m+' entries='+_activeInMonth.length+' total='+tNetThisMonth);
+  console.table(_activeInMonth.map(c=>({id:c.id,name:c.name,amount:c.amount,vat_type:c.vat_type,vat_pct:c.vat_pct,contrib:Math.round(fcMonthlyAmount(c)*100)/100})));
   const thisMonthEntries=_activeInMonth;
   const tGrossThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
   const tVatThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
@@ -6371,7 +6392,7 @@ function renderFixedCosts(fcData){
   if(kpiEl)kpiEl.innerHTML=`
     <div class="kpi an" style="border-left:3px solid var(--navy)">
       <div class="kpi-lbl">This Month — Excl. VAT</div><div class="kpi-val">${fmt(tNetThisMonth)}</div>
-      <div class="kpi-sub">Entries: ${S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m)&&c.active===1).length} — Check console for detail</div></div>
+      <div class="kpi-sub">Entries: ${_activeInMonth.length} — sum: ${_activeInMonth.reduce((s,c)=>+(s+fcMonthlyAmount(c)).toFixed(2),0)}</div></div>
     <div class="kpi aa">
       <div class="kpi-lbl">This Month — Incl. VAT</div><div class="kpi-val amber">${fmt(tGrossThisMonth)}</div>
       <div class="kpi-sub">What you actually pay out</div></div>
