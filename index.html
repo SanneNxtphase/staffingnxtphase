@@ -2513,33 +2513,24 @@ function navigate(page,el){
     })();
   } else if(page==='fixedcosts'){
     (async()=>{
-      // Page is already visible (navigate() called classList.add above)
-      // Show loading indicator
       const cardsEl=document.getElementById('fc-category-cards');
       if(cardsEl)cardsEl.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)">⟳ Loading…</div>';
-
-      // Always fetch fresh from Supabase — never use stale cache for KPI
+      let fcFresh=null;
       try{
-        const fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
+        fcFresh=await _supaReq('GET','fixed_costs',null,'?select=*&order=id.asc');
         if(fcFresh&&fcFresh.length>0){
           _normFixedCosts(fcFresh);
-          if(window._fcLocalOverrides){
-            Object.entries(window._fcLocalOverrides).forEach(([eid,vals])=>{
-              const e=fcFresh.find(c=>parseInt(c.id)===parseInt(eid));
-              if(e)Object.assign(e,vals);
-            });
-          }
           S.fixedCosts=fcFresh;
-          // Do NOT persist to localStorage — always fetch fresh to avoid stale KPI values
-        }else if(!S.fixedCosts.length){
-          // Supabase returned nothing — try localStorage
-          await loadData();
+        }else{
+          fcFresh=null;
+          if(!S.fixedCosts.length) await loadData();
         }
       }catch(e){
         console.warn('FC load error:',e);
-        if(!S.fixedCosts.length)await loadData();
+        fcFresh=null;
+        if(!S.fixedCosts.length) await loadData();
       }
-      renderFixedCosts(fcFresh&&fcFresh.length>0?fcFresh:null);
+      renderFixedCosts(fcFresh);
     })();
   } else if(page==='extcosts'){
     (async()=>{
@@ -6422,7 +6413,7 @@ function renderFixedCosts(fcData){
 
   if(!sorted.length){
     cardsEl.innerHTML=`<div style="padding:32px;text-align:center;color:var(--t3);font-size:13px">
-      ${S.fixedCosts.length===0
+      ${_fcArr.length===0
         ? 'No cost entries yet. Click <strong>+ Add Cost Entry</strong> to begin.'
         : 'No entries match the current filters.'}
     </div>`;
