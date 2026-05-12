@@ -1165,7 +1165,7 @@ const DB={
   _store:null,
   _gs(){
     if(this._store)return this._store;
-    var raw;try{raw=localStorage.getItem('sp-v60');}catch(e){raw=null;}
+    var raw;try{raw=localStorage.getItem('sp-v99');}catch(e){raw=null;}
     if(raw){
       try{this._store=JSON.parse(raw);}catch(e){this._store=null;}
     }
@@ -1259,7 +1259,7 @@ const DB={
       s.employees.forEach(e=>{if((!e.daily_cost||e.daily_cost===0)&&costMap.hasOwnProperty(e.name))e.daily_cost=costMap[e.name];});
     }
   },
-  _sv(){try{localStorage.setItem('sp-v60',JSON.stringify(this._store));}catch(e){console.warn('localStorage write failed:',e);}},
+  _sv(){try{localStorage.setItem('sp-v99',JSON.stringify(this._store));}catch(e){console.warn('localStorage write failed:',e);}},
   _ni(t){const s=this._gs();const id=s._ids[t]||1;s._ids[t]=id+1;return id;},
   _injectRealProjects(){this._ensureRealProjects();},
   _seed(){
@@ -1703,7 +1703,7 @@ async function supaLoadAll() {
       const _snSetting=supaSettings.find(function(s){return s.key==='staffing_notes';});
       if(_snSetting) try{localStorage.setItem('sp-staff-notes',_snSetting.value||'{}');}catch(e){}
     }catch(e){}
-    localStorage.setItem('sp-v60', JSON.stringify(store));
+    localStorage.setItem('sp-v99', JSON.stringify(store));
     DB._store = null; // clear in-memory cache so loadData() re-reads fresh from localStorage
     // Auto-repair: only push amount/notes if local has newer value than Supabase
     // Do NOT repair vat_type — that causes old localStorage values to override user changes
@@ -1742,7 +1742,7 @@ async function pushAllToSupabase() {
     var _pushCostMap = {Koen:462,Siebeline:365,Marco:462,Kamiel:185,Paul:535,Mees:222,Stein:369,Ralph:427};
     var store0 = DB._gs();
     store0.employees.forEach(function(e){if(_pushCostMap.hasOwnProperty(e.name))e.daily_cost=_pushCostMap[e.name];});
-    localStorage.setItem('sp-v60', JSON.stringify(store0));
+    localStorage.setItem('sp-v99', JSON.stringify(store0));
 
     var tables = ['projects','employees','fixed_costs','invoices','future_costs',
       'partner_invoices','bank_transactions','vacations','staffing','cashflow_months',
@@ -1884,7 +1884,7 @@ function _normFixedCosts(arr){
   }
   return arr;
 }
-// Cache busted via sp-v60 key — no stale data possible
+// Cache busted via sp-v99 key — no stale data possible
 
 // Sync version kept for compatibility but no longer overrides VAT
 async function _normFixedCostsAndSync(arr){
@@ -2517,7 +2517,7 @@ function navigate(page,el){
           try{
             const st=DB._gs();
             st.cashflow_months=rows;
-            localStorage.setItem('sp-v60',JSON.stringify(st));
+            localStorage.setItem('sp-v99',JSON.stringify(st));
             DB._store=null;
           }catch(e){}
         }
@@ -9722,7 +9722,7 @@ async function exportAllExcel(){
 // ══ EXPORT JSON BACKUP ══
 function exportBackup(){
   var data;
-  try{data=localStorage.getItem('sp-v60');}catch(e){data=null;}
+  try{data=localStorage.getItem('sp-v99');}catch(e){data=null;}
   if(!data)return alert('No data to export.');
   const blob=new Blob([data],{type:'application/json'});
   const a=document.createElement('a');
