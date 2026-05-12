@@ -2539,7 +2539,7 @@ function navigate(page,el){
         console.warn('FC load error:',e);
         if(!S.fixedCosts.length)await loadData();
       }
-      renderFixedCosts();
+      renderFixedCosts(fcFresh&&fcFresh.length>0?fcFresh:null);
     })();
   } else if(page==='extcosts'){
     (async()=>{
@@ -6317,8 +6317,10 @@ async function fcFixUncategorised(){
   showToast(`✓ ${done} entries → Loonkosten`);
 }
 
-function renderFixedCosts(){
-  _normFixedCosts(S.fixedCosts||[]);
+function renderFixedCosts(fcData){
+  const _fcArr = fcData || S.fixedCosts || [];
+  _normFixedCosts(_fcArr);
+  if(fcData) S.fixedCosts = _fcArr;
   const fActiveEl=document.getElementById('fc-filter-active');
   const fMonthEl=document.getElementById('fc-filter-month');
   const fCatEl=document.getElementById('fc-filter-cat');
@@ -6330,7 +6332,7 @@ function renderFixedCosts(){
   const fVat=fVatEl?.value||'';
   const sMode=sortEl?.value||'cat';
 
-  let allEntries=S.fixedCosts.filter(c=>{
+  let allEntries=_fcArr.filter(c=>{
     if(activeFilter==='active'&&c.active!==1)return false;
     if(activeFilter==='inactive'&&c.active===1)return false;
     if(monthFilter){const[mfy,mfm]=monthFilter.split('-').map(Number);if(!fcInDateRange(c,mfy,mfm))return false;}
@@ -6343,7 +6345,7 @@ function renderFixedCosts(){
   if(fCatEl){
     const cur=fCatEl.value;
     fCatEl.innerHTML='<option value="">All</option>'+
-      [...new Set(S.fixedCosts.map(c=>c.category||'Uncategorised'))].sort()
+      [...new Set(_fcArr.map(c=>c.category||'Uncategorised'))].sort()
        .map(c=>`<option value="${esc(c)}"${cur===c?' selected':''}>${esc(c)}</option>`).join('');
     fCatEl.value=cur;
   }
@@ -6357,11 +6359,12 @@ function renderFixedCosts(){
     return(a.name||'').localeCompare(b.name||'');
   });
 
-  // KPI calculations
+  // KPI calculations — use _fcArr (local, freshly fetched data)
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
-  const tNetThisMonth=fixedMonthly(_y,_m);
-  console.log('[FC KPI] month='+_y+'-'+_m+' entries='+S.fixedCosts.filter(c=>c.active===1).length+' total='+tNetThisMonth);
-  const thisMonthEntries=S.fixedCosts.filter(c=>fcInDateRange(c,_y,_m));
+  const _activeInMonth=_fcArr.filter(c=>c.active===1&&fcInDateRange(c,_y,_m));
+  const tNetThisMonth=Math.round(_activeInMonth.reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  console.log('[FC KPI] month='+_y+'-'+_m+' entries='+_activeInMonth.length+' total='+tNetThisMonth);
+  const thisMonthEntries=_activeInMonth;
   const tGrossThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyAmountIncl(c),0)*100)/100;
   const tVatThisMonth=Math.round(thisMonthEntries.reduce((s,c)=>s+fcMonthlyVatAmt(c),0)*100)/100;
   const kpiEl=document.getElementById('fc-grand-kpis');
