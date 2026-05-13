@@ -11114,10 +11114,10 @@ function renderStaffOverview(){
     let html='<tbody>';
     emps.forEach(function(emp){
       if(soHidden.has(emp.id)){
-        html+='<tr style="background:var(--bg2);cursor:pointer" onclick="soToggle('+emp.id+')">'+
-          '<td style="padding:5px 12px;font-size:11px;font-weight:600;color:var(--t3);border-bottom:1px solid var(--bdr)">'+
+        html+='<tr style="background:#F9FAFB;cursor:pointer" onclick="soToggle('+emp.id+')">'+
+          '<td style="padding:5px 12px;font-size:11px;font-weight:600;color:var(--t3);border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);position:sticky;left:0;background:#F9FAFB;box-shadow:1px 0 0 var(--bdr)">'+
           '<span style="margin-right:6px;opacity:.5">▶</span>'+emp.name+'</td>'+
-          weeks.map(function(){return '<td style="border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr)"></td>';}).join('')+
+          weeks.map(function(){return '<td style="border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);background:#F9FAFB;"></td>';}).join('')+
           '</tr>';
         return;
       }
@@ -11130,10 +11130,14 @@ function renderStaffOverview(){
         if(cd>wd) rowOverConf=true;
       });
 
-      html+='<tr style="cursor:pointer;'+(rowOverConf?'border-left:3px solid #DC2626;':'')+'" onclick="soToggle('+emp.id+')">'+
-        '<td style="padding:8px 12px;font-size:12px;font-weight:700;color:'+(rowOverConf?'#DC2626':'var(--navy)')+';border-bottom:2px solid var(--bdr);vertical-align:middle;'+(rowOverConf?'border-left:3px solid #DC2626;':'')+'">'+
+      const rowIdx=emps.indexOf(emp);
+      const rowBg=rowIdx%2===0?'background:#fff;':'background:#F9FAFB;';
+
+      html+='<tr style="'+rowBg+(rowOverConf?'outline:2px solid #FCA5A5;outline-offset:-1px;':'')+'" onclick="soToggle('+emp.id+')">'+
+        '<td style="padding:8px 12px;font-size:12px;font-weight:700;color:'+(rowOverConf?'#DC2626':'var(--navy)')+';border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);vertical-align:middle;position:sticky;left:0;z-index:5;'+rowBg+'box-shadow:1px 0 0 var(--bdr);cursor:pointer">'+
         '<span style="font-size:9px;opacity:.4;margin-right:4px">▼</span>'+emp.name+
         (emp.role?'<div style="font-size:10px;color:var(--t3);font-weight:400;margin-top:1px">'+emp.role+'</div>':'')+
+        (rowOverConf?'<div style="font-size:9px;color:#DC2626;margin-top:2px">⚠ overstaffd</div>':'')+
         '</td>'+
         weeks.map(function(wk){
           const hlCount=holidaysInWeek(wk);
@@ -11150,8 +11154,8 @@ function renderStaffOverview(){
           const overConf=confDays>workDays;
           const overWithDraft=totalWithDraft>workDays;
 
-          // Cell bg: always white, no feestdag tint in cells
-          let cellHtml='<td style="padding:6px 8px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:130px;">';
+          // Cell bg: matches row stripe, always clean
+          let cellHtml='<td style="padding:6px 8px;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:140px;'+(rowIdx%2===0?'background:#fff;':'background:#F9FAFB;')+'">';
 
           if(entries.length===0){
             cellHtml+='<div style="font-size:10px;color:var(--t3);text-align:center;padding:6px 0">—</div>';
@@ -11212,19 +11216,20 @@ function renderStaffOverview(){
     });
     html+='</tbody>';
 
-    grid.innerHTML='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0">'+
-      '<thead><tr style="background:var(--bg2)">'+
-      '<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);min-width:130px;position:sticky;top:0;z-index:10;background:var(--bg2)">Persoon</th>'+
+    grid.innerHTML='<div style="overflow-x:auto;overflow-y:visible;"><table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0">'+
+      '<thead><tr>'+
+      '<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);min-width:160px;position:sticky;top:0;left:0;z-index:20;background:var(--bg2);box-shadow:1px 0 0 var(--bdr)">Persoon</th>'+
       weeks.map(function(wk){
         const mon=wkMonday(wk);
         const fri=new Date(mon);fri.setDate(mon.getDate()+4);
         const fmtD=function(d){return d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});};
         const hlCount=holidaysInWeek(wk);
-        const hlBg=hlCount>0?'background:var(--amber-p);':'background:var(--bg2);';
-        return '<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);min-width:130px;position:sticky;top:0;z-index:10;background:var(--bg2);">'+
-          'Wk '+wk.split('-W')[1]+
-          '<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' – '+fmtD(fri)+'</div>'+
-          (hlCount>0?'<div style="font-size:8px;font-weight:700;color:var(--amber);margin-top:2px">'+hlCount+'× feestdag</div>':'')+
+        const isCurrent=wk===toWeekKey(new Date());
+        const headerBg=isCurrent?'background:#EFF6FF;':'background:var(--bg2);';
+        return '<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);min-width:140px;position:sticky;top:0;z-index:10;'+headerBg+(isCurrent?'color:var(--blue);':'')+'">'+
+          'Wk '+wk.split('-W')[1]+(isCurrent?' <span style="color:var(--blue)">●</span>':'')+
+          '<div style="font-size:9px;font-weight:400;margin-top:2px;color:var(--t3)">'+fmtD(mon)+' – '+fmtD(fri)+'</div>'+
+          (hlCount>0?'<div style="font-size:8px;font-weight:700;color:var(--amber);margin-top:1px">'+hlCount+'× feestdag</div>':'')+
           '</th>';
       }).join('')+
       '</tr></thead>'+html+'</table></div>';
