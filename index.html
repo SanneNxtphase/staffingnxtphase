@@ -11122,8 +11122,16 @@ function renderStaffOverview(){
         return;
       }
 
-      html+='<tr style="cursor:pointer" onclick="soToggle('+emp.id+')">'+
-        '<td style="padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy);border-bottom:2px solid var(--bdr);vertical-align:middle">'+
+      // Pre-compute all weeks to know if any week is overstaffed (for row border)
+      var rowOverConf=false;
+      weeks.forEach(function(wk){
+        const wd=5-holidaysInWeek(wk);
+        const cd=((staffIndex[emp.id+'__'+wk])||[]).filter(function(s){const p=projMap[s.project_id];return p&&p.status==='confirmed';}).reduce(function(s,e){return s+(parseFloat(e.days)||0);},0);
+        if(cd>wd) rowOverConf=true;
+      });
+
+      html+='<tr style="cursor:pointer;'+(rowOverConf?'border-left:3px solid #DC2626;':'')+'" onclick="soToggle('+emp.id+')">'+
+        '<td style="padding:8px 12px;font-size:12px;font-weight:700;color:'+(rowOverConf?'#DC2626':'var(--navy)')+';border-bottom:2px solid var(--bdr);vertical-align:middle;'+(rowOverConf?'border-left:3px solid #DC2626;':'')+'">'+
         '<span style="font-size:9px;opacity:.4;margin-right:4px">▼</span>'+emp.name+
         (emp.role?'<div style="font-size:10px;color:var(--t3);font-weight:400;margin-top:1px">'+emp.role+'</div>':'')+
         '</td>'+
@@ -11141,10 +11149,9 @@ function renderStaffOverview(){
 
           const overConf=confDays>workDays;
           const overWithDraft=totalWithDraft>workDays;
-          const hlBg=hlCount>0?'background:var(--amber-p);':'';
 
-          // Cell bg: only feestdag tint, never red/orange
-          let cellHtml='<td style="padding:6px 8px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:130px;'+hlBg+'">';
+          // Cell bg: always white, no feestdag tint in cells
+          let cellHtml='<td style="padding:6px 8px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:130px;">';
 
           if(entries.length===0){
             cellHtml+='<div style="font-size:10px;color:var(--t3);text-align:center;padding:6px 0">—</div>';
@@ -11213,9 +11220,11 @@ function renderStaffOverview(){
         const fmtD=function(d){return d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});};
         const hlCount=holidaysInWeek(wk);
         const hlBg=hlCount>0?'background:var(--amber-p);':'background:var(--bg2);';
-        return '<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);min-width:130px;position:sticky;top:0;z-index:10;'+hlBg+'">'+
-          'Wk '+wk.split('-W')[1]+(hlCount>0?' <span style="color:var(--amber)">&#9670;</span>':'')+
-          '<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' – '+fmtD(fri)+(hlCount>0?'<div style="color:var(--amber);font-weight:600">'+hlCount+'× feestdag</div>':'')+'</div></th>';
+        return '<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);min-width:130px;position:sticky;top:0;z-index:10;background:var(--bg2);">'+
+          'Wk '+wk.split('-W')[1]+
+          '<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' – '+fmtD(fri)+'</div>'+
+          (hlCount>0?'<div style="font-size:8px;font-weight:700;color:var(--amber);margin-top:2px">'+hlCount+'× feestdag</div>':'')+
+          '</th>';
       }).join('')+
       '</tr></thead>'+html+'</table></div>';
   }
