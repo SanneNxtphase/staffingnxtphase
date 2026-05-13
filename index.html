@@ -11080,6 +11080,13 @@ function renderStaffOverview(){
     const mon=wkMonday(cur);mon.setDate(mon.getDate()+7);
     cur=toWeekKey(mon);
   }
+  const NL_HOLIDAYS_2026=['2026-01-01','2026-04-03','2026-04-05','2026-04-06','2026-04-27','2026-05-05','2026-05-14','2026-05-24','2026-05-25','2026-06-01','2026-12-25','2026-12-26'];
+  function holidaysInWeek(wk){
+    const mon=wkMonday(wk);
+    let count=0;
+    for(let i=0;i<5;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);const ds=d.toISOString().split('T')[0];if(NL_HOLIDAYS_2026.includes(ds))count++;}
+    return count;
+  }
   const PM_ROLES=['project manager','project owner','ai delivery manager'];
   const DEV_ROLES=['developer','techlead'];
   const EXCLUDE=new Set(['Jan','Sanne','Vakantie']);
@@ -11107,7 +11114,9 @@ function renderStaffOverview(){
     const mon=wkMonday(wk);
     const fri=new Date(mon);fri.setDate(mon.getDate()+4);
     const fmtD=function(d){return d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});};
-    html+='<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);min-width:120px">Wk '+wk.split('-W')[1]+'<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' &ndash; '+fri.getDate()+'</div></th>';
+    const hlCount=holidaysInWeek(wk);
+    const hlBg=hlCount>0?'background:var(--amber-p);':'';
+    html+='<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);min-width:120px;'+hlBg+'">Wk '+wk.split('-W')[1]+(hlCount>0?' <span style="color:var(--amber)">&#9670;</span>':'')+'<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' &ndash; '+fri.getDate()+(hlCount>0?'<div style="color:var(--amber);font-weight:600">'+hlCount+'x feestdag</div>':'')+'</div></th>';
   });
   html+='</tr></thead><tbody>';
   emps.forEach(function(emp,ei){
@@ -11124,7 +11133,9 @@ function renderStaffOverview(){
       });
       const confRows=rows.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='confirmed';});
       const draftRows=rows.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='draft';});
-      const maxDays=parseFloat(emp.available_days_per_week)||5;
+      const baseDays=parseFloat(emp.available_days_per_week)||5;
+      const holidays=holidaysInWeek(wk);
+      const maxDays=Math.max(0,baseDays-holidays);
       const confDaysTotal=confRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
       const isOverbooked=confDaysTotal>maxDays;
       if(!rows.length){
