@@ -11113,24 +11113,32 @@ function renderStaffOverview(){
       });
       const confRows=rows.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='confirmed';});
       const draftRows=rows.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='draft';});
+      const maxDays=parseFloat(emp.available_days_per_week)||5;
+      const confDaysTotal=confRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
+      const isOverbooked=confDaysTotal>maxDays;
       if(!rows.length){
         html+='<td style="padding:8px 10px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);text-align:center;color:var(--t4);font-size:12px;vertical-align:top">&#8212;</td>';
       } else {
         const confDays=confRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
         const draftDays=draftRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
-        html+='<td style="padding:6px 8px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top">';
+        const cellBg=isOverbooked?'background:var(--red-p);':'';
+        html+='<td style="padding:6px 8px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;'+cellBg+'">';
+        if(isOverbooked) html+='<div style="font-size:9px;color:var(--red);font-weight:700;margin-bottom:3px">&#9888; overbezet ('+confDays+'d/'+maxDays+'d)</div>';
         confRows.forEach(function(s){
           const p=projMap[s.project_id];
           const c=projColor(s.project_id);
           const short=p?(p.client_name.length>10?p.client_name.substring(0,10)+'...':p.client_name):'?';
+          const projName=p?esc(p.name):'';
           html+='<div title="'+(p?esc(p.client_name+' / '+p.name):'')+'" style="display:inline-block;background:'+c.bg+';color:'+c.text+';border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;margin:1px 1px 2px 0;white-space:nowrap">'+esc(short)+' ('+s.days+'d)</div>';
         });
         if(draftRows.length){
-          if(confRows.length) html+='<div style="font-size:9px;color:var(--amber);font-weight:700;margin:3px 0 2px;text-transform:uppercase;letter-spacing:.5px">+ indien akkoord:</div>';
+          if(confRows.length) html+='<div style="font-size:9px;color:var(--amber);font-weight:700;margin:4px 0 2px;text-transform:uppercase;letter-spacing:.5px">&#9675; indien akkoord:</div>';
+          else html+='<div style="font-size:9px;color:var(--amber);font-weight:700;margin:0 0 2px;text-transform:uppercase;letter-spacing:.5px">&#9675; draft:</div>';
           draftRows.forEach(function(s){
             const p=projMap[s.project_id];
             const short=p?(p.client_name.length>10?p.client_name.substring(0,10)+'...':p.client_name):'?';
-            html+='<div title="'+(p?esc(p.client_name+' / '+p.name):'')+'" style="display:inline-block;background:var(--amber-p);color:var(--amber);border:1px dashed var(--amber);border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;margin:1px 1px 2px 0;white-space:nowrap">'+esc(short)+' ('+s.days+'d) &#9702;</div>';
+            const projShort=p?(p.name.length>12?p.name.substring(0,12)+'...':p.name):'';
+            html+='<div title="'+(p?esc(p.client_name+' / '+p.name):'')+'" style="display:inline-block;background:var(--amber-p);color:var(--amber);border:1.5px dashed var(--amber);border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;margin:1px 1px 2px 0;white-space:nowrap">'+esc(short)+': '+esc(projShort)+' ('+s.days+'d)</div>';
           });
         }
         html+='<div style="font-size:10px;color:var(--t3);margin-top:2px">';
