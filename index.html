@@ -11109,16 +11109,19 @@ function renderStaffOverview(){
   ];
   const colorMap={};let colorIdx=0;
   const projColor=function(id){if(!colorMap[id]){colorMap[id]=COLORS[colorIdx++%COLORS.length];}return colorMap[id];};
-  let html='<table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0"><thead><tr style="background:var(--bg2)"><th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);min-width:130px;position:sticky;top:0;background:var(--bg2);z-index:10;box-shadow:0 1px 0 var(--bdr)">Persoon</th>';
+  // Sticky header as separate div (overflow-x:auto breaks position:sticky on thead)
+  let hdrHtml='<div style="display:grid;grid-template-columns:130px repeat(6,1fr);background:var(--bg2);border-bottom:2px solid var(--bdr);position:sticky;top:0;z-index:20;min-width:700px">';
+  hdrHtml+='<div style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px">Persoon</div>';
   weeks.forEach(function(wk){
     const mon=wkMonday(wk);
     const fri=new Date(mon);fri.setDate(mon.getDate()+4);
     const fmtD=function(d){return d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});};
     const hlCount=holidaysInWeek(wk);
-    const hlBg=hlCount>0?'background:var(--amber-p);':'background:var(--bg2);';
-    html+='<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);min-width:120px;'+hlBg+'">Wk '+wk.split('-W')[1]+(hlCount>0?' <span style="color:var(--amber)">&#9670;</span>':'')+'<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' &ndash; '+fri.getDate()+(hlCount>0?'<div style="color:var(--amber);font-weight:600">'+hlCount+'x feestdag</div>':'')+'</div></th>';
+    const hlBg=hlCount>0?'background:var(--amber-p);':'';
+    hdrHtml+='<div style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-left:1px solid var(--bdr);'+hlBg+'">Wk '+wk.split('-W')[1]+(hlCount>0?' <span style="color:var(--amber)">&#9670;</span>':'')+'<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' &ndash; '+fri.getDate()+(hlCount>0?'<div style="color:var(--amber);font-weight:600">'+hlCount+'x feestdag</div>':'')+'</div></div>';
   });
-  html+='</tr></thead><tbody>';
+  hdrHtml+='</div>';
+  let html='<table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0"><tbody>';
   emps.forEach(function(emp,ei){
     const rowBg=ei%2===0?'background:var(--bg)':'background:var(--bg2)';
     const isHidden=soHidden.has(emp.id);
@@ -11178,9 +11181,9 @@ function renderStaffOverview(){
     });
     html+='</tr>';
   });
-  html+='</tbody></table>';
+  // table closed in grid assignment
   const grid=document.getElementById('so-grid');
-  if(grid){grid.innerHTML=html;grid.style.overflowX='auto';}
+  if(grid){grid.style.overflowX='';grid.innerHTML=hdrHtml+'<div style="overflow-x:auto">'+html+'</tbody></table></div>';}
 }
 
 
