@@ -8791,7 +8791,7 @@ function _renderFinancialActual(){
     const confRev=revForMonth(year,mo,'confirmed');
     const draftRev=inclDraft?revForMonth(year,mo,'draft'):0;
     const revenue=confRev+draftRev;
-    const fixedCosts=fixedMonthly(year,mo); // active costs for this month
+   const fixedCosts=Math.round((S.fixedCosts||[]).filter(c=>c.active===1&&fcInDateRange(c,year,mo)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;// active costs for this month
     const forecastCosts=getFutureCostsForMonth(year,mo);
     const staffingCosts=staffCostMonth(year,mo); // staffing costs for this month
     const extCosts=totalExtCostMonth(moStr); // external/outsourced project costs this month
