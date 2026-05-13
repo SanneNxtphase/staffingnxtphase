@@ -6183,19 +6183,7 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  const _bad=new Set([12,55]);
-  const _seen=new Set();
-  let _sum=0;
-  (S.fixedCosts||[]).forEach(function(c){
-    const id=parseInt(c.id);
-    if(_bad.has(id)) return;
-    if(_seen.has(id)) return;
-    _seen.add(id);
-    if(c.active!==1&&c.active!==true) return;
-    if(!fcInDateRange(c,y,m)) return;
-    _sum+=fcMonthlyAmount(c);
-  });
-  return Math.round(_sum*100)/100;
+  return Math.round((S.fixedCosts||[]).filter(c=>c.active===1&&fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
 }
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
