@@ -11111,6 +11111,62 @@ function renderStaffOverview(){
   const projColor=function(id){if(!colorMap[id]){colorMap[id]=COLORS[colorIdx++%COLORS.length];}return colorMap[id];};
   const grid=document.getElementById('so-grid');
   if(grid){
+    // Build tbody rows
+    let html='<tbody>';
+    emps.forEach(function(emp){
+      if(soHidden.has(emp.id)){
+        html+='<tr style="background:var(--bg2);cursor:pointer" onclick="soToggle('+emp.id+')">'+
+          '<td style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--t3);border-bottom:1px solid var(--bdr)">'+
+          '<span style="margin-right:6px;opacity:.5">▶</span>'+emp.name+'</td>'+
+          weeks.map(function(){return '<td style="border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr)"></td>';}).join('')+
+          '</tr>';
+        return;
+      }
+      html+='<tr style="cursor:pointer" onclick="soToggle('+emp.id+')">'+
+        '<td style="padding:8px 12px;font-size:12px;font-weight:700;color:var(--t1);border-bottom:2px solid var(--bdr);vertical-align:top">'+
+        '<div style="display:flex;align-items:center;gap:6px">'+
+        '<span style="font-size:9px;opacity:.4">▼</span>'+emp.name+'</div>'+
+        (emp.role?'<div style="font-size:10px;color:var(--t3);font-weight:400;margin-top:1px">'+emp.role+'</div>':'')+
+        '</td>'+
+        weeks.map(function(wk){
+          const hlCount=holidaysInWeek(wk);
+          const workDays=5-hlCount;
+          const entries=(staffIndex[emp.id+'__'+wk])||[];
+          const totalDays=entries.reduce(function(s,e){return s+(parseFloat(e.days)||0);},0);
+          const over=totalDays>workDays;
+          const bgCell=hlCount>0?'background:var(--amber-p);':'';
+          let cellHtml='<td style="padding:6px 8px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:120px;'+bgCell+'">';
+          if(entries.length===0){
+            cellHtml+='<div style="font-size:10px;color:var(--t3);text-align:center;padding:4px 0">—</div>';
+          } else {
+            entries.forEach(function(s){
+              const proj=projMap[s.project_id];
+              const pName=proj?(proj.client_name||proj.name||'Project'):'?';
+              const col=projColor(s.project_id);
+              const isDraft=proj&&proj.status==='draft';
+              const border=isDraft?'border:1.5px dashed '+col.text+';':'border:1.5px solid '+col.text+';';
+              cellHtml+='<div style="'+border+'background:'+col.bg+';color:'+col.text+';border-radius:4px;padding:3px 6px;margin-bottom:3px;font-size:10px;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+                '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px" title="'+pName+'">'+(isDraft?'◦ ':'')+pName+'</span>'+
+                '<span style="font-size:10px;font-weight:700;margin-left:4px;white-space:nowrap">'+s.days+'d</span>'+
+                '</div>';
+            });
+          }
+          // Capacity bar
+          const pct=Math.min(totalDays/workDays,1);
+          const barColor=over?'var(--red)':totalDays===workDays?'var(--green)':'var(--blue)';
+          cellHtml+='<div style="margin-top:4px;font-size:9px;color:'+(over?'var(--red)':'var(--t3)')+';display:flex;justify-content:space-between">'+
+            '<span>'+(over?'⚠ ':'')+totalDays+'d / '+workDays+'d</span>'+
+            (totalDays>0&&!over?'<span style="color:var(--green)">✓ '+(workDays-totalDays)+'d vrij</span>':'')+
+            '</div>'+
+            '<div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:2px">'+
+            '<div style="height:3px;width:'+(pct*100)+'%;background:'+barColor+';border-radius:2px"></div></div>';
+          cellHtml+='</td>';
+          return cellHtml;
+        }).join('')+
+        '</tr>';
+    });
+    html+='</tbody>';
+
     grid.innerHTML='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0"><thead><tr style="background:var(--bg2)">'+
       '<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);min-width:130px;position:sticky;top:0;z-index:10;background:var(--bg2)">Persoon</th>'+
       weeks.map(function(wk){
