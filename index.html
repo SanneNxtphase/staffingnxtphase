@@ -11111,33 +11111,711 @@ function renderStaffOverview(){
   const projColor=function(id){if(!colorMap[id]){colorMap[id]=COLORS[colorIdx++%COLORS.length];}return colorMap[id];};
   const grid=document.getElementById('so-grid');
   if(grid){
-    grid.style.overflowX='auto';
-    grid.style.overflowY='visible';
-    grid.innerHTML='<table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0"><thead id="so-thead"><tr style="background:var(--bg2)">'+
-      '<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);min-width:130px;background:var(--bg2)">Persoon</th>'+
+    grid.innerHTML='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0"><thead><tr style="background:var(--bg2)">'+
+      '<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);min-width:130px;position:sticky;top:0;z-index:10;background:var(--bg2)">Persoon</th>'+
       weeks.map(function(wk){
         const mon=wkMonday(wk);
         const fri=new Date(mon);fri.setDate(mon.getDate()+4);
         const fmtD=function(d){return d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});};
         const hlCount=holidaysInWeek(wk);
         const hlBg=hlCount>0?'background:var(--amber-p);':'background:var(--bg2);';
-        return '<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);min-width:120px;'+hlBg+'">Wk '+wk.split('-W')[1]+(hlCount>0?' <span style="color:var(--amber)">&#9670;</span>':'')+'<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' &ndash; '+fri.getDate()+(hlCount>0?'<div style="color:var(--amber);font-weight:600">'+hlCount+'x feestdag</div>':'')+'</div></th>';
+        return '<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);min-width:120px;position:sticky;top:0;z-index:10;'+hlBg+'">Wk '+wk.split('-W')[1]+(hlCount>0?' <span style="color:var(--amber)">&#9670;</span>':'')+'<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' &ndash; '+fri.getDate()+(hlCount>0?'<div style="color:var(--amber);font-weight:600">'+hlCount+'x feestdag</div>':'')+'</div></th>';
       }).join('')+
-      '</tr></thead>'+html+'</table>';
-    // Make thead sticky by scrolling .main and tracking offset
-    const mainEl=document.querySelector('.main');
-    const thead=document.getElementById('so-thead');
-    if(mainEl&&thead){
-      const onScroll=function(){
-        const gridTop=grid.getBoundingClientRect().top;
-        const mainTop=mainEl.getBoundingClientRect().top;
-        const scrolled=mainTop-gridTop;
-        if(scrolled>0){thead.style.transform='translateY('+scrolled+'px)';}
-        else{thead.style.transform='';}
-      };
-      mainEl.removeEventListener('scroll',mainEl._soScroll||function(){});
-      mainEl._soScroll=onScroll;
-      mainEl.addEventListener('scroll',onScroll);
-    }
+      '</tr></thead>'+html+'</table></div>';
   }
 }
+
+// ── EMPLOYEE VIEW STATE ──────────────────────────────────────────────────────
+let _evWeekOffset=0; // weeks from current week (0=this week, max 2)
+let _evRange=1;      // show 1 week at a time
+
+function evChangeWeek(delta){
+  _evWeekOffset=Math.max(0,Math.min(2,_evWeekOffset+delta));
+  // Update arrow states
+  const prev=document.getElementById('ev-btn-prev');
+  const next=document.getElementById('ev-btn-next');
+  if(prev)prev.style.opacity=_evWeekOffset===0?'0.3':'1';
+  if(next)next.style.opacity=_evWeekOffset===2?'0.3':'1';
+  renderEmployeeView();
+}
+function evSetRange(n){
+  _evRange=n;
+  document.getElementById('ev-btn-2').style.borderColor=n===2?'var(--blue)':'var(--bdr)';
+  document.getElementById('ev-btn-2').style.background=n===2?'var(--blue-p)':'var(--bg)';
+  document.getElementById('ev-btn-2').style.color=n===2?'var(--blue)':'var(--t2)';
+  document.getElementById('ev-btn-4').style.borderColor=n===4?'var(--blue)':'var(--bdr)';
+  document.getElementById('ev-btn-4').style.background=n===4?'var(--blue-p)':'var(--bg)';
+  document.getElementById('ev-btn-4').style.color=n===4?'var(--blue)':'var(--t2)';
+  renderEmployeeView();
+}
+
+// Dutch public holidays (vaste + beweeglijke feestdagen)
+function getNLHolidays(year){
+  // Easter Sunday calculation (Anonymous Gregorian algorithm)
+  const a=year%19,b=Math.floor(year/100),c=year%100;
+  const d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25);
+  const g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30;
+  const i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7;
+  const m=Math.floor((a+11*h+22*l)/451);
+  const mo=Math.floor((h+l-7*m+114)/31);
+  const dy=((h+l-7*m+114)%31)+1;
+  const easter=new Date(year,mo-1,dy);
+  const add=function(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+  const fmt=function(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+  return[
+    {date:year+'-01-01',name:'Nieuwjaarsdag'},
+    {date:fmt(add(easter,-2)),name:'Goede Vrijdag'},
+    {date:fmt(easter),name:'1e Paasdag'},
+    {date:fmt(add(easter,1)),name:'2e Paasdag'},
+    {date:year+'-04-27',name:'Koningsdag 🎉'},
+    // Bevrijdingsdag (5 mei) is alleen vrij in lustrumjaren (2025, 2030 etc)
+    ...(year%5===0?[{date:year+'-05-05',name:'Bevrijdingsdag 🎉'}]:[]),
+    {date:fmt(add(easter,39)),name:'Hemelvaartsdag'},
+    {date:fmt(add(easter,49)),name:'1e Pinksterdag'},
+    {date:fmt(add(easter,50)),name:'2e Pinksterdag'},
+    {date:year+'-12-25',name:'1e Kerstdag'},
+    {date:year+'-12-26',name:'2e Kerstdag'},
+  ];
+}
+
+function renderEmployeeView(){
+  const now=new Date();
+  const content=document.getElementById('ev-content');
+  if(!content)return;
+
+  // Debug panel — shows raw Supabase data for troubleshooting
+  const _dbg=document.getElementById('ev-debug');
+  if(_dbg&&AUTH&&AUTH.role==='admin'){
+    const _empIds=new Set(S.employees.map(e=>e.id));
+    const _wk0 = (()=>{const m=new Date(now);const dow=m.getDay()===0?6:m.getDay()-1;m.setDate(m.getDate()-dow);m.setHours(0,0,0,0);const d2=new Date(m);d2.setUTCDate?d2.setDate(d2.getDate()+3-((d2.getDay()+6)%7)):null;const ys=new Date(d2.getFullYear(),0,4);return d2.getFullYear()+'-W'+String(1+Math.round(((d2-ys)/86400000-3+((ys.getDay()+6)%7))/7)).padStart(2,'0');})();
+    const _wkStaff=S.staffing.filter(s=>s.week_key===_wk0);
+    const _projIds2=new Set(S.projects.map(p=>p.id));
+    const _orphanEmps=[...new Set(_wkStaff.filter(s=>!_empIds.has(s.employee_id)).map(s=>s.employee_id))];
+    const _orphanProjs=[...new Set(_wkStaff.filter(s=>!_projIds2.has(s.project_id)).map(s=>s.project_id))];
+    // Find Ralph specifically
+    const _ralph=S.employees.find(e=>e.name==='Ralph');
+    const _ralphStaff=_ralph?S.staffing.filter(s=>s.week_key===_wk0&&String(s.employee_id)===String(_ralph.id)):[];
+    const _debugLines=[
+      '<strong>📊 Data check:</strong> '+S.employees.length+' employees ('+S.employees.filter(isTeamViewVisible).map(e=>e.name+'#'+e.id).join(', ')+')',
+      S.staffing.length+' staffing rows | '+_wkStaff.length+' for '+_wk0,
+      _ralph?('Ralph id='+_ralph.id+' → '+(_ralphStaff.length?_ralphStaff.length+' rows this week':'<span style="color:red;font-weight:bold">NO ROWS — re-enter Ralph staffing in admin app</span>')):'<span style="color:red">Ralph NOT in employees!</span>',
+      _orphanEmps.length?'<span style="color:orange">⚠ Unmatched emp_ids in W12: '+_orphanEmps.join(', ')+' (these rows are hidden)</span>':'✓ All employees matched',
+      _orphanProjs.length?'<span style="color:orange">⚠ Unknown proj_ids: '+_orphanProjs.join(', ')+'</span>':''
+    ].filter(Boolean);
+    _dbg.innerHTML='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11px;margin-bottom:12px;color:#333">'+_debugLines.join(' | ')+'</div>';
+  }
+
+  // Build 2 weeks to show
+  const weeks=[];
+  for(let i=0;i<2;i++){
+    const wkOffset=_evWeekOffset+i;
+    const mon=new Date(now);
+    const dayOfWeek=now.getDay()===0?6:now.getDay()-1;
+    mon.setDate(now.getDate()-dayOfWeek+wkOffset*7);
+    mon.setHours(0,0,0,0);
+    const fri=new Date(mon);fri.setDate(mon.getDate()+4);
+    const wkKey=toWeekKey(mon);
+    weeks.push({wkKey,mon,fri,label:wkFmtLabel(mon,fri)});
+  }
+  const allWkKeys=weeks.map(w=>w.wkKey);
+
+  const lbl=document.getElementById('ev-week-lbl');
+  if(lbl)lbl.textContent=weeks[0]?.label||'';
+  const prevBtn=document.getElementById('ev-btn-prev');
+  const nextBtn=document.getElementById('ev-btn-next');
+  if(prevBtn)prevBtn.style.opacity=_evWeekOffset===0?'0.3':'1';
+  if(nextBtn)nextBtn.style.opacity=_evWeekOffset===2?'0.3':'1';
+  const upd=document.getElementById('ev-updated');
+  if(upd)upd.textContent='Updated '+now.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
+
+  const emps=S.employees.filter(isTeamViewVisible);
+
+  let html='';
+
+  // Summary cards per person
+  // Summary cards use only the first (current) week
+  const firstWkKey=weeks[0]?.wkKey;
+  // Helper: is a staffing entry valid for this week?
+  // Project must exist, not be stopped, AND the week must fall within project dates
+  const isActiveStaff=function(s,wk){
+    if(!parseFloat(s.days||0))return false;
+    const proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
+    if(!proj)return false; // orphan — skip
+    if(proj.status==='stopped')return false;
+    // If project has start/end dates, check the week falls within them
+    if(proj.start_date&&proj.end_date){
+      const pkWks=typeof projectWkKeys==='function'?projectWkKeys(proj):[];
+      if(pkWks.length>0&&!pkWks.includes(wk))return false;
+    }
+    return true;
+  };
+
+  // All employees who have ANY staffing in these weeks (active projects only)
+  const staffedEmpIds=new Set(S.staffing.filter(s=>allWkKeys.includes(s.week_key)&&isActiveStaff(s,s.week_key)).map(s=>String(s.employee_id)));
+  const activeEmps=emps.filter(e=>staffedEmpIds.has(String(e.id)));
+  if(activeEmps.length){
+    html+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">';
+    activeEmps.forEach(e=>{
+      const myStaff=S.staffing.filter(s=>s.week_key===firstWkKey&&String(s.employee_id)===String(e.id)&&isActiveStaff(s,firstWkKey));
+      if(!myStaff.length)return;
+      const totalDays=myStaff.reduce((s,r)=>s+(parseFloat(r.days)||0),0);
+      const maxDays=e.available_days_per_week||5;
+      const isOver=totalDays>maxDays;
+      // Build hover tooltip showing exact project breakdown
+      const breakdown=myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return (p?p.client_name:s.project_id)+': '+s.days+'d';}).join('\n');
+      const clients=[...new Set(myStaff.map(s=>{const p=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);return p?p.client_name:'?';}).filter(c=>c&&c!=='?'))];
+      html+='<div title="'+esc(breakdown)+'" style="background:var(--bg);border:1.5px solid '+(isOver?'var(--red)':'var(--bdr)')+';border-radius:8px;padding:8px 12px;min-width:110px;cursor:default">'
+        +'<div style="font-weight:700;font-size:13px;color:var(--navy)">'+esc(e.name)+'</div>'
+        +'<div style="font-size:17px;font-weight:800;color:'+(isOver?'var(--red)':'var(--blue)')+';line-height:1.1">'+totalDays.toFixed(1)+'d'+(isOver?' ⚠':'')+'</div>'
+        +'<div style="font-size:10px;color:'+(isOver?'var(--red)':'var(--t3)')+';margin-top:2px">'+(isOver?totalDays.toFixed(1)+'d / '+maxDays+'d max':clients.slice(0,2).map(esc).join(' · '))+'</div>'
+        +'</div>';
+    });
+    html+='</div>';
+  }
+
+  // Per-week table
+  weeks.forEach(function(wk,wi){
+    const wkKey=wk.wkKey,label=wk.label;
+    const isNow=_evWeekOffset===0&&wi===0;
+    const wkStaff=S.staffing.filter(s=>s.week_key===wkKey&&isActiveStaff(s,wkKey));
+
+    // Build one row per assignment — only confirmed/draft projects within their date range
+    const rows=[];
+    wkStaff.forEach(function(s){
+
+      // EMPLOYEE: try ID match first, then use embedded name from JOIN
+      let emp=S.employees.find(e=>e.id===s.employee_id||e.id==s.employee_id);
+      if(!emp) emp=S.employees.find(e=>parseInt(e.id)===parseInt(s.employee_id));
+      if(!emp&&s._empName) {
+        // Use JOIN data — find by name or create from embedded data
+        emp=S.employees.find(e=>e.name===s._empName);
+        if(!emp) emp={id:s.employee_id,name:s._empName,role:'',daily_cost:s._empDailyCost||0,available_days_per_week:s._empAvailDays||5};
+      }
+      if(!emp) emp={id:s.employee_id,name:'#'+s.employee_id,role:'',daily_cost:0,available_days_per_week:5};
+      if(!isTeamViewVisible(emp)) return;
+
+      // PROJECT: must exist, not be stopped, and week must be within project dates
+      let proj=S.projects.find(p=>p.id===s.project_id||p.id==s.project_id);
+      if(!proj&&s._projName) {
+        proj=S.projects.find(p=>p.name===s._projName&&p.client_name===s._projClient);
+      }
+      // Skip: no project, stopped project, or week outside project date range
+      if(!proj||proj.status==='stopped') return;
+      if(proj.start_date&&proj.end_date){
+        const pkWks=typeof projectWkKeys==='function'?projectWkKeys(proj):[];
+        if(pkWks.length>0&&!pkWks.includes(wkKey)) return;
+      }
+
+      rows.push({emp:emp,proj:proj,days:parseFloat(s.days)||0,note:s.note||''});
+    });
+    // Sort by employee name for consistent display
+    rows.sort((a,b)=>a.emp.name.localeCompare(b.emp.name));
+
+    html+='<div style="background:var(--bg);border:1.5px solid '+(isNow?'var(--blue)':'var(--bdr)')+';border-radius:12px;margin-bottom:16px;overflow:hidden">';
+
+    // Week header — with Dutch public holidays
+    const _wkHols=getNLHolidays(wk.mon.getFullYear()).filter(function(h){
+      const hd=new Date(h.date);
+      return hd>=wk.mon&&hd<=wk.fri;
+    });
+    const _holHtml=_wkHols.map(function(h){
+      return '<div style="background:#ff6b35;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px">🇳🇱 '+h.name+'</div>';
+    }).join('');
+    html+='<div style="padding:11px 16px;background:'+(isNow?'var(--blue-p)':'var(--bg2)')+';border-bottom:1px solid var(--bdr);display:flex;align-items:center;flex-wrap:wrap;gap:4px">'
+      +'<div style="font-weight:700;font-size:13px;color:'+(isNow?'var(--blue)':'var(--navy)')+'">'+(wkKey)
+      +(isNow?'<span style="background:var(--blue);color:#fff;font-size:9px;padding:1px 7px;border-radius:10px;margin-left:8px">THIS WEEK</span>':'')
+      +'</div>'
+      +_holHtml
+      +'<div style="font-size:11px;color:var(--t3);margin-left:4px">'+label+'</div>'
+      +'<div style="margin-left:auto;font-size:11px;color:var(--t3)">'+rows.length+' assignment'+(rows.length!==1?'s':'')+'</div>'
+      +'</div>';
+
+    if(!rows.length){
+      html+='<div style="padding:18px 16px;text-align:center;color:var(--t3);font-size:12px">No staffing entries for this week</div>';
+    } else {
+      // Mobile-friendly: group by employee, card per person
+      const byEmp={};
+      rows.forEach(function(r){
+        const k=r.emp.name;
+        if(!byEmp[k]) byEmp[k]={emp:r.emp,rows:[]};
+        byEmp[k].rows.push(r);
+      });
+      html+='<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">';
+      Object.values(byEmp).forEach(function(g){
+        const avail=parseFloat(g.emp.available_days_per_week)||5;
+        const total=g.rows.reduce(function(s,r){return s+r.days;},0);
+        const over=total>avail;
+        html+='<div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden">'
+          +'<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--bdr)">'
+          +'<span style="font-weight:700;font-size:13px;color:var(--navy)">'+esc(g.emp.name)+'</span>'
+          +'<span style="font-size:13px;font-weight:800;color:'+(over?'var(--red)':'var(--blue)')+'">'+total+'d</span>'
+          +'</div>';
+        g.rows.forEach(function(r){
+          html+='<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 12px;border-bottom:1px solid var(--bdr)">'
+            +'<div style="flex:1;min-width:0">'
+            +'<div style="font-size:12px;font-weight:600;color:var(--t2)">'+esc(r.proj.client_name)+'</div>'
+            +'<div style="font-size:11px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.proj.name)+'</div>'
+            +(r.note?'<div style="font-size:10px;color:var(--blue);margin-top:2px">&#128393; '+esc(r.note)+'</div>':'')
+            +'</div>'
+            +'<div style="flex-shrink:0;font-weight:700;color:var(--blue)">'+r.days+'d</div>'
+            +'</div>';
+        });
+        html+='</div>';
+      });
+      html+='</div>';
+    }
+    html+='</div>';
+  });
+
+  if(!activeEmps.length){
+    html='<div style="text-align:center;padding:60px 20px">'
+      +'<div style="font-size:32px;margin-bottom:12px">&#128203;</div>'
+      +'<div style="font-weight:700;font-size:16px;color:var(--navy);margin-bottom:8px">No staffing data yet</div>'
+      +'<div style="color:var(--t3);font-size:13px">Staffing entries will appear here once added.</div>'
+      +'</div>';
+  }
+
+  content.innerHTML=html;
+}
+
+
+function getISOWeekKey(mon){
+  // Returns "W{wk}" format matching the app's week keys
+  const jan4=new Date(mon.getFullYear(),0,4);
+  const startOfWeek1=new Date(jan4);
+  startOfWeek1.setDate(jan4.getDate()-((jan4.getDay()+6)%7));
+  const wkNum=Math.round((mon-startOfWeek1)/(7*86400000))+1;
+  return'W'+String(wkNum).padStart(2,'0');
+}
+
+function wkFmtLabel(mon,fri){
+  const fmtD=d=>d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
+  return`${fmtD(mon)} – ${fmtD(fri)}`;
+}
+
+// Check for existing session on page load (resume session without re-auth)
+(function checkSession(){
+  // ── Secret team URL token — share this link with team members ──────────
+  // Link: staffingnxtphase.vercel.app/?team=nxtstaff2026
+  const urlParams=new URLSearchParams(window.location.search);
+  const teamToken=urlParams.get('team');
+  if(teamToken==='nxtstaff2026'){
+    AUTH.role='employee';
+    sessionStorage.setItem(AUTH.SESSION_KEY,'employee');
+    const _showTeamView=()=>{
+      const overlay=document.getElementById('auth-overlay');
+      const app=document.querySelector('.app');
+      const ev=document.getElementById('employee-view');
+      if(!ev){setTimeout(_showTeamView,50);return;}
+      if(overlay)overlay.classList.add('hidden');
+      if(app)app.style.display='none';
+      ev.classList.add('ev-visible');
+      (async()=>{
+        const _content=document.getElementById('ev-content');
+        if(_content) _content.innerHTML='<div style="text-align:center;padding:40px;color:#888;font-size:13px">⏳ Loading team data...</div>';
+
+        // Step 1: fetch everything directly from Supabase — no cache, no localStorage
+        let rawStaff=[], rawEmps=[], rawProjs=[], rawSettings=[];
+        try{
+          // Use Supabase JOIN to get staffing with employee+project names embedded
+          // This bypasses all ID matching issues - names come directly with the data
+          const [joinedStaff, empsRes, projsRes, settingsRes] = await Promise.all([
+            _supaReq('GET','staffing',null,'?select=*,employee:employees(id,name,role,daily_cost,available_days_per_week),project:projects(id,name,client_name,status)'),
+            _supaReq('GET','employees',null,'?select=*'),
+            _supaReq('GET','projects',null,'?select=*'),
+            _supaReq('GET','settings',null,'?select=key,value')
+          ]);
+          rawEmps = empsRes||[];
+          rawProjs = projsRes||[];
+          rawSettings = settingsRes||[];
+          // If joined query worked, enrich rawStaff with embedded employee/project data
+          if(joinedStaff&&joinedStaff.length>0&&joinedStaff[0].employee){
+            rawStaff = joinedStaff.map(s=>({
+              ...s,
+              // Keep original IDs but also store resolved names as fallback
+              _empName: s.employee?s.employee.name:null,
+              _empDailyCost: s.employee?parseFloat(s.employee.daily_cost||0):0,
+              _empAvailDays: s.employee?parseFloat(s.employee.available_days_per_week||5):5,
+              _projName: s.project?s.project.name:null,
+              _projClient: s.project?s.project.client_name:null,
+              _projStatus: s.project?s.project.status:null,
+            }));
+          } else {
+            rawStaff = joinedStaff||[];
+          }
+        }catch(e){ console.error('Supabase fetch error',e); }
+
+        // Step 2: normalize all IDs to integers
+        const norm = arr => (arr||[]).map(r=>{
+          const n={...r};
+          if(n.id!==undefined) n.id=parseInt(n.id)||n.id;
+          if(n.employee_id!==undefined) n.employee_id=parseInt(n.employee_id)||n.employee_id;
+          if(n.project_id!==undefined) n.project_id=parseInt(n.project_id)||n.project_id;
+          return n;
+        });
+        rawEmps  = norm(rawEmps);
+        rawProjs = norm(rawProjs);
+        rawStaff = norm(rawStaff);
+
+        // Step 3: ensure all team members exist in employees
+        const _knownMembers=_SUPA_REAL_MEMBERS; // single source of truth
+        const _empByName={};
+        rawEmps.forEach(e=>{ if(e.name) _empByName[e.name]=e; });
+        for(const m of _knownMembers){
+          if(!_empByName[m.name]){
+            try{
+              const res=await _supaReq('POST','employees',m);
+              const row=Array.isArray(res)?res[0]:res;
+              if(row&&row.id){ row.id=parseInt(row.id); rawEmps.push(row); _empByName[row.name]=row; }
+            }catch(e){}
+          }
+        }
+
+        // Step 4: smart remap of orphaned staffing rows
+        // Find employee_ids in staffing that don't match any known employee
+        // Match them to employees who have NO staffing this period
+        const _allWkKeys2=[];
+        const _now2=new Date();
+        for(let _wi=0;_wi<4;_wi++){
+          const _m=new Date(_now2);
+          const _dow=_m.getDay()===0?6:_m.getDay()-1;
+          _m.setDate(_m.getDate()-_dow+_wi*7);
+          _m.setHours(0,0,0,0);
+          // get week key
+          const _d2=new Date(_m);_d2.setDate(_d2.getDate()+3-((_d2.getDay()+6)%7));
+          const _ys=new Date(_d2.getFullYear(),0,4);
+          const _wk=''+_d2.getFullYear()+'-W'+String(1+Math.round(((_d2-_ys)/86400000-3+((_ys.getDay()+6)%7))/7)).padStart(2,'0');
+          _allWkKeys2.push(_wk);
+        }
+        const _empIdSet2=new Set(rawEmps.map(e=>e.id));
+        const _orphanedIds=new Set(rawStaff.filter(s=>_allWkKeys2.includes(s.week_key)&&!_empIdSet2.has(s.employee_id)).map(s=>s.employee_id));
+        if(_orphanedIds.size>0){
+          // Find employees who have NO staffing rows in recent weeks (likely their rows are orphaned)
+          const _empsWithStaff=new Set(rawStaff.filter(s=>_allWkKeys2.includes(s.week_key)&&_empIdSet2.has(s.employee_id)).map(s=>s.employee_id));
+          const _empsWithoutStaff=rawEmps.filter(e=>isTeamViewVisible(e)&&!_empsWithStaff.has(e.id));
+          // If exactly one orphaned ID and one unmatched employee → safe to remap
+          if(_orphanedIds.size===_empsWithoutStaff.length&&_empsWithoutStaff.length>0){
+            const _orphanArr=[..._orphanedIds];
+            _empsWithoutStaff.forEach((emp,i)=>{
+              const _oldId=_orphanArr[i];
+              rawStaff.forEach(s=>{if(s.employee_id===_oldId)s.employee_id=emp.id;});
+              console.log('[team] Remapped orphaned employee_id',_oldId,'→',emp.name,'(id:'+emp.id+')');
+            });
+          }
+        }
+
+        // Step 4c: remap orphaned project_ids by matching project names
+        // Build lookup: project_name (normalized) → project id
+        const _projByNorm={};
+        rawProjs.forEach(p=>{
+          if(p.name) _projByNorm[p.name.toLowerCase().trim()] = p.id;
+          if(p.client_name&&p.name) _projByNorm[(p.client_name+'/'+p.name).toLowerCase().trim()] = p.id;
+        });
+        const _projIdSet2=new Set(rawProjs.map(p=>p.id));
+        // For orphaned project_ids, try to find match in rawProjs by scanning all rows
+        // We can't know the name from just an ID, but we can check if there are duplicate
+        // project entries (same project stored twice with different IDs due to remap issues)
+        // Group orphaned project_ids and check if any rawProj has same client+name combo
+        const _orphProjIds=new Set(rawStaff.filter(s=>!_projIdSet2.has(s.project_id)).map(s=>s.project_id));
+        // For each orphaned project_id, try to find it in the admin app's project list
+        // by checking supabase projects table directly (already in rawProjs)
+        // If a staffing row has project_id=X and X is not in rawProjs,
+        // it means the project was saved with local ID. Try to find by checking
+        // if rawProjs has exactly one project not referenced by any staffing row.
+        if(_orphProjIds.size>0){
+          const _projsInStaff=new Set(rawStaff.filter(s=>_projIdSet2.has(s.project_id)).map(s=>s.project_id));
+          // Projects that exist but no staffing references them (could be the real project)
+          // Don't remap automatically - too risky. Just leave as "Project #X" fallback.
+          console.log('[team] Orphaned project_ids:',_orphProjIds.size,':',_orphProjIds);
+        }
+
+        // Step 5: apply staffing notes
+        try{
+          const noteSetting=(rawSettings||[]).find(r=>r.key==='staffing_notes');
+          if(noteSetting){
+            const _sn=JSON.parse(noteSetting.value||'{}');
+            rawStaff.forEach(s=>{
+              const k=String(s.employee_id)+':'+String(s.project_id)+':'+s.week_key;
+              if(_sn[k]) s.note=_sn[k];
+            });
+          }
+        }catch(e){}
+
+        // Step 6: set S.* and render
+        S.employees = rawEmps;
+        S.projects  = rawProjs;
+        S.staffing  = rawStaff;
+        // Show data counts in status bar for debugging
+        const _ec=document.getElementById('ev-emp-count');
+        const _sc=document.getElementById('ev-staff-count');
+        if(_ec) _ec.textContent = rawEmps.length+' employees loaded';
+        if(_sc) _sc.textContent = rawStaff.length+' staffing rows';
+        renderEmployeeView();
+      })();
+    };
+    _showTeamView();
+    return;
+  }
+
+  // Sync PINs from Supabase BEFORE showing auth screen, then check session
+  // Use promise chain so we work in both sync and async IIFE contexts
+  AUTH.syncPinsFromSupabase().catch(()=>{}).finally(()=>{
+    const saved=sessionStorage.getItem(AUTH.SESSION_KEY);
+  if(saved==='admin'||saved==='viewer'||saved==='employee'){
+    AUTH.role=saved;
+    document.getElementById('auth-overlay').classList.add('hidden');
+    updateRoleBadge();
+    if(saved==='employee'){
+      document.querySelector('.app').style.display='none';
+      document.getElementById('employee-view').classList.add('ev-visible');
+      (async()=>{
+        await loadData();
+        renderEmployeeView();
+      })();
+      return;
+    }
+    init(); // resume admin/viewer session
+  }
+  // else: overlay remains visible, init() called after authSubmit()
+  }); // end syncPins.finally
+})();
+
+// ══════════════════════════════════════════════════════════════════
+//  BANK POSITION PLANNER
+// ══════════════════════════════════════════════════════════════════
+window._bpFlows=[
+  {id:1,type:'in',label:'Project revenue',amount:0,monthly:true,auto:true},
+  {id:2,type:'out',label:'Fixed costs',amount:0,monthly:true,auto:true},
+  {id:3,type:'out',label:'Staffing costs',amount:0,monthly:true,auto:true}
+];
+window._bpOneOffs=[];
+window._bpFlowId=10;
+window._bpOneOffId=10;
+
+function bpAddFlow(type){
+  const id=++window._bpFlowId;
+  window._bpFlows.push({id,type,label:'',amount:0,monthly:true,auto:false});
+  bpRenderFlows();
+  runBankPlan();
+}
+function bpAddOneOff(){
+  const id=++window._bpOneOffId;
+  const now=new Date();
+  const mo=`${now.getFullYear()}-${String(now.getMonth()+2).padStart(2,'0')}`;
+  window._bpOneOffs.push({id,type:'in',label:'',amount:0,month:mo});
+  bpRenderOneOffs();
+  runBankPlan();
+}
+function bpRemoveFlow(id){
+  window._bpFlows=window._bpFlows.filter(f=>f.id!==id);
+  bpRenderFlows();
+  runBankPlan();
+}
+function bpRemoveOneOff(id){
+  window._bpOneOffs=window._bpOneOffs.filter(f=>f.id!==id);
+  bpRenderOneOffs();
+  runBankPlan();
+}
+function bpRenderFlows(){
+  const el=document.getElementById('bp-flows');
+  if(!el) return;
+  el.innerHTML=window._bpFlows.map(f=>`
+    <div style="display:grid;grid-template-columns:1fr 110px auto;gap:6px;align-items:center">
+      <input class="form-input" style="font-size:12px;padding:5px 8px;${f.auto?'background:var(--bg2);color:var(--t2)':''}" placeholder="${f.type==='in'?'Income label':'Expense label'}"
+        value="${f.label}" oninput="bpUpdateFlow(${f.id},'label',this.value)">
+      <input class="form-input" type="number" min="0" step="100" style="font-size:12px;padding:5px 8px;border-color:${f.type==='in'?'var(--green)':'var(--red)'};text-align:right"
+        placeholder="0" value="${f.amount||''}" oninput="bpUpdateFlow(${f.id},'amount',parseFloat(this.value)||0)">
+      ${f.auto?`<span title="Auto-loaded from your data" style="font-size:10px;color:var(--t3);padding:2px 4px">auto</span>`:'<button onclick="bpRemoveFlow('+f.id+')" style="background:none;border:none;cursor:pointer;color:var(--t3);font-size:16px;line-height:1;padding:2px">×</button>'}
+    </div>`).join('');
+}
+function bpRenderOneOffs(){
+  const el=document.getElementById('bp-oneoffs');
+  if(!el) return;
+  el.innerHTML=window._bpOneOffs.map(f=>`
+    <div style="display:grid;grid-template-columns:auto 1fr 100px auto;gap:6px;align-items:center">
+      <select class="form-input" style="font-size:11px;padding:4px 6px;width:70px" onchange="bpUpdateOneOff(${f.id},'type',this.value)">
+        <option value="in" ${f.type==='in'?'selected':''}>📥 In</option>
+        <option value="out" ${f.type==='out'?'selected':''}>📤 Out</option>
+      </select>
+      <input class="form-input" style="font-size:12px;padding:5px 8px" placeholder="Description"
+        value="${f.label}" oninput="bpUpdateOneOff(${f.id},'label',this.value)">
+      <input class="form-input" type="number" min="0" step="100" style="font-size:12px;padding:5px 8px;text-align:right;border-color:${f.type==='in'?'var(--green)':'var(--red)'}"
+        placeholder="0" value="${f.amount||''}" oninput="bpUpdateOneOff(${f.id},'amount',parseFloat(this.value)||0)">
+      <input class="form-input" type="month" style="font-size:11px;padding:4px 6px;width:130px"
+        value="${f.month}" oninput="bpUpdateOneOff(${f.id},'month',this.value)">
+      <button onclick="bpRemoveOneOff(${f.id})" style="background:none;border:none;cursor:pointer;color:var(--t3);font-size:16px;line-height:1;padding:2px">×</button>
+    </div>`).join('');
+}
+function bpUpdateFlow(id,field,val){
+  const f=window._bpFlows.find(f=>f.id===id);
+  if(f){f[field]=val;runBankPlan();}
+}
+function bpUpdateOneOff(id,field,val){
+  const f=window._bpOneOffs.find(f=>f.id===id);
+  if(f){f[field]=val;bpRenderOneOffs();runBankPlan();}
+}
+function bpAutoLoad(){
+  // Auto-populate from app data
+  const now=new Date();
+  const y=now.getFullYear(),mo=now.getMonth()+1;
+  const avgRev=(revForMonth(y,mo,'confirmed')+revForMonth(y,mo-1>0?mo-1:12,'confirmed'))/2||0;
+  const avgFixed=fixedMonthly(y,mo)||0;
+  const avgStaff=staffCostMonth(y,mo)||0;
+  window._bpFlows[0].amount=Math.round(avgRev/100)*100;
+  window._bpFlows[1].amount=Math.round(avgFixed/100)*100;
+  window._bpFlows[2].amount=Math.round(avgStaff/100)*100;
+  bpRenderFlows();
+}
+function runBankPlan(){
+  const balance=parseFloat(document.getElementById('bp-balance')?.value)||0;
+  const months=parseInt(document.getElementById('bp-months')?.value)||6;
+  const flows=window._bpFlows||[];
+  const oneoffs=window._bpOneOffs||[];
+
+  const now=new Date();
+  let bal=balance;
+  const rows=[];
+  let minBal=Infinity,maxBal=-Infinity,totalIn=0,totalOut=0;
+
+  for(let i=0;i<months;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()+i+1,1);
+    const moStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const lbl=d.toLocaleDateString('nl-NL',{month:'short',year:'2-digit'});
+    const openBal=bal;
+
+    let inflow=flows.filter(f=>f.type==='in').reduce((s,f)=>s+f.amount,0);
+    let outflow=flows.filter(f=>f.type==='out').reduce((s,f)=>s+f.amount,0);
+
+    // One-offs for this month
+    oneoffs.filter(f=>f.month===moStr).forEach(f=>{
+      if(f.type==='in') inflow+=f.amount;
+      else outflow+=f.amount;
+    });
+
+    const net=inflow-outflow;
+    bal=openBal+net;
+    totalIn+=inflow;totalOut+=outflow;
+    if(bal<minBal)minBal=bal;
+    if(bal>maxBal)maxBal=bal;
+    rows.push({lbl,moStr,openBal,inflow,outflow,net,closeBal:bal});
+  }
+
+  // Render table
+  const tbody=document.getElementById('bp-tbody');
+  if(tbody) tbody.innerHTML=rows.map((r,i)=>{
+    const isNeg=r.closeBal<0;
+    const isLow=r.closeBal<balance*0.2&&!isNeg;
+    const rowBg=isNeg?'background:var(--red-p)':isLow?'background:#fffbeb':'';
+    return`<tr style="${rowBg}${i%2&&!isNeg&&!isLow?';background:var(--bg2)':''}">
+      <td style="padding:9px 14px;border-bottom:1px solid var(--bdr);font-weight:600">${r.lbl}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);color:var(--green)">+${fmt(r.inflow)}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);color:var(--red)">-${fmt(r.outflow)}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);color:${r.net>=0?'var(--green)':'var(--red)'};font-weight:600">${r.net>=0?'+':''}${fmt(r.net)}</td>
+      <td style="padding:9px 14px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:700;color:${isNeg?'var(--red)':isLow?'var(--amber)':'var(--blue)'}">${fmt(r.closeBal)}</td>
+    </tr>`;
+  }).join('');
+
+  // Summary KPIs
+  const endBal=rows.length?rows[rows.length-1].closeBal:balance;
+  const sumEl=document.getElementById('bp-summary');
+  if(sumEl) sumEl.innerHTML=[
+    {label:'End Balance',val:fmt(endBal),color:endBal>=0?'var(--blue)':'var(--red)',sub:`After ${months} months`},
+    {label:'Lowest Point',val:fmt(minBal),color:minBal<0?'var(--red)':minBal<balance*0.2?'var(--amber)':'var(--green)',sub:'Minimum balance'},
+    {label:'Net Cash Flow',val:(totalIn-totalOut>=0?'+':'')+fmt(totalIn-totalOut),color:totalIn-totalOut>=0?'var(--green)':'var(--red)',sub:`In: ${fmt(totalIn)} / Out: ${fmt(totalOut)}`}
+  ].map(k=>`<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:14px 16px">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:4px">${k.label}</div>
+    <div style="font-size:22px;font-weight:700;color:${k.color}">${k.val}</div>
+    <div style="font-size:11px;color:var(--t3);margin-top:2px">${k.sub}</div>
+  </div>`).join('');
+
+  // Bar chart
+  const chart=document.getElementById('bp-chart');
+  const labels=document.getElementById('bp-chart-labels');
+  if(chart&&rows.length){
+    const allBals=[balance,...rows.map(r=>r.closeBal)];
+    const maxV=Math.max(...allBals,0);
+    const minV=Math.min(...allBals,0);
+    const range=maxV-minV||1;
+    const H=90;
+    const zeroY=Math.round((maxV/(range))*H);
+    const barW=`calc((100% - ${rows.length*6}px) / ${rows.length})`;
+    chart.innerHTML=rows.map(r=>{
+      const pct=Math.abs(r.closeBal-minV)/range;
+      const h=Math.max(4,Math.round(pct*H));
+      const isNeg=r.closeBal<0;
+      return`<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:${H}px">
+        <div title="${fmt(r.closeBal)}" style="width:100%;height:${h}px;background:${isNeg?'var(--red)':r.closeBal<balance*0.2?'var(--amber)':'var(--blue)'};border-radius:3px 3px 0 0;transition:height .3s"></div>
+      </div>`;
+    }).join('');
+    labels.innerHTML=rows.map(r=>`<div style="flex:1;text-align:center;font-size:9px;color:var(--t3)">${r.lbl}</div>`).join('');
+  }
+}
+
+function initBankPlanner(){
+  bpAutoLoad();
+  runBankPlan();
+}
+</script>
+<!-- ═══════════════════════════════════════════════════════════
+     EMPLOYEE STAFFING VIEW — shown instead of main app for 'employee' role
+     ═══════════════════════════════════════════════════════════ -->
+<div id="employee-view" style="flex-direction:column;min-height:100vh;background:var(--bg2);font-family:var(--font)">
+  <!-- Header -->
+  <div style="background:var(--navy);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:36px;height:36px;background:linear-gradient(135deg,var(--blue),var(--pink));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px">📋</div>
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#fff">NXTPhase — Team Staffing</div>
+        <div style="font-size:11px;color:rgba(255,255,255,.5)" id="ev-subtitle">Upcoming schedule · <span style="color:rgba(100,200,255,.8)">v45</span></div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="font-size:11px;color:rgba(255,255,255,.4)" id="ev-updated"></div>
+      
+    </div>
+  </div>
+  <!-- Week navigation -->
+  <div style="background:var(--bg);border-bottom:1px solid var(--bdr);padding:12px 20px;display:flex;align-items:center;gap:10px">
+    <button onclick="evChangeWeek(-1)" id="ev-btn-prev" style="border:1px solid var(--bdr);background:var(--bg);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--t2)">←</button>
+    <div id="ev-week-lbl" style="font-size:13px;font-weight:700;color:var(--navy);flex:1;text-align:center"></div>
+    <button onclick="evChangeWeek(1)" id="ev-btn-next" style="border:1px solid var(--bdr);background:var(--bg);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--t2)">→</button>
+  </div>
+  <!-- Content -->
+  <div id="ev-debug" style="padding:12px 24px 0"></div>
+  <div id="ev-status-bar" style="background:rgba(0,0,0,.2);padding:3px 24px;font-size:10px;color:rgba(255,255,255,.4);display:flex;gap:16px;border-bottom:1px solid rgba(255,255,255,.05)"><span style="color:rgba(100,200,255,.7)">v45</span><span id="ev-emp-count"></span><span id="ev-staff-count"></span></div>
+<div style="padding:20px 24px;flex:1" id="ev-content">
+    <div style="text-align:center;color:var(--t3);padding:40px">Loading schedule…</div>
+  </div>
+</div>
+
+
+<script>
+(function(){
+  try{ if(window._SUPA_SCHEMA && _SUPA_SCHEMA.projects && !_SUPA_SCHEMA.projects.includes('recurring_freq')) _SUPA_SCHEMA.projects.splice(_SUPA_SCHEMA.projects.indexOf('recurring_amount')+1,0,'recurring_freq'); }catch(e){}
+  const rerender=()=>{ try{ if(typeof renderDashboard==='function') renderDashboard(); }catch(e){} try{ if(typeof renderFinancial==='function') renderFinancial(); }catch(e){} try{ if(typeof renderInvoices==='function') renderInvoices(); }catch(e){} try{ if(typeof renderPartner==='function') renderPartner(); }catch(e){} };
+  if(document.readyState==='complete'||document.readyState==='interactive') setTimeout(rerender,300);
+  else document.addEventListener('DOMContentLoaded',()=>setTimeout(rerender,300));
+})();
+</script>
+
+
+<script>
+// SAFE RENDER GUARD (prevents empty dashboards)
+(function(){
+  if (typeof renderFinancial === 'function') {
+    const _rf = renderFinancial;
+    renderFinancial = function(){
+      try { _rf(); } catch(e){ console.error('renderFinancial crash', e); }
+    }
+  }
+  if (typeof renderDashboard === 'function') {
+    const _rd = renderDashboard;
+    renderDashboard = function(){
+      try { _rd(); } catch(e){ console.error('renderDashboard crash', e); }
+    }
+  }
+})();
+</script>
+
+</body>
+</html>
