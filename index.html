@@ -11189,14 +11189,14 @@ function renderStaffOverview(){
             let footerText='';
             let footerColor='var(--t3)';
             if(overConf){
-              footerText=confDays+'d / '+workDays+'d &nbsp;<span style="color:#DC2626;font-weight:700">'+Math.round(confDays-workDays)+'d te vol</span>';
+              footerText=confDays+'d &nbsp;<span style="color:#DC2626;font-weight:700">'+Math.round(confDays-workDays)+'d te vol</span>';
               footerColor='#DC2626';
             } else if(overWithDraft&&draftDays>0){
-              footerText=confDays+'d / '+workDays+'d &nbsp;<span style="color:#B45309">+'+draftDays+'d draft = '+totalWithDraft+'d</span>';
+              footerText=confDays+'d &nbsp;<span style="color:#B45309">+'+draftDays+'d draft → '+Math.round(totalWithDraft-workDays)+'d te vol</span>';
             } else {
-              footerText=confDays+'d / '+workDays+'d';
-              if(free>0&&confDays>0) footerText+=' &nbsp;<span style="color:var(--green)">✓ '+free+'d vrij</span>';
-              if(draftDays>0&&!overWithDraft) footerText+=' &nbsp;<span style="color:#9CA3AF">+'+draftDays+'d draft</span>';
+              if(confDays>0) footerText=confDays+'d';
+              if(free>0&&confDays>0) footerText+=' &nbsp;<span style="color:var(--green)">'+free+'d vrij</span>';
+              if(draftDays>0&&!overWithDraft) footerText+=(footerText?' &nbsp;':'')+'<span style="color:#9CA3AF">+'+draftDays+'d draft</span>';
             }
             cellHtml+='<div style="margin-top:5px;font-size:9px;color:'+footerColor+'">'+footerText+'</div>'+
               '<div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:2px;overflow:hidden;display:flex">'+
