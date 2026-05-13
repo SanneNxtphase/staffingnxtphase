@@ -11067,6 +11067,8 @@ function soInitWeeks(){
     sel.appendChild(opt);
   }
 }
+const soHidden=new Set();
+function soToggle(id){if(soHidden.has(id))soHidden.delete(id);else soHidden.add(id);renderStaffOverview();}
 function renderStaffOverview(){
   soInitWeeks();
   const startWk=document.getElementById('so-start-wk')?.value||toWeekKey(new Date());
@@ -11110,7 +11112,11 @@ function renderStaffOverview(){
   html+='</tr></thead><tbody>';
   emps.forEach(function(emp,ei){
     const rowBg=ei%2===0?'background:var(--bg)':'background:var(--bg2)';
-    html+='<tr style="'+rowBg+'"><td style="padding:8px 12px;border-bottom:1px solid var(--bdr);vertical-align:top"><div style="font-weight:600;font-size:12px;color:var(--navy)">'+esc(emp.name)+'</div><div style="font-size:10px;color:var(--t3);margin-top:1px">'+esc(emp.role||'')+'</div></td>';
+    const isHidden=soHidden.has(emp.id);
+    if(isHidden){html+='<tr style="opacity:.4"><td style="padding:8px 12px;border-bottom:1px solid var(--bdr);vertical-align:top;cursor:pointer" onclick="soToggle('+emp.id+')"><div style="font-weight:600;font-size:12px;color:var(--t3);text-decoration:line-through">'+esc(emp.name)+'</div><div style="font-size:10px;color:var(--t4);margin-top:1px">'+esc(emp.role||'')+'</div></td>';
+    weeks.forEach(function(){html+='<td style="border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr)"></td>';});
+    html+='</tr>';return;}
+    html+='<tr style="'+rowBg+'"><td style="padding:8px 12px;border-bottom:1px solid var(--bdr);vertical-align:top;cursor:pointer" onclick="soToggle('+emp.id+')" title="Klik om te verbergen"><div style="font-weight:600;font-size:12px;color:var(--navy)">'+esc(emp.name)+'</div><div style="font-size:10px;color:var(--t3);margin-top:1px">'+esc(emp.role||'')+'</div></td>';
     weeks.forEach(function(wk){
       const rows=(staffIndex[emp.id+'__'+wk]||[]).filter(function(s){
         const p=projMap[s.project_id];
