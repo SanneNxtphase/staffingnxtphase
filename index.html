@@ -11142,10 +11142,9 @@ function renderStaffOverview(){
           const overConf=confDays>workDays;
           const overWithDraft=totalWithDraft>workDays;
           const hlBg=hlCount>0?'background:var(--amber-p);':'';
-          const overBg=overConf?'background:#FEE2E2;':(overWithDraft?'background:#FFF7ED;':'');
-          const cellBg=overBg||(hlCount>0?hlBg:'');
 
-          let cellHtml='<td style="padding:6px 8px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:130px;'+cellBg+'">';
+          // Cell bg: only feestdag tint, never red/orange
+          let cellHtml='<td style="padding:6px 8px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:130px;'+hlBg+'">';
 
           if(entries.length===0){
             cellHtml+='<div style="font-size:10px;color:var(--t3);text-align:center;padding:6px 0">—</div>';
@@ -11155,52 +11154,47 @@ function renderStaffOverview(){
               const proj=projMap[s.project_id];
               const pName=proj?(proj.client_name||proj.name):'?';
               const col=projColor(s.project_id);
-              cellHtml+='<div style="background:'+col.bg+';color:'+col.text+';border:1.5px solid '+col.text+';border-radius:4px;padding:3px 7px;margin-bottom:3px;font-size:10px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:4px">'+
+              cellHtml+='<div style="background:'+col.bg+';color:'+col.text+';border-radius:4px;padding:3px 7px;margin-bottom:3px;font-size:10px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:4px">'+
                 '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:85px" title="'+pName+'">'+pName+'</span>'+
                 '<span style="white-space:nowrap;font-weight:700">'+s.days+'d</span></div>';
             });
-            // Draft separator + tags
+            // Draft tags — subtle: same color but faded + italic name + dashed left border
             if(draftEntries.length){
-              if(confEntries.length) cellHtml+='<div style="font-size:8.5px;color:var(--amber);font-weight:700;letter-spacing:.4px;margin:3px 0 2px;text-transform:uppercase">◦ indien akkoord:</div>';
+              if(confEntries.length||draftEntries.length) cellHtml+='<div style="font-size:8px;color:var(--t3);font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin:4px 0 2px">DRAFT:</div>';
               draftEntries.forEach(function(s){
                 const proj=projMap[s.project_id];
                 const pName=proj?(proj.client_name||proj.name):'?';
-                cellHtml+='<div style="background:var(--amber-p);color:#92400E;border:1.5px dashed var(--amber);border-radius:4px;padding:3px 7px;margin-bottom:3px;font-size:10px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:4px">'+
-                  '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:85px" title="'+pName+'">◦ '+pName+'</span>'+
-                  '<span style="white-space:nowrap;font-weight:700">'+s.days+'d</span></div>';
+                const col=projColor(s.project_id);
+                // Faded version: lower opacity bg, italic, left accent stripe
+                cellHtml+='<div style="background:'+col.bg+';color:'+col.text+';opacity:.65;border-left:3px solid '+col.text+';border-radius:0 4px 4px 0;padding:3px 7px;margin-bottom:3px;font-size:10px;font-weight:500;font-style:italic;display:flex;justify-content:space-between;align-items:center;gap:4px">'+
+                  '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:85px" title="'+pName+'">'+pName+'</span>'+
+                  '<span style="white-space:nowrap;font-weight:600">'+s.days+'d</span></div>';
               });
             }
           }
 
-          // Capacity footer
-          if(entries.length>0){
+          // Capacity footer — compact single line
+          if(entries.length>0||draftEntries.length>0){
+            const free=workDays-confDays;
+            const barPct=Math.min(confDays/workDays*100,100);
+            const draftBarPct=Math.min(draftDays/workDays*100, Math.max(0,100-barPct));
+            let footerText='';
+            let footerColor='var(--t3)';
             if(overConf){
-              // Red: already overstaffed on confirmed alone
-              cellHtml+='<div style="margin-top:4px;font-size:9px;color:#DC2626;font-weight:700">⚠ vol: '+confDays+'d / '+workDays+'d</div>'+
-                '<div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:2px">'+
-                '<div style="height:3px;width:100%;background:#DC2626;border-radius:2px"></div></div>';
+              footerText=confDays+'d / '+workDays+'d &nbsp;<span style="color:#DC2626;font-weight:700">'+Math.round(confDays-workDays)+'d te vol</span>';
+              footerColor='#DC2626';
             } else if(overWithDraft&&draftDays>0){
-              // Orange: ok on confirmed but over when draft included
-              cellHtml+='<div style="margin-top:4px;font-size:9px;display:flex;justify-content:space-between">'+
-                '<span style="color:var(--t3)">'+confDays+'d bevestigd</span>'+
-                '<span style="color:#D97706;font-weight:700">⚠ +'+draftDays+'d draft = '+totalWithDraft+'d / '+workDays+'d</span>'+
-                '</div>'+
-                '<div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:2px">'+
-                '<div style="height:3px;width:'+Math.min(confDays/workDays*100,100)+'%;background:var(--blue);border-radius:2px;display:inline-block"></div>'+
-                '<div style="height:3px;width:'+Math.min(draftDays/workDays*100,100-(confDays/workDays*100))+'%;background:var(--amber);border-radius:2px;display:inline-block"></div>'+
-                '</div>';
+              footerText=confDays+'d / '+workDays+'d &nbsp;<span style="color:#B45309">+'+draftDays+'d draft = '+totalWithDraft+'d</span>';
             } else {
-              // Normal: show conf days, remaining, bar
-              const free=workDays-confDays;
-              const barPct=Math.min(confDays/workDays*100,100);
-              cellHtml+='<div style="margin-top:4px;font-size:9px;color:var(--t3);display:flex;justify-content:space-between">'+
-                '<span>'+confDays+'d / '+workDays+'d</span>'+
-                (free>0&&confDays>0?'<span style="color:var(--green)">✓ '+free+'d vrij</span>':'')+
-                (draftDays>0?'<span style="color:var(--amber)">+'+draftDays+'d draft</span>':'')+
-                '</div>'+
-                '<div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:2px">'+
-                '<div style="height:3px;width:'+barPct+'%;background:'+(confDays===workDays?'var(--green)':'var(--blue)')+';border-radius:2px"></div></div>';
+              footerText=confDays+'d / '+workDays+'d';
+              if(free>0&&confDays>0) footerText+=' &nbsp;<span style="color:var(--green)">✓ '+free+'d vrij</span>';
+              if(draftDays>0&&!overWithDraft) footerText+=' &nbsp;<span style="color:var(--t3)">+'+draftDays+'d draft</span>';
             }
+            cellHtml+='<div style="margin-top:5px;font-size:9px;color:'+footerColor+'">'+footerText+'</div>'+
+              '<div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:2px;overflow:hidden;display:flex">'+
+              '<div style="height:3px;width:'+barPct+'%;background:'+(overConf?'#DC2626':confDays===workDays?'var(--green)':'var(--blue)')+';border-radius:2px 0 0 2px;flex-shrink:0"></div>'+
+              (draftDays>0&&!overConf?'<div style="height:3px;width:'+draftBarPct+'%;background:var(--t3);opacity:.4;flex-shrink:0"></div>':'')+
+              '</div>';
           }
 
           cellHtml+='</td>';
