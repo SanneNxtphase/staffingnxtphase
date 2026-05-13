@@ -11155,46 +11155,38 @@ function renderStaffOverview(){
           const overWithDraft=totalWithDraft>workDays;
 
           const rowBgColor=rowIdx%2===0?'#fff':'#F9FAFB';
-          // Cell is a flex column: tags grow, footer always pinned at bottom
-          let cellHtml='<td style="padding:0;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);background:'+rowBgColor+';">'+
-            '<div style="display:flex;flex-direction:column;height:100%;min-height:52px;padding:5px 6px 4px;">';
+          let cellHtml='<td style="padding:5px 6px;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;background:'+rowBgColor+';">';
 
           if(entries.length===0 && draftEntries.length===0){
-            cellHtml+='<div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--t3)">—</div>';
+            cellHtml+='<div style="font-size:10px;color:var(--t3);text-align:center;padding:6px 0">—</div>';
           } else {
-            // ── CONFIRMED: inline wrapping tags ──
-            cellHtml+='<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:2px;">';
-            if(confEntries.length===0 && draftEntries.length>0){
-              // no confirmed, spacer so footer still aligns
-            }
+            // ── CONFIRMED: stacked tags ──
             confEntries.forEach(function(s){
               const proj=projMap[s.project_id];
               const pName=proj?(proj.client_name||proj.name):'?';
-              const short=pName.length>12?pName.substring(0,11)+'…':pName;
               const col=projColor(s.project_id);
-              cellHtml+='<span style="background:'+col.bg+';color:'+col.text+';border-radius:3px;padding:2px 5px;font-size:9px;font-weight:600;white-space:nowrap;" title="'+pName+'">'+short+' ('+s.days+'d)</span>';
+              cellHtml+='<div style="background:'+col.bg+';color:'+col.text+';border-radius:3px;padding:2px 5px;margin-bottom:2px;font-size:9.5px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:3px">'+
+                '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+pName+'">'+pName+'</span>'+
+                '<span style="white-space:nowrap;font-weight:700;margin-left:4px">'+s.days+'d</span></div>';
             });
-            cellHtml+='</div>';
-
-            // ── DRAFT: orange label + inline outlined pills ──
+            // ── DRAFT: "INDIEN AKKOORD:" + orange outlined pills ──
             if(draftEntries.length){
-              cellHtml+='<div style="margin-top:3px;">'+
-                '<div style="font-size:7.5px;font-weight:700;color:#D97706;letter-spacing:.5px;text-transform:uppercase;margin-bottom:2px;">INDIEN AKKOORD:</div>'+
-                '<div style="display:flex;flex-wrap:wrap;gap:3px;">';
+              cellHtml+='<div style="margin-top:4px;">'+
+                '<div style="font-size:7.5px;font-weight:700;color:#D97706;letter-spacing:.4px;text-transform:uppercase;margin-bottom:3px;">INDIEN AKKOORD:</div>';
               draftEntries.forEach(function(s){
                 const proj=projMap[s.project_id];
                 const pName=proj?(proj.client_name||proj.name):'?';
-                // Show "ClientName: ProjectName (Xd)" truncated
                 const projName=proj?(proj.name||''):'';
-                const label=pName+(projName&&projName!==pName?': '+projName:'');
-                const short=label.length>16?label.substring(0,15)+'…':label;
-                cellHtml+='<span style="background:#fff;color:#92400E;border:1.5px solid #D97706;border-radius:3px;padding:2px 5px;font-size:9px;font-weight:600;white-space:nowrap;" title="'+label+'">'+short+' ('+s.days+'d)</span>';
+                const label=(projName&&projName!==pName)?pName+': '+projName:pName;
+                cellHtml+='<div style="background:#fff;color:#92400E;border:1.5px solid #D97706;border-radius:3px;padding:2px 5px;margin-bottom:2px;font-size:9.5px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:3px;" title="'+label+'">'+
+                  '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+label+'</span>'+
+                  '<span style="white-space:nowrap;font-weight:700;margin-left:4px">'+s.days+'d</span></div>';
               });
-              cellHtml+='</div></div>';
+              cellHtml+='</div>';
             }
           }
 
-          // ── FOOTER: always at bottom ──
+          // ── FOOTER ──
           const free=workDays-confDays;
           const barPct=Math.min(confDays/workDays*100,100);
           const draftBarPct=Math.min(draftDays/workDays*100,Math.max(0,100-barPct));
@@ -11212,15 +11204,13 @@ function renderStaffOverview(){
               if(draftDays>0&&!overWithDraft) footerText+=(footerText?' ':'')+'<span style="color:#D97706">+'+draftDays+'d draft</span>';
             }
           }
-          cellHtml+='<div style="margin-top:auto;padding-top:4px;">'+
-            '<div style="font-size:8px;color:'+footerColor+'">'+footerText+'</div>'+
+          cellHtml+='<div style="margin-top:4px;font-size:8.5px;color:'+footerColor+'">'+footerText+'</div>'+
             '<div style="height:2px;background:var(--bdr);border-radius:2px;margin-top:2px;overflow:hidden;display:flex;">'+
             '<div style="height:2px;width:'+barPct+'%;background:'+(overConf?'#DC2626':confDays===workDays?'var(--green)':'var(--blue)')+';flex-shrink:0;"></div>'+
             (draftDays>0&&!overConf?'<div style="height:2px;width:'+draftBarPct+'%;background:#FCD34D;flex-shrink:0;"></div>':'')+
-            '</div>'+
             '</div>';
 
-          cellHtml+='</div></td>';
+          cellHtml+='</td>';
           return cellHtml;
         }).join('')+
         '</tr>';
