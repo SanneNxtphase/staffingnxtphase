@@ -11143,8 +11143,11 @@ function renderStaffOverview(){
           const projShortName=p?(p.name.length>14?p.name.substring(0,14)+'...':p.name):'';
           html+='<div title="'+(p?esc(p.client_name+' / '+p.name):'')+'" style="display:inline-block;background:'+c.bg+';color:'+c.text+';border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;margin:1px 1px 2px 0;white-space:nowrap;cursor:default">'+esc(short)+'<span style="font-weight:400;font-size:10px;opacity:.8"> '+esc(projShortName)+'</span> ('+s.days+'d)</div>';
         });
+        const totalIfConfirmed=confDays+draftDays;
+        const wouldOverbook=!isOverbooked&&totalIfConfirmed>maxDays;
         if(draftRows.length){
-          if(confRows.length) html+='<div style="font-size:9px;color:var(--amber);font-weight:700;margin:4px 0 2px;text-transform:uppercase;letter-spacing:.5px">&#9675; indien akkoord:</div>';
+          if(wouldOverbook) html+='<div style="font-size:9px;color:var(--red);font-weight:700;margin:4px 0 2px;background:var(--red-p);padding:2px 5px;border-radius:3px">&#9888; bij akkoord overbezet ('+totalIfConfirmed+'d/'+maxDays+'d)</div>';
+          else if(confRows.length) html+='<div style="font-size:9px;color:var(--amber);font-weight:700;margin:4px 0 2px;text-transform:uppercase;letter-spacing:.5px">&#9675; indien akkoord:</div>';
           else html+='<div style="font-size:9px;color:var(--amber);font-weight:700;margin:0 0 2px;text-transform:uppercase;letter-spacing:.5px">&#9675; draft:</div>';
           draftRows.forEach(function(s){
             const p=projMap[s.project_id];
