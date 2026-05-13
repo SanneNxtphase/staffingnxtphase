@@ -784,7 +784,7 @@ if(location.protocol==='file:'){
       </select>
     </div>
   </div>
-  <div id="so-grid"></div>
+  <div id="so-grid" style="overflow-x:auto;"></div>
 </div>
 
 <div id="page-projects" class="page">
@@ -11134,10 +11134,10 @@ function renderStaffOverview(){
       const rowBg=rowIdx%2===0?'background:#fff;':'background:#F9FAFB;';
 
       html+='<tr style="'+rowBg+(rowOverConf?'outline:2px solid #FCA5A5;outline-offset:-1px;':'')+'" onclick="soToggle('+emp.id+')">'+
-        '<td style="padding:8px 12px;font-size:12px;font-weight:700;color:'+(rowOverConf?'#DC2626':'var(--navy)')+';border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);vertical-align:middle;position:sticky;left:0;z-index:5;'+rowBg+'box-shadow:1px 0 0 var(--bdr);cursor:pointer">'+
-        '<span style="font-size:9px;opacity:.4;margin-right:4px">▼</span>'+emp.name+
-        (emp.role?'<div style="font-size:10px;color:var(--t3);font-weight:400;margin-top:1px">'+emp.role+'</div>':'')+
-        (rowOverConf?'<div style="font-size:9px;color:#DC2626;margin-top:2px">⚠ overstaffd</div>':'')+
+        '<td style="padding:6px 10px;font-size:11px;font-weight:700;color:'+(rowOverConf?'#DC2626':'var(--navy)')+';border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);vertical-align:top;position:sticky;left:0;z-index:5;'+rowBg+'box-shadow:2px 0 0 var(--bdr);cursor:pointer;word-break:break-word;">'+
+        emp.name+
+        (emp.role?'<div style="font-size:9px;color:var(--t3);font-weight:400;margin-top:1px">'+emp.role+'</div>':'')+
+        (rowOverConf?'<div style="font-size:8px;color:#DC2626;margin-top:2px">⚠ overstaffd</div>':'')+
         '</td>'+
         weeks.map(function(wk){
           const hlCount=holidaysInWeek(wk);
@@ -11155,7 +11155,7 @@ function renderStaffOverview(){
           const overWithDraft=totalWithDraft>workDays;
 
           // Cell bg: matches row stripe, always clean
-          let cellHtml='<td style="padding:6px 8px;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;min-width:140px;'+(rowIdx%2===0?'background:#fff;':'background:#F9FAFB;')+'">';
+          let cellHtml='<td style="padding:5px 6px;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;'+(rowIdx%2===0?'background:#fff;':'background:#F9FAFB;')+'">';
 
           if(entries.length===0){
             cellHtml+='<div style="font-size:10px;color:var(--t3);text-align:center;padding:6px 0">—</div>';
@@ -11165,21 +11165,21 @@ function renderStaffOverview(){
               const proj=projMap[s.project_id];
               const pName=proj?(proj.client_name||proj.name):'?';
               const col=projColor(s.project_id);
-              cellHtml+='<div style="background:'+col.bg+';color:'+col.text+';border-radius:4px;padding:3px 7px;margin-bottom:3px;font-size:10px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:4px">'+
-                '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:85px" title="'+pName+'">'+pName+'</span>'+
-                '<span style="white-space:nowrap;font-weight:700">'+s.days+'d</span></div>';
+              cellHtml+='<div style="background:'+col.bg+';color:'+col.text+';border-radius:3px;padding:2px 5px;margin-bottom:2px;font-size:9.5px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:3px">'+
+                '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+pName+'">'+pName+'</span>'+
+                '<span style="white-space:nowrap;font-weight:700;margin-left:4px">'+s.days+'d</span></div>';
             });
-            // ── DRAFT zone — visually separated grey block ──
+            // ── DRAFT zone ──
             if(draftEntries.length){
-              cellHtml+='<div style="margin:5px -8px -6px;padding:5px 8px 6px;background:#F3F4F6;border-top:1px solid #E5E7EB;">'+
-                '<div style="font-size:8px;font-weight:700;color:#9CA3AF;letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Draft</div>';
+              cellHtml+='<div style="margin:3px -6px -5px;padding:3px 6px 5px;background:#F3F4F6;border-top:1px solid #E5E7EB;">'+
+                '<div style="font-size:7.5px;font-weight:700;color:#9CA3AF;letter-spacing:.6px;text-transform:uppercase;margin-bottom:2px">Draft</div>';
               draftEntries.forEach(function(s){
                 const proj=projMap[s.project_id];
                 const pName=proj?(proj.client_name||proj.name):'?';
                 const col=projColor(s.project_id);
-                cellHtml+='<div style="background:#fff;color:'+col.text+';border:1.5px solid '+col.text+';border-radius:4px;padding:3px 7px;margin-bottom:3px;font-size:10px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:4px;opacity:.8">'+
-                  '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:85px" title="'+pName+'">'+pName+'</span>'+
-                  '<span style="white-space:nowrap;font-weight:700">'+s.days+'d</span></div>';
+                cellHtml+='<div style="background:#fff;color:'+col.text+';border:1px solid '+col.text+';border-radius:3px;padding:2px 5px;margin-bottom:2px;font-size:9.5px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:3px;opacity:.8">'+
+                  '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+pName+'">'+pName+'</span>'+
+                  '<span style="white-space:nowrap;font-weight:700;margin-left:4px">'+s.days+'d</span></div>';
               });
               cellHtml+='</div>';
             }
@@ -11202,10 +11202,10 @@ function renderStaffOverview(){
               if(free>0&&confDays>0) footerText+=' &nbsp;<span style="color:var(--green)">'+free+'d vrij</span>';
               if(draftDays>0&&!overWithDraft) footerText+=(footerText?' &nbsp;':'')+'<span style="color:#9CA3AF">+'+draftDays+'d draft</span>';
             }
-            cellHtml+='<div style="margin-top:5px;font-size:9px;color:'+footerColor+'">'+footerText+'</div>'+
-              '<div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:2px;overflow:hidden;display:flex">'+
-              '<div style="height:3px;width:'+barPct+'%;background:'+(overConf?'#DC2626':confDays===workDays?'var(--green)':'var(--blue)')+';border-radius:2px 0 0 2px;flex-shrink:0"></div>'+
-              (draftDays>0&&!overConf?'<div style="height:3px;width:'+draftBarPct+'%;background:#D1D5DB;flex-shrink:0"></div>':'')+
+            cellHtml+='<div style="margin-top:3px;font-size:8.5px;color:'+footerColor+'">'+footerText+'</div>'+
+              '<div style="height:2px;background:var(--bdr);border-radius:2px;margin-top:2px;overflow:hidden;display:flex">'+
+              '<div style="height:2px;width:'+barPct+'%;background:'+(overConf?'#DC2626':confDays===workDays?'var(--green)':'var(--blue)')+';flex-shrink:0"></div>'+
+              (draftDays>0&&!overConf?'<div style="height:2px;width:'+draftBarPct+'%;background:#D1D5DB;flex-shrink:0"></div>':'')+
               '</div>';
           }
 
@@ -11216,23 +11216,23 @@ function renderStaffOverview(){
     });
     html+='</tbody>';
 
-    grid.innerHTML='<div style="overflow-x:auto;overflow-y:visible;"><table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0">'+
+    grid.innerHTML='<table style="width:100%;border-collapse:collapse;min-width:900px;table-layout:auto;">'+
+      '<colgroup><col style="width:150px;min-width:150px;">'+weeks.map(function(){return '<col style="min-width:130px;">';}).join('')+'</colgroup>'+
       '<thead><tr>'+
-      '<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);min-width:160px;position:sticky;top:0;left:0;z-index:20;background:var(--bg2);box-shadow:1px 0 0 var(--bdr)">Persoon</th>'+
+      '<th style="padding:6px 10px;font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);position:sticky;top:0;left:0;z-index:20;background:var(--bg2);box-shadow:2px 0 0 var(--bdr);">Persoon</th>'+
       weeks.map(function(wk){
         const mon=wkMonday(wk);
         const fri=new Date(mon);fri.setDate(mon.getDate()+4);
         const fmtD=function(d){return d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});};
         const hlCount=holidaysInWeek(wk);
         const isCurrent=wk===toWeekKey(new Date());
-        const headerBg=isCurrent?'background:#EFF6FF;':'background:var(--bg2);';
-        return '<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);min-width:140px;position:sticky;top:0;z-index:10;'+headerBg+(isCurrent?'color:var(--blue);':'')+'">'+
-          'Wk '+wk.split('-W')[1]+(isCurrent?' <span style="color:var(--blue)">●</span>':'')+
-          '<div style="font-size:9px;font-weight:400;margin-top:2px;color:var(--t3)">'+fmtD(mon)+' – '+fmtD(fri)+'</div>'+
-          (hlCount>0?'<div style="font-size:8px;font-weight:700;color:var(--amber);margin-top:1px">'+hlCount+'× feestdag</div>':'')+
+        return '<th style="padding:5px 8px;text-align:center;font-size:9px;font-weight:700;color:'+(isCurrent?'var(--blue)':'var(--t3)')+';text-transform:uppercase;letter-spacing:.6px;border-bottom:2px solid var(--bdr);border-left:1px solid var(--bdr);position:sticky;top:0;z-index:10;background:'+(isCurrent?'#EFF6FF':'var(--bg2)')+';">'+
+          'Wk '+wk.split('-W')[1]+(isCurrent?' ●':'')+
+          '<div style="font-size:8.5px;font-weight:400;margin-top:1px;color:var(--t3)">'+fmtD(mon)+' – '+fmtD(fri)+'</div>'+
+          (hlCount>0?'<div style="font-size:7.5px;font-weight:700;color:var(--amber)">'+hlCount+'× feestdag</div>':'')+
           '</th>';
       }).join('')+
-      '</tr></thead>'+html+'</table></div>';
+      '</tr></thead>'+html+'</table>';
   }
 }
 
