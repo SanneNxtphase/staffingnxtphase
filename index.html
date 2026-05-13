@@ -4010,8 +4010,8 @@ function renderProjects(){
   const isActive2= p => !isComp2(p)  && !isUp2(p);
 
   const sec_conf_active  = conf.filter(p => isActive2(p));
-  const sec_upcoming     = [...conf.filter(p => isUp2(p)), ...drft.filter(p => isUp2(p))];
-  const sec_draft_active = drft.filter(p => isActive2(p));
+  const sec_upcoming     = conf.filter(p => isUp2(p));
+  const sec_draft_active = drft.filter(p => !isComp2(p));
   const sec_completed    = [...conf.filter(p => isComp2(p)), ...drft.filter(p => isComp2(p))];
   const sec_stopped      = stop;
 
