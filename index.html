@@ -11122,26 +11122,31 @@ function renderStaffOverview(){
         return;
       }
 
-      // Pre-compute all weeks to know if any week is overstaffed (confirmed only)
+      // Pre-compute overstaffing — confirmed only AND including draft
       var rowOverConf=false;
+      var rowOverWithDraft=false;
       weeks.forEach(function(wk){
         const wd=5-holidaysInWeek(wk);
-        const cd=((staffIndex[emp.id+'__'+wk])||[]).filter(function(s){const p=projMap[s.project_id];return p&&p.status==='confirmed';}).reduce(function(s,e){return s+(parseFloat(e.days)||0);},0);
+        const wkEntries=(staffIndex[emp.id+'__'+wk])||[];
+        const cd=wkEntries.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='confirmed';}).reduce(function(s,e){return s+(parseFloat(e.days)||0);},0);
+        const dd=wkEntries.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='draft';}).reduce(function(s,e){return s+(parseFloat(e.days)||0);},0);
         if(cd>wd) rowOverConf=true;
+        if(cd+dd>wd) rowOverWithDraft=true;
       });
 
       const rowIdx=emps.indexOf(emp);
-      // Alternating: white vs very light blue-grey, warmer feel
-      const rowBgVal=rowIdx%2===0?'#FFFFFF':'#F5F7FA';
+      // Row bg: light red if any overstaff (conf or draft), else alternating
+      const rowBgVal=rowOverConf?'#FEF2F2':rowOverWithDraft?'#FFF7ED':(rowIdx%2===0?'#FFFFFF':'#F5F7FA');
       const rowBg='background:'+rowBgVal+';';
-      // Left accent: red if overstaffed, else subtle navy
-      const leftBorder=rowOverConf?'border-left:3px solid #DC2626;':'border-left:3px solid #CBD5E1;';
+      const leftBorder=rowOverConf?'border-left:3px solid #DC2626;':rowOverWithDraft?'border-left:3px solid #F59E0B;':'border-left:3px solid #CBD5E1;';
+      const nameColor=rowOverConf?'#DC2626':rowOverWithDraft?'#B45309':'var(--navy)';
+      const warningText=rowOverConf?'⚠ overstaffd':rowOverWithDraft?'⚠ vol incl. draft':'';
 
       html+='<tr style="'+rowBg+'" onclick="soToggle('+emp.id+')">'+
-        '<td style="padding:6px 10px;font-size:11px;font-weight:700;color:'+(rowOverConf?'#DC2626':'var(--navy)')+';border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);vertical-align:top;position:sticky;left:0;z-index:5;'+rowBg+leftBorder+'cursor:pointer;word-break:break-word;">'+
+        '<td style="padding:6px 10px;font-size:11px;font-weight:700;color:'+nameColor+';border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);vertical-align:top;position:sticky;left:0;z-index:5;'+rowBg+leftBorder+'cursor:pointer;word-break:break-word;">'+
         emp.name+
         (emp.role?'<div style="font-size:9px;color:var(--t3);font-weight:400;margin-top:1px">'+emp.role+'</div>':'')+
-        (rowOverConf?'<div style="font-size:8px;color:#DC2626;font-weight:700;margin-top:3px">⚠ overstaffd</div>':'')+
+        (warningText?'<div style="font-size:8px;color:'+nameColor+';font-weight:700;margin-top:3px">'+warningText+'</div>':'')+
         '</td>'+
         weeks.map(function(wk){
           const hlCount=holidaysInWeek(wk);
@@ -11158,8 +11163,8 @@ function renderStaffOverview(){
           const overConf=confDays>workDays;
           const overWithDraft=totalWithDraft>workDays;
 
-          // Overstaffed cell gets a light red tint, else row stripe
-          const cellBg=overConf?'#FEF2F2':rowBgVal;
+          // Cell bg inherits row color — overstaffed cell slightly more intense
+          const cellBg=overConf?'#FEE2E2':overWithDraft?'#FEF3C7':rowBgVal;
           let cellHtml='<td style="padding:5px 6px;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;background:'+cellBg+';">';
 
           if(entries.length===0 && draftEntries.length===0){
