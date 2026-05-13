@@ -11135,8 +11135,7 @@ function renderStaffOverview(){
       });
 
       const rowIdx=emps.indexOf(emp);
-      // Row bg: light red if any overstaff (conf or draft), else alternating
-      const rowBgVal=rowOverConf?'#FEF2F2':rowOverWithDraft?'#FFF7ED':(rowIdx%2===0?'#FFFFFF':'#F5F7FA');
+      const rowBgVal=rowIdx%2===0?'#FFFFFF':'#F5F7FA';
       const rowBg='background:'+rowBgVal+';';
       const leftBorder=rowOverConf?'border-left:3px solid #DC2626;':rowOverWithDraft?'border-left:3px solid #F59E0B;':'border-left:3px solid #CBD5E1;';
       const nameColor=rowOverConf?'#DC2626':rowOverWithDraft?'#B45309':'var(--navy)';
@@ -11153,7 +11152,6 @@ function renderStaffOverview(){
           const workDays=5-hlCount;
           const entries=(staffIndex[emp.id+'__'+wk])||[];
 
-          // Split confirmed vs draft
           const confEntries=entries.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='confirmed';});
           const draftEntries=entries.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='draft';});
           const confDays=confEntries.reduce(function(s,e){return s+(parseFloat(e.days)||0);},0);
@@ -11163,9 +11161,8 @@ function renderStaffOverview(){
           const overConf=confDays>workDays;
           const overWithDraft=totalWithDraft>workDays;
 
-          // Cell bg inherits row color — overstaffed cell slightly more intense
-          const cellBg=overConf?'#FEE2E2':overWithDraft?'#FEF3C7':rowBgVal;
-          let cellHtml='<td style="padding:5px 6px;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;background:'+cellBg+';">';
+          // Cell bg: always clean row stripe, no red/orange backgrounds
+          let cellHtml='<td style="padding:5px 6px;border-top:2px solid var(--bdr);border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;background:'+rowBgVal+';">';
 
           if(entries.length===0 && draftEntries.length===0){
             cellHtml+='<div style="font-size:10px;color:var(--t3);text-align:center;padding:6px 0">—</div>';
@@ -11214,10 +11211,12 @@ function renderStaffOverview(){
               if(draftDays>0&&!overWithDraft) footerText+=(footerText?' ':'')+'<span style="color:#D97706">+'+draftDays+'d draft</span>';
             }
           }
+          const barH=overConf?'4px':overWithDraft?'4px':'2px';
+          const barColor=overConf?'#DC2626':overWithDraft?'#F59E0B':(confDays===workDays?'var(--green)':'var(--blue)');
           cellHtml+='<div style="margin-top:4px;font-size:8.5px;color:'+footerColor+'">'+footerText+'</div>'+
-            '<div style="height:2px;background:var(--bdr);border-radius:2px;margin-top:2px;overflow:hidden;display:flex;">'+
-            '<div style="height:2px;width:'+barPct+'%;background:'+(overConf?'#DC2626':confDays===workDays?'var(--green)':'var(--blue)')+';flex-shrink:0;"></div>'+
-            (draftDays>0&&!overConf?'<div style="height:2px;width:'+draftBarPct+'%;background:#FCD34D;flex-shrink:0;"></div>':'')+
+            '<div style="height:'+barH+';background:var(--bdr);border-radius:2px;margin-top:2px;overflow:hidden;display:flex;">'+
+            '<div style="height:'+barH+';width:'+Math.min(barPct,100)+'%;background:'+barColor+';flex-shrink:0;"></div>'+
+            (draftDays>0&&!overConf?'<div style="height:'+barH+';width:'+draftBarPct+'%;background:#FCD34D;flex-shrink:0;"></div>':'')+
             '</div>';
 
           cellHtml+='</td>';
