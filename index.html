@@ -11122,12 +11122,12 @@ function renderStaffOverview(){
       const confDaysTotal=confRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
       const isOverbooked=confDaysTotal>maxDays;
       if(!rows.length){
-        html+='<td style="padding:8px 10px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);text-align:center;color:var(--t4);font-size:12px;vertical-align:top">&#8212;</td>';
+        html+='<td style="padding:8px 10px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);text-align:center;color:var(--t4);font-size:12px;vertical-align:bottom">&#8212;</td>';
       } else {
         const confDays=confRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
         const draftDays=draftRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
         const cellBg=isOverbooked?'background:var(--red-p);':'';
-        html+='<td style="padding:6px 8px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top;'+cellBg+'"><div style="display:flex;flex-direction:column;height:100%;min-height:60px"><div style="flex:1">';
+        html+='<td style="padding:6px 8px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:bottom;'+cellBg+'"><div style="display:flex;flex-direction:column;min-height:60px"><div style="flex:1">';
         if(isOverbooked) html+='<div style="font-size:9px;color:var(--red);font-weight:700;margin-bottom:3px">&#9888; overbezet ('+confDays+'d/'+maxDays+'d)</div>';
         confRows.forEach(function(s){
           const p=projMap[s.project_id];
@@ -11149,8 +11149,9 @@ function renderStaffOverview(){
         }
         const remaining=maxDays-confDays;
         html+='</div><div style="font-size:10px;margin-top:4px;padding-top:4px;border-top:1px solid var(--bdr)">';
-        html+='<span style="color:'+(isOverbooked?'var(--red)':remaining===0?'var(--t2)':'var(--green)')+';font-weight:600;">'+confDays+'d / '+maxDays+'d</span>';
+        html+='<span style="color:'+(isOverbooked?'var(--red)':remaining===0?'var(--t2)':'var(--t2)')+';font-weight:600;">'+confDays+'d</span>';
         if(remaining>0) html+=' <span style="color:var(--green)">&#10003; '+remaining+'d vrij</span>';
+        if(isOverbooked) html+=' <span style="color:var(--red)">&#9888; '+Math.abs(remaining)+'d te veel</span>';
         if(draftDays>0) html+=' <span style="color:var(--amber)">+'+draftDays+'d draft</span>';
         html+='</div></div></td>';
       }
