@@ -11111,18 +11111,33 @@ function renderStaffOverview(){
         const p=projMap[s.project_id];
         return p&&p.status!=='stopped'&&parseFloat(s.days)>0;
       });
+      const confRows=rows.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='confirmed';});
+      const draftRows=rows.filter(function(s){const p=projMap[s.project_id];return p&&p.status==='draft';});
       if(!rows.length){
         html+='<td style="padding:8px 10px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);text-align:center;color:var(--t4);font-size:12px;vertical-align:top">&#8212;</td>';
       } else {
-        const totalDays=rows.reduce(function(s,r){return s+parseFloat(r.days);},0);
+        const confDays=confRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
+        const draftDays=draftRows.reduce(function(s,r){return s+parseFloat(r.days);},0);
         html+='<td style="padding:6px 8px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top">';
-        rows.forEach(function(s){
+        confRows.forEach(function(s){
           const p=projMap[s.project_id];
           const c=projColor(s.project_id);
           const short=p?(p.client_name.length>10?p.client_name.substring(0,10)+'...':p.client_name):'?';
           html+='<div title="'+(p?esc(p.client_name+' / '+p.name):'')+'" style="display:inline-block;background:'+c.bg+';color:'+c.text+';border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;margin:1px 1px 2px 0;white-space:nowrap">'+esc(short)+' ('+s.days+'d)</div>';
         });
-        html+='<div style="font-size:10px;color:var(--t3);margin-top:2px">'+totalDays+'d totaal</div></td>';
+        if(draftRows.length){
+          if(confRows.length) html+='<div style="font-size:9px;color:var(--amber);font-weight:700;margin:3px 0 2px;text-transform:uppercase;letter-spacing:.5px">+ indien akkoord:</div>';
+          draftRows.forEach(function(s){
+            const p=projMap[s.project_id];
+            const short=p?(p.client_name.length>10?p.client_name.substring(0,10)+'...':p.client_name):'?';
+            html+='<div title="'+(p?esc(p.client_name+' / '+p.name):'')+'" style="display:inline-block;background:var(--amber-p);color:var(--amber);border:1px dashed var(--amber);border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;margin:1px 1px 2px 0;white-space:nowrap">'+esc(short)+' ('+s.days+'d) &#9702;</div>';
+          });
+        }
+        html+='<div style="font-size:10px;color:var(--t3);margin-top:2px">';
+        if(confDays>0) html+=confDays+'d bevestigd';
+        if(confDays>0&&draftDays>0) html+=' + ';
+        if(draftDays>0) html+='<span style="color:var(--amber)">'+draftDays+'d draft</span>';
+        html+='</div></td>';
       }
     });
     html+='</tr>';
