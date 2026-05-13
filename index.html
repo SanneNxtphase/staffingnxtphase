@@ -9976,7 +9976,7 @@ function showRevenueDrilldown(year,mo){
   // Financial summary using same revForMonth as P&L
   const totalProjRev=projRev.reduce((s,r)=>s+r.rev,0);
   const totalDraftRev=draftProjRev.reduce((s,r)=>s+r.rev,0);
-  const fixedCosts=fixedMonthly(year,mo);
+  const fixedCosts=Math.round((S.fixedCosts||[]).filter(c=>c.active===1&&fcInDateRange(c,year,mo)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
   let forecastCosts=0;
   S.futureCosts.forEach(fc=>{
     if(fc.recurring||fc.month===moStr){forecastCosts+=Math.abs(parseFloat(fc.amount||0));}
