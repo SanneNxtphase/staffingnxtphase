@@ -481,6 +481,7 @@ if(location.protocol==='file:'){
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
     <div class="nav-item" onclick="navigate('financial',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 15V5l4.5-3L10 4l5-3v14"/><path d="M1 15h14M5.5 15V8M10 15V5"/></svg>Company Dashboard</div>
     <div class="nav-item" onclick="navigate('forecast',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12l3-4 3 2 2-4 4-2"/><path d="M2 15h12"/></svg>Forecast</div>
+    <div class="nav-item" onclick="navigate('staffoverview',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="1"/><path d="M1 5h14M5 5v10M5 9h10M5 13h10"/></svg>Bezetting 6 weken</div>
     <div class="nav-sec">Planning</div>
     <div class="nav-item" onclick="navigate('projects',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2" width="14" height="12" rx="1"/><path d="M5 2V1M11 2V1M1 6h14"/></svg>Projects</div>
     <div class="nav-item" onclick="navigate('staffing',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="3"/><path d="M1 14c0-3 2.5-5 5-5"/><circle cx="12" cy="7" r="2.5"/><path d="M9 14c0-2 1.5-4 3-4s3 2 3 4"/></svg>Staffing</div>
@@ -768,6 +769,22 @@ if(location.protocol==='file:'){
     </div>
     <div id="staffing-breakdown-wrap" style="overflow-x:auto"></div>
   </div>
+</div>
+
+
+<div id="page-staffoverview" class="page">
+  <div class="page-header">
+    <div><div class="page-title">Bezetting &#8212; komende 6 weken</div><div class="page-sub">Per persoon per week: projecten en dagen</div></div>
+    <div class="btn-group">
+      <select class="filter-sel" id="so-start-wk" style="font-size:11px" onchange="renderStaffOverview()"></select>
+      <select class="filter-sel" id="so-view-mode" style="font-size:11px" onchange="renderStaffOverview()">
+        <option value="all">Iedereen</option>
+        <option value="pm">Project Managers</option>
+        <option value="dev">Developers</option>
+      </select>
+    </div>
+  </div>
+  <div id="so-grid"></div>
 </div>
 
 <div id="page-projects" class="page">
@@ -2677,7 +2694,7 @@ function renderPage(name){
   ({dashboard:renderDashboard,financial:renderFinancial,partner:renderPartner,forecast:renderForecast,projects:renderProjects,
     staffing:renderStaffing,schedule:renderSchedule,vacation:renderVacation,sickleave:renderSickLeave,
     employees:renderEmployees,invoices:renderInvoices,cashflow:renderSimpleCashflow,
-    fixedcosts:renderFixedCosts,extcosts:renderExtCosts,history:renderHistory}[name]||function(){})();
+    fixedcosts:renderFixedCosts,extcosts:renderExtCosts,history:renderHistory,staffoverview:renderStaffOverview}[name]||function(){})();
 }
 async function loadData(){
   // Always try Supabase first — it is the single source of truth
@@ -6183,7 +6200,19 @@ function fcInDateRange(c,y,m){
   return true;
 }
 function fixedMonthly(y,m){
-  return Math.round((S.fixedCosts||[]).filter(c=>c.active===1&&fcInDateRange(c,y,m)).reduce((s,c)=>s+fcMonthlyAmount(c),0)*100)/100;
+  const _bad=new Set([12,55]);
+  const _seen=new Set();
+  let _sum=0;
+  (S.fixedCosts||[]).forEach(function(c){
+    const id=parseInt(c.id);
+    if(_bad.has(id)) return;
+    if(_seen.has(id)) return;
+    _seen.add(id);
+    if(c.active!==1&&c.active!==true) return;
+    if(!fcInDateRange(c,y,m)) return;
+    _sum+=fcMonthlyAmount(c);
+  });
+  return Math.round(_sum*100)/100;
 }
 function fixedMonthlySplit(){
   const _now=new Date(),_y=_now.getFullYear(),_m=_now.getMonth()+1;
@@ -11016,6 +11045,93 @@ async function cleanOrphanedStaffing(showUI=true){
 }
 
 init();
+
+// ══ BEZETTING 6 WEKEN ══
+function soInitWeeks(){
+  const sel=document.getElementById('so-start-wk');
+  if(!sel||sel.options.length>0)return;
+  const now=new Date();
+  for(let i=-1;i<8;i++){
+    const d=new Date(now);d.setDate(d.getDate()+i*7);
+    const wk=toWeekKey(d);
+    const mon=wkMonday(wk);
+    const lbl='Wk '+wk.split('-W')[1]+' ('+mon.toLocaleDateString('nl-NL',{day:'numeric',month:'short'})+')';
+    const opt=document.createElement('option');
+    opt.value=wk;opt.textContent=lbl;
+    if(wk===toWeekKey(now))opt.selected=true;
+    sel.appendChild(opt);
+  }
+}
+function renderStaffOverview(){
+  soInitWeeks();
+  const startWk=document.getElementById('so-start-wk')?.value||toWeekKey(new Date());
+  const viewMode=document.getElementById('so-view-mode')?.value||'all';
+  const weeks=[];
+  let cur=startWk;
+  for(let i=0;i<6;i++){
+    weeks.push(cur);
+    const mon=wkMonday(cur);mon.setDate(mon.getDate()+7);
+    cur=toWeekKey(mon);
+  }
+  const PM_ROLES=['project manager','project owner','ai delivery manager'];
+  const DEV_ROLES=['developer','techlead'];
+  const EXCLUDE=new Set(['Jan','Sanne','Vakantie']);
+  let emps=S.employees.filter(e=>!EXCLUDE.has(e.name));
+  if(viewMode==='pm')emps=emps.filter(e=>PM_ROLES.includes((e.role||'').toLowerCase()));
+  if(viewMode==='dev')emps=emps.filter(e=>DEV_ROLES.includes((e.role||'').toLowerCase()));
+  const projMap={};
+  S.projects.forEach(p=>{projMap[p.id]=p;});
+  const staffIndex={};
+  S.staffing.forEach(s=>{
+    const k=s.employee_id+'__'+s.week_key;
+    if(!staffIndex[k])staffIndex[k]=[];
+    staffIndex[k].push(s);
+  });
+  const COLORS=[
+    {bg:'#E6F1FB',text:'#185FA5'},{bg:'#EAF3DE',text:'#3B6D11'},
+    {bg:'#FAEEDA',text:'#854F0B'},{bg:'#FBEAF0',text:'#993556'},
+    {bg:'#E1F5EE',text:'#0F6E56'},{bg:'#EEEDFE',text:'#534AB7'},
+    {bg:'#FAECE7',text:'#993C1D'},{bg:'#F1EFE8',text:'#5F5E5A'},
+  ];
+  const colorMap={};let colorIdx=0;
+  const projColor=function(id){if(!colorMap[id]){colorMap[id]=COLORS[colorIdx++%COLORS.length];}return colorMap[id];};
+  let html='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:700px"><thead><tr style="background:var(--bg2)"><th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);min-width:130px">Persoon</th>';
+  weeks.forEach(function(wk){
+    const mon=wkMonday(wk);
+    const fri=new Date(mon);fri.setDate(mon.getDate()+4);
+    const fmtD=function(d){return d.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});};
+    html+='<th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);min-width:120px">Wk '+wk.split('-W')[1]+'<div style="font-size:9px;font-weight:400;margin-top:2px">'+fmtD(mon)+' &ndash; '+fri.getDate()+'</div></th>';
+  });
+  html+='</tr></thead><tbody>';
+  emps.forEach(function(emp,ei){
+    const rowBg=ei%2===0?'background:var(--bg)':'background:var(--bg2)';
+    html+='<tr style="'+rowBg+'"><td style="padding:8px 12px;border-bottom:1px solid var(--bdr);vertical-align:top"><div style="font-weight:600;font-size:12px;color:var(--navy)">'+esc(emp.name)+'</div><div style="font-size:10px;color:var(--t3);margin-top:1px">'+esc(emp.role||'')+'</div></td>';
+    weeks.forEach(function(wk){
+      const rows=(staffIndex[emp.id+'__'+wk]||[]).filter(function(s){
+        const p=projMap[s.project_id];
+        return p&&p.status!=='stopped'&&parseFloat(s.days)>0;
+      });
+      if(!rows.length){
+        html+='<td style="padding:8px 10px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);text-align:center;color:var(--t4);font-size:12px;vertical-align:top">&#8212;</td>';
+      } else {
+        const totalDays=rows.reduce(function(s,r){return s+parseFloat(r.days);},0);
+        html+='<td style="padding:6px 8px;border-bottom:1px solid var(--bdr);border-left:1px solid var(--bdr);vertical-align:top">';
+        rows.forEach(function(s){
+          const p=projMap[s.project_id];
+          const c=projColor(s.project_id);
+          const short=p?(p.client_name.length>10?p.client_name.substring(0,10)+'...':p.client_name):'?';
+          html+='<div title="'+(p?esc(p.client_name+' / '+p.name):'')+'" style="display:inline-block;background:'+c.bg+';color:'+c.text+';border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;margin:1px 1px 2px 0;white-space:nowrap">'+esc(short)+' ('+s.days+'d)</div>';
+        });
+        html+='<div style="font-size:10px;color:var(--t3);margin-top:2px">'+totalDays+'d totaal</div></td>';
+      }
+    });
+    html+='</tr>';
+  });
+  html+='</tbody></table></div>';
+  const grid=document.getElementById('so-grid');
+  if(grid)grid.innerHTML=html;
+}
+
 
 // ── EMPLOYEE VIEW STATE ──────────────────────────────────────────────────────
 let _evWeekOffset=0; // weeks from current week (0=this week, max 2)
