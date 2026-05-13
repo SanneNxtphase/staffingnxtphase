@@ -4011,7 +4011,8 @@ function renderProjects(){
 
   const sec_conf_active  = conf.filter(p => isActive2(p));
   const sec_upcoming     = conf.filter(p => isUp2(p));
-  const sec_draft_active = drft.filter(p => !isComp2(p));
+  const sec_draft_upcoming = drft.filter(p => isUp2(p));
+  const sec_draft_active = drft.filter(p => isActive2(p));
   const sec_completed    = [...conf.filter(p => isComp2(p)), ...drft.filter(p => isComp2(p))];
   const sec_stopped      = stop;
 
@@ -4023,6 +4024,10 @@ function renderProjects(){
   if(sec_upcoming.length){
     unifiedRows += sectionDiv('↑  Upcoming — nog niet gestart', sec_upcoming.length, 'var(--blue)');
     unifiedRows += sec_upcoming.map(p => mkRow(p, false)).join('');
+  }
+  if(sec_draft_upcoming.length){
+    unifiedRows += sectionDiv('◦  Draft / Pencil — upcoming', sec_draft_upcoming.length, 'var(--amber)');
+    unifiedRows += sec_draft_upcoming.map(p => mkRow(p, false)).join('');
   }
   if(sec_draft_active.length){
     unifiedRows += sectionDiv('◦  Draft / Pencil — actief', sec_draft_active.length, 'var(--amber)');
