@@ -11109,7 +11109,7 @@ function renderStaffOverview(){
   ];
   const colorMap={};let colorIdx=0;
   const projColor=function(id){if(!colorMap[id]){colorMap[id]=COLORS[colorIdx++%COLORS.length];}return colorMap[id];};
-  let html='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:700px"><thead><tr style="background:var(--bg2)"><th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);min-width:130px;position:sticky;top:0;background:var(--bg2);z-index:10">Persoon</th>';
+  let html='<table style="width:100%;border-collapse:collapse;min-width:700px;border-spacing:0"><thead><tr style="background:var(--bg2)"><th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--bdr);min-width:130px;position:sticky;top:0;background:var(--bg2);z-index:10;box-shadow:0 1px 0 var(--bdr)">Persoon</th>';
   weeks.forEach(function(wk){
     const mon=wkMonday(wk);
     const fri=new Date(mon);fri.setDate(mon.getDate()+4);
@@ -11178,9 +11178,9 @@ function renderStaffOverview(){
     });
     html+='</tr>';
   });
-  html+='</tbody></table></div>';
+  html+='</tbody></table>';
   const grid=document.getElementById('so-grid');
-  if(grid)grid.innerHTML=html;
+  if(grid){grid.innerHTML=html;grid.style.overflowX='auto';}
 }
 
 
