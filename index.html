@@ -11476,27 +11476,41 @@ function renderEmployeeView(){
 
     // Vrije dagen (vakantie) voor deze week — toon als paarse badges
     const vacRows=[];
+    // Helper: parse date string "YYYY-MM-DD" as local date (avoids UTC offset issues)
+    const _parseLocal=function(s){if(!s)return null;const p=String(s).substring(0,10).split('-');return p.length===3?new Date(+p[0],+p[1]-1,+p[2]):null;};
+    // wk.mon and wk.fri are local midnight dates — compare day-only
+    const _wkMonStr=wk.mon.toISOString().substring(0,10);
+    const _wkFriStr=wk.fri.toISOString().substring(0,10);
     (S.vacations||[]).forEach(function(v){
       const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
       if(!emp||!isTeamViewVisible(emp))return;
-      const vStart=v.start_date?new Date(v.start_date):null;
-      const vEnd=v.end_date?new Date(v.end_date):null;
-      if(!vStart||!vEnd)return;
-      if(vEnd<wk.mon||vStart>wk.fri)return;
+      // Use start_date/end_date; fall back to week_key as start if needed
+      const vsStr=(v.start_date||v.week_key||'').substring(0,10);
+      const veStr=(v.end_date||v.start_date||v.week_key||'').substring(0,10);
+      if(!vsStr||!veStr)return;
+      // Overlap check: vacation overlaps week if vStart <= wkFri AND vEnd >= wkMon
+      if(veStr<_wkMonStr||vsStr>_wkFriStr)return;
       vacRows.push({emp:emp,note:v.notes||''});
     });
     vacRows.sort(function(a,b){return a.emp.name.localeCompare(b.emp.name);});
     if(vacRows.length){
-      html+='<div style="padding:6px 12px 10px;border-top:1px solid var(--purple-p)">'
-        +'<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--purple);margin-bottom:6px">🏖 Vrije dagen</div>'
-        +'<div style="display:flex;flex-wrap:wrap;gap:6px">';
+      // Render vacation entries in same card style as staffing rows
+      if(!rows.length){
+        // If no staffing rows at all, open the padding div first
+        html+='<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">';
+      }
       vacRows.forEach(function(v){
-        html+='<div style="background:var(--purple-p);border:1px solid var(--purple);border-radius:20px;padding:3px 11px;display:inline-flex;align-items:center;gap:5px">'
-          +'<span style="font-weight:700;font-size:12px;color:var(--purple)">'+esc(v.emp.name)+'</span>'
-          +(v.note?'<span style="font-size:10px;color:var(--purple);opacity:.7">· '+esc(v.note)+'</span>':'')
+        html+='<div style="background:var(--purple-p);border:1px solid var(--purple);border-radius:8px;overflow:hidden">'
+          +'<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px">'
+          +'<span style="font-weight:700;font-size:13px;color:var(--purple)">'+esc(v.emp.name)+'</span>'
+          +'<span style="font-size:11px;color:var(--purple);opacity:.8">🏖 vrij</span>'
+          +'</div>'
+          +(v.note?'<div style="padding:4px 12px 8px;font-size:10px;color:var(--purple);opacity:.7">'+esc(v.note)+'</div>':'')
           +'</div>';
       });
-      html+='</div></div>';
+      if(!rows.length){
+        html+='</div>';
+      }
     }
 
     html+='</div>';
