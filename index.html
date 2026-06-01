@@ -11473,6 +11473,32 @@ function renderEmployeeView(){
       });
       html+='</div>';
     }
+
+    // Vrije dagen (vakantie) voor deze week — toon als paarse badges
+    const vacRows=[];
+    (S.vacations||[]).forEach(function(v){
+      const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
+      if(!emp||!isTeamViewVisible(emp))return;
+      const vStart=v.start_date?new Date(v.start_date):null;
+      const vEnd=v.end_date?new Date(v.end_date):null;
+      if(!vStart||!vEnd)return;
+      if(vEnd<wk.mon||vStart>wk.fri)return;
+      vacRows.push({emp:emp,note:v.notes||''});
+    });
+    vacRows.sort(function(a,b){return a.emp.name.localeCompare(b.emp.name);});
+    if(vacRows.length){
+      html+='<div style="padding:6px 12px 10px;border-top:1px solid var(--purple-p)">'
+        +'<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--purple);margin-bottom:6px">🏖 Vrije dagen</div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:6px">';
+      vacRows.forEach(function(v){
+        html+='<div style="background:var(--purple-p);border:1px solid var(--purple);border-radius:20px;padding:3px 11px;display:inline-flex;align-items:center;gap:5px">'
+          +'<span style="font-weight:700;font-size:12px;color:var(--purple)">'+esc(v.emp.name)+'</span>'
+          +(v.note?'<span style="font-size:10px;color:var(--purple);opacity:.7">· '+esc(v.note)+'</span>':'')
+          +'</div>';
+      });
+      html+='</div></div>';
+    }
+
     html+='</div>';
   });
 
@@ -11528,11 +11554,12 @@ function wkFmtLabel(mon,fri){
         try{
           // Use Supabase JOIN to get staffing with employee+project names embedded
           // This bypasses all ID matching issues - names come directly with the data
-          const [joinedStaff, empsRes, projsRes, settingsRes] = await Promise.all([
+          const [joinedStaff, empsRes, projsRes, settingsRes, vacsRes] = await Promise.all([
             _supaReq('GET','staffing',null,'?select=*,employee:employees(id,name,role,daily_cost,available_days_per_week),project:projects(id,name,client_name,status)'),
             _supaReq('GET','employees',null,'?select=*'),
             _supaReq('GET','projects',null,'?select=*'),
-            _supaReq('GET','settings',null,'?select=key,value')
+            _supaReq('GET','settings',null,'?select=key,value'),
+            _supaReq('GET','vacations',null,'?select=*')
           ]);
           rawEmps = empsRes||[];
           rawProjs = projsRes||[];
@@ -11651,9 +11678,10 @@ function wkFmtLabel(mon,fri){
         }catch(e){}
 
         // Step 6: set S.* and render
-        S.employees = rawEmps;
-        S.projects  = rawProjs;
-        S.staffing  = rawStaff;
+        S.employees  = rawEmps;
+        S.projects   = rawProjs;
+        S.staffing   = rawStaff;
+        S.vacations  = norm(vacsRes||[]);
         // Show data counts in status bar for debugging
         const _ec=document.getElementById('ev-emp-count');
         const _sc=document.getElementById('ev-staff-count');
