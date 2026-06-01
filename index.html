@@ -5480,8 +5480,12 @@ function renderInvoices(){
     <div class="kpi an"><div class="kpi-lbl">Not Sent Yet</div><div class="kpi-val">${pending}</div></div>`;
 
   // ── Auto-populate confirmed project tracker ────────────────────────────────
+  // Internal projects — never show in invoice tracker
+  const _INTERNAL_IDS=new Set([65,68,95]);
+  const _INTERNAL_NAMES=new Set(['Sales','Nawerk','Support']);
   const confProjects=S.projects.filter(p=>{
     if(p.status!=='confirmed')return false;
+    if(_INTERNAL_IDS.has(p.id)||(_INTERNAL_NAMES.has(p.client_name)&&_INTERNAL_NAMES.has(p.name)))return false;
     const _xInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
     const _xAllPaid=_xInvs.length>0&&_xInvs.every(i=>i.paid);
     const _xInvoiced=_xInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
