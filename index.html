@@ -11479,8 +11479,10 @@ function renderEmployeeView(){
     // Helper: parse date string "YYYY-MM-DD" as local date (avoids UTC offset issues)
     const _parseLocal=function(s){if(!s)return null;const p=String(s).substring(0,10).split('-');return p.length===3?new Date(+p[0],+p[1]-1,+p[2]):null;};
     // wk.mon and wk.fri are local midnight dates — compare day-only
-    const _wkMonStr=wk.mon.toISOString().substring(0,10);
-    const _wkFriStr=wk.fri.toISOString().substring(0,10);
+    // Use local date strings to avoid UTC offset shifting the day
+    const _toLocalStr=function(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+    const _wkMonStr=_toLocalStr(wk.mon);
+    const _wkFriStr=_toLocalStr(wk.fri);
     (S.vacations||[]).forEach(function(v){
       const emp=S.employees.find(e=>e.id===v.employee_id||e.id==v.employee_id);
       if(!emp||!isTeamViewVisible(emp))return;
@@ -11494,23 +11496,17 @@ function renderEmployeeView(){
     });
     vacRows.sort(function(a,b){return a.emp.name.localeCompare(b.emp.name);});
     if(vacRows.length){
-      // Render vacation entries in same card style as staffing rows
-      if(!rows.length){
-        // If no staffing rows at all, open the padding div first
-        html+='<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">';
-      }
+      html+='<div style="padding:6px 12px 10px;display:flex;flex-direction:column;gap:6px">';
       vacRows.forEach(function(v){
         html+='<div style="background:var(--purple-p);border:1px solid var(--purple);border-radius:8px;overflow:hidden">'
           +'<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px">'
           +'<span style="font-weight:700;font-size:13px;color:var(--purple)">'+esc(v.emp.name)+'</span>'
           +'<span style="font-size:11px;color:var(--purple);opacity:.8">🏖 vrij</span>'
           +'</div>'
-          +(v.note?'<div style="padding:4px 12px 8px;font-size:10px;color:var(--purple);opacity:.7">'+esc(v.note)+'</div>':'')
+          +(v.note?'<div style="padding:0 12px 8px;font-size:10px;color:var(--purple);opacity:.7">'+esc(v.note)+'</div>':'')
           +'</div>';
       });
-      if(!rows.length){
-        html+='</div>';
-      }
+      html+='</div>';
     }
 
     html+='</div>';
