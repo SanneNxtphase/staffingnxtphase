@@ -936,12 +936,24 @@ if(location.protocol==='file:'){
     <div><div class="page-title">Invoices</div><div class="page-sub">All confirmed projects auto-appear here — mark draft, sent & paid from this dashboard</div></div>
     <button class="btn btn-primary" onclick="openModal('invoice')">+ Add Manual Invoice</button>
   </div>
+  <!-- Client filter bar -->
+  <div class="filter-bar" style="margin-bottom:12px">
+    <span class="filter-lbl">Klant:</span>
+    <input class="filter-sel" id="inv-client-search" placeholder="Zoek op klant…" oninput="invFilterByClient(this.value)" style="width:200px">
+    <select class="filter-sel" id="inv-client-sel" onchange="invSelectClient(this.value)">
+      <option value="">Alle klanten</option>
+    </select>
+    <button class="btn btn-sm btn-ghost" onclick="invClearClientFilter()" id="inv-clear-filter" style="display:none;color:var(--red);border-color:var(--red)">✕ Wis filter</button>
+    <span id="inv-filter-badge" style="display:none;background:var(--blue-p);color:var(--blue);border-radius:20px;padding:2px 10px;font-size:10px;font-weight:700"></span>
+  </div>
+  <!-- Per-client overview (shown when a client is selected) -->
+  <div id="inv-client-overview" style="display:none;margin-bottom:14px"></div>
   <div class="kpi-row" id="inv-kpis"></div>
   <!-- Auto-populated confirmed projects -->
   <div class="card mb-14">
     <div class="card-header">
       <div class="card-title">&#128204; Confirmed Projects — Invoice Tracker</div>
-      <span style="font-size:9px;color:var(--t3)">Automatically shows all confirmed projects. Mark status inline.</span>
+      <span style="font-size:9px;color:var(--t3)" id="inv-tracker-sub">Automatically shows all confirmed projects. Mark status inline.</span>
     </div>
     <div class="card-body" style="padding:0">
       <div class="table-wrap"><table>
@@ -5446,20 +5458,144 @@ function renderEmployees(){
 }
 
 // ══ INVOICES ══
+// ── INVOICE CLIENT FILTER STATE ──────────────────────────────────────────────
+let _invClientFilter='';
+function invSelectClient(val){_invClientFilter=val;const si=document.getElementById('inv-client-search');if(si)si.value=val;renderInvoices();}
+function invFilterByClient(q){
+  const q2=(q||'').trim().toLowerCase();
+  if(!q2){_invClientFilter='';renderInvoices();return;}
+  const clients=[...new Set(S.projects.filter(p=>p.status==='confirmed').map(p=>p.client_name))].sort();
+  const exact=clients.find(c=>c.toLowerCase()===q2);
+  const starts=clients.find(c=>c.toLowerCase().startsWith(q2));
+  const contains=clients.find(c=>c.toLowerCase().includes(q2));
+  _invClientFilter=exact||starts||contains||q;
+  renderInvoices();
+}
+function invClearClientFilter(){
+  _invClientFilter='';
+  const si=document.getElementById('inv-client-search');if(si)si.value='';
+  const se=document.getElementById('inv-client-sel');if(se)se.value='';
+  renderInvoices();
+}
+
 function renderInvoices(){
-  const total=S.invoices.reduce((s,i)=>s+parseFloat(i.amount||0),0);
-  const paid=S.invoices.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const isFiltered=!!_invClientFilter;
+  // Populate client dropdown
+  const clients=[...new Set(S.projects.filter(p=>p.status==='confirmed').map(p=>p.client_name))].sort();
+  const sel=document.getElementById('inv-client-sel');
+  if(sel){sel.innerHTML='<option value="">Alle klanten</option>'+clients.map(c=>`<option value="${esc(c)}"${c===_invClientFilter?' selected':''}>${esc(c)}</option>`).join('');}
+  const clearBtn=document.getElementById('inv-clear-filter');
+  const badge=document.getElementById('inv-filter-badge');
+  if(clearBtn)clearBtn.style.display=isFiltered?'':'none';
+  if(badge){badge.style.display=isFiltered?'':'none';badge.textContent=isFiltered?_invClientFilter:'';}
+  const subEl=document.getElementById('inv-tracker-sub');
+  if(subEl)subEl.textContent=isFiltered?`Gefilterd op: ${_invClientFilter}`:'Automatically shows all confirmed projects. Mark status inline.';
+
+  // ── Per-client overview ────────────────────────────────────────────────────
+  const overviewEl=document.getElementById('inv-client-overview');
+  if(overviewEl){
+    if(isFiltered){
+      const clientProjs=S.projects.filter(p=>p.status==='confirmed'&&p.client_name===_invClientFilter);
+      const clientInvs=S.invoices.filter(i=>clientProjs.some(p=>p.id===i.project_id||p.id==i.project_id));
+      const totalContract=clientProjs.reduce((s,p)=>s+parseFloat(p.revenue||0),0);
+      const totalInvoiced=clientInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+      const totalPaid=clientInvs.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
+      const totalUnpaid=Math.max(0,totalInvoiced-totalPaid);
+      const totalToInvoice=Math.max(0,totalContract-totalInvoiced);
+      const openCount=clientInvs.filter(i=>!i.paid).length;
+      const paidCount=clientInvs.filter(i=>i.paid).length;
+      const pct=totalContract>0?Math.min(100,totalInvoiced/totalContract*100):0;
+      const barColor=pct>=100?'var(--green)':pct>=60?'var(--blue)':'var(--amber)';
+      overviewEl.style.display='block';
+      overviewEl.innerHTML=`
+        <div style="background:var(--bg);border:2px solid var(--blue);border-radius:var(--r);padding:14px 18px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-size:16px;font-weight:800;color:var(--navy)">${esc(_invClientFilter)}</div>
+              <div style="font-size:11px;color:var(--t3);margin-top:2px">${clientProjs.length} project${clientProjs.length!==1?'en':''} \u00b7 ${clientInvs.length} factuur${clientInvs.length!==1?'en':''}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${openCount>0?`<span style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:700">${openCount} open</span>`:''}
+              ${paidCount>0?`<span style="background:var(--green-p);color:var(--green);border:1px solid var(--green);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:700">${paidCount} betaald</span>`:''}
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px">
+            <div style="background:var(--blue-p);border-radius:6px;padding:9px 12px">
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--blue);margin-bottom:3px">Contract waarde</div>
+              <div style="font-size:16px;font-weight:800;color:var(--blue)">${fmt(totalContract)}</div>
+            </div>
+            <div style="background:var(--green-p);border-radius:6px;padding:9px 12px">
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--green);margin-bottom:3px">Gefactureerd</div>
+              <div style="font-size:16px;font-weight:800;color:var(--green)">${fmt(totalInvoiced)}</div>
+            </div>
+            ${totalPaid>0?`<div style="background:var(--green-p);border-radius:6px;padding:9px 12px">
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--green);margin-bottom:3px">Ontvangen</div>
+              <div style="font-size:16px;font-weight:800;color:var(--green)">${fmt(totalPaid)}</div>
+            </div>`:''}
+            ${totalUnpaid>0?`<div style="background:var(--amber-p);border-radius:6px;padding:9px 12px">
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--amber);margin-bottom:3px">Openstaand</div>
+              <div style="font-size:16px;font-weight:800;color:var(--amber)">${fmt(totalUnpaid)}</div>
+            </div>`:''}
+            ${totalToInvoice>0?`<div style="background:var(--red-p);border-radius:6px;padding:9px 12px">
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--red);margin-bottom:3px">Nog te factureren</div>
+              <div style="font-size:16px;font-weight:800;color:var(--red)">${fmt(totalToInvoice)}</div>
+            </div>`:''}
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--t3);margin-bottom:4px">
+              <span>Facturering voortgang</span>
+              <span style="font-weight:700;color:${barColor}">${pct.toFixed(0)}%</span>
+            </div>
+            <div style="height:8px;background:var(--bdr);border-radius:4px;overflow:hidden">
+              <div style="height:100%;width:${pct.toFixed(1)}%;background:${barColor};border-radius:4px;transition:width .3s"></div>
+            </div>
+          </div>
+          ${clientInvs.filter(i=>!i.paid).length>0?`
+          <div style="margin-top:12px;border-top:1px solid var(--bdr);padding-top:10px">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--amber);margin-bottom:7px">\u26a0 Openstaande facturen</div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              ${clientInvs.filter(i=>!i.paid).sort((a,b)=>(b.month||'')>(a.month||'')?1:-1).map(i=>{
+                const pr=S.projects.find(p=>p.id===i.project_id||p.id==i.project_id);
+                const st=i.invoice_sent?'<span style="background:var(--blue-p);color:var(--blue);border-radius:3px;padding:1px 6px;font-size:9px">Verzonden</span>':i.draft_created?'<span style="background:var(--amber-p);color:var(--amber);border-radius:3px;padding:1px 6px;font-size:9px">Draft gemaakt</span>':'<span style="background:var(--bg3);color:var(--t3);border-radius:3px;padding:1px 6px;font-size:9px">Niet gestart</span>';
+                return`<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--bg2);border-radius:5px;border-left:3px solid var(--amber)">
+                  <div style="flex:1;min-width:0">
+                    <span style="font-size:12px;font-weight:600;color:var(--navy)">${esc(pr?pr.name:'?')}</span>
+                    <span style="font-size:10px;color:var(--t3);margin-left:6px">${i.month||'\u2014'}</span>
+                  </div>
+                  <span style="font-weight:700;color:var(--amber);white-space:nowrap">${fmt(parseFloat(i.amount||0))}</span>
+                  ${st}
+                  <button class="btn btn-sm btn-ghost" style="font-size:9px;padding:2px 7px" onclick="openModal('invoice',${i.id})">Edit</button>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`:''}
+        </div>`;
+    } else {
+      overviewEl.style.display='none';
+      overviewEl.innerHTML='';
+    }
+  }
+
+  const _filteredInvs=isFiltered
+    ?S.invoices.filter(i=>{const p=S.projects.find(p=>p.id===i.project_id||p.id==i.project_id);return p&&p.client_name===_invClientFilter;})
+    :S.invoices;
+  const total=_filteredInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const paid=_filteredInvs.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
   const outstanding=total-paid;
-  const pending=S.invoices.filter(i=>!i.invoice_sent&&!i.paid).length;
+  const pending=_filteredInvs.filter(i=>!i.invoice_sent&&!i.paid).length;
   document.getElementById('inv-kpis').innerHTML=`
-    <div class="kpi ab"><div class="kpi-lbl">Total Invoiced</div><div class="kpi-val blue">${fmt(total)}</div></div>
+    <div class="kpi ab"><div class="kpi-lbl">Total Invoiced${isFiltered?' (klant)':''}</div><div class="kpi-val blue">${fmt(total)}</div></div>
     <div class="kpi ag"><div class="kpi-lbl">Collected</div><div class="kpi-val green">${fmt(paid)}</div></div>
     <div class="kpi aa"><div class="kpi-lbl">Unpaid (Sent)</div><div class="kpi-val amber">${fmt(outstanding)}</div></div>
     <div class="kpi an"><div class="kpi-lbl">Not Sent Yet</div><div class="kpi-val">${pending}</div></div>`;
 
   // ── Auto-populate confirmed project tracker ────────────────────────────────
+  const _INTERNAL_IDS=new Set([65,68,95]);
+  const _INTERNAL_NAMES=new Set(['Sales','Nawerk','Support']);
   const confProjects=S.projects.filter(p=>{
     if(p.status!=='confirmed')return false;
+    if(isFiltered&&p.client_name!==_invClientFilter)return false;
+    if(_INTERNAL_IDS.has(p.id)||(_INTERNAL_NAMES.has(p.client_name)&&_INTERNAL_NAMES.has(p.name)))return false;
     const _xInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
     const _xAllPaid=_xInvs.length>0&&_xInvs.every(i=>i.paid);
     const _xInvoiced=_xInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
@@ -5469,60 +5605,42 @@ function renderInvoices(){
     const pInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
     const invoiced=pInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
     const paidAmt=pInvs.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
-    const unpaid=Math.max(0,invoiced-paidAmt); // sent but not collected
-    const toInvoice=Math.max(0,p.revenue-invoiced); // revenue not yet invoiced
-    const outstanding2=toInvoice; // kept for legacy references
-    const allDraft=pInvs.every(i=>i.draft_created)||pInvs.length===0;
-    const allSent=pInvs.length>0&&pInvs.every(i=>i.invoice_sent);
+    const unpaid=Math.max(0,invoiced-paidAmt);
+    const toInvoice=Math.max(0,p.revenue-invoiced);
     const hasDraftCreated=pInvs.some(i=>i.draft_created);
     const hasSent=pInvs.some(i=>i.invoice_sent);
     const hasPaid=pInvs.some(i=>i.paid);
     const allPaid=pInvs.length>0&&pInvs.every(i=>i.paid);
-    const fullyInvoiced=invoiced>=p.revenue&&p.revenue>0&&allPaid;
-    // Last sent invoice date
     const sentInvs=pInvs.filter(i=>i.invoice_sent).sort((a,b)=>(b.month||'')>(a.month||'')?1:-1);
-    const lastSent=sentInvs.length?sentInvs[0].month:'—';
-    const rowCls=pInvs.length===0?'':'';
-    return`<tr class="${rowCls}">
-      <td><div style="font-weight:600;font-size:12px;cursor:pointer;color:var(--blue);text-decoration:underline dotted" onclick="showClientInvoiceHistory('${esc(p.client_name).replace(/'/g,"\\'")}')" title="Click for invoice history">${esc(p.client_name)}</div><div style="font-size:10px;color:var(--t3)">${esc(p.name)}</div></td>
+    const lastSent=sentInvs.length?sentInvs[0].month:'\u2014';
+    return`<tr>
+      <td><div style="font-weight:600;font-size:12px;cursor:pointer;color:var(--blue);text-decoration:underline dotted" onclick="showClientInvoiceHistory('${esc(p.client_name).replace(/'/g,"\\'")}') " title="Click for invoice history">${esc(p.client_name)}</div><div style="font-size:10px;color:var(--t3)">${esc(p.name)}</div></td>
       <td class="right mono text-blue">${fmt(p.revenue)}</td>
-      <td class="right mono">${invoiced>0?fmt(invoiced):'<span class="text-muted">—</span>'}</td>
-      <td class="right mono ${unpaid>0?'text-amber':allPaid&&invoiced>0?'text-green':'text-muted'}">${unpaid>0?fmt(unpaid):allPaid&&invoiced>0?'<span style="color:var(--green)">✓ Collected</span>':'<span class="text-muted">—</span>'}</td>
-      <td class="right mono ${toInvoice>0?'':'text-muted'}">${toInvoice>0?fmt(toInvoice):'<span class="text-muted">—</span>'}</td>
-      <td style="font-size:10.5px;color:${lastSent!=='—'?'var(--blue)':'var(--t3)'}">${lastSent}</td>
-      <td class="center">
-        <button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:600;border:none;background:${hasDraftCreated?'var(--green)':'var(--bdr2)'};color:${hasDraftCreated?'#fff':'var(--t3)'}" onclick="invQuickDraft(${p.id})">
-          ${hasDraftCreated?'✓ Draft':'Draft'}
-        </button>
-      </td>
-      <td class="center">
-        <button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:600;border:none;background:${hasSent?'var(--blue)':'var(--bdr2)'};color:${hasSent?'#fff':'var(--t3)'}" onclick="invQuickSent(${p.id})">
-          ${hasSent?'✓ Sent':'Send'}
-        </button>
-      </td>
-      <td class="center">
-        <button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:600;border:1px solid ${hasPaid?'var(--green)':'var(--bdr2)'};background:${hasPaid?'var(--green-p)':'var(--bg2)'};color:${hasPaid?'var(--green)':'var(--t3)'}" onclick="invQuickPaid(${p.id})">
-          ${hasPaid?'✓ Paid':'Paid?'}
-        </button>
-      </td>
+      <td class="right mono">${invoiced>0?fmt(invoiced):'<span class="text-muted">\u2014</span>'}</td>
+      <td class="right mono ${unpaid>0?'text-amber':allPaid&&invoiced>0?'text-green':'text-muted'}">${unpaid>0?fmt(unpaid):allPaid&&invoiced>0?'<span style="color:var(--green)">\u2713 Collected</span>':'<span class="text-muted">\u2014</span>'}</td>
+      <td class="right mono ${toInvoice>0?'':'text-muted'}">${toInvoice>0?fmt(toInvoice):'<span class="text-muted">\u2014</span>'}</td>
+      <td style="font-size:10.5px;color:${lastSent!=='\u2014'?'var(--blue)':'var(--t3)'}">${lastSent}</td>
+      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:600;border:none;background:${hasDraftCreated?'var(--green)':'var(--bdr2)'};color:${hasDraftCreated?'#fff':'var(--t3)'}" onclick="invQuickDraft(${p.id})">${hasDraftCreated?'\u2713 Draft':'Draft'}</button></td>
+      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:600;border:none;background:${hasSent?'var(--blue)':'var(--bdr2)'};color:${hasSent?'#fff':'var(--t3)'}" onclick="invQuickSent(${p.id})">${hasSent?'\u2713 Sent':'Send'}</button></td>
+      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:600;border:1px solid ${hasPaid?'var(--green)':'var(--bdr2)'};background:${hasPaid?'var(--green-p)':'var(--bg2)'};color:${hasPaid?'var(--green)':'var(--t3)'}" onclick="invQuickPaid(${p.id})">${hasPaid?'\u2713 Paid':'Paid?'}</button></td>
       <td>
         <button class="btn btn-sm btn-blue" style="font-size:9px" onclick="openInvoiceForProject(${p.id})">+ Create Invoice</button>
         ${pInvs.length>0?`
-        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--amber);margin-left:3px" onclick="invResetProject(${p.id})" title="Reset status flags">↺</button>
-        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red);margin-left:3px" onclick="invDeleteAllForProject(${p.id})" title="Delete all invoice rows">🗑</button>`:''}
+        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--amber);margin-left:3px" onclick="invResetProject(${p.id})" title="Reset status flags">\u21ba</button>
+        <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red);margin-left:3px" onclick="invDeleteAllForProject(${p.id})" title="Delete all invoice rows">\U0001f5d1</button>`:''}
       </td>
     </tr>`;
   }).join('')||'<tr><td colspan="9" class="empty">No confirmed projects yet</td></tr>';
 
   // ── All invoices list — separated into Open and Paid ──────────────────────
-  const sorted=[...S.invoices].sort((a,b)=>(b.month||'')>(a.month||'')?1:-1);
+  const sorted=[..._filteredInvs].sort((a,b)=>(b.month||'')>(a.month||'')?1:-1);
   const openInvs=sorted.filter(inv=>!inv.paid);
   const paidInvs=sorted.filter(inv=>inv.paid);
 
   const buildRow=inv=>{
     const proj=S.projects.find(p=>p.id===inv.project_id);
     let statusBadge='';
-    if(inv.paid){statusBadge='<span class="badge badge-paid" style="background:var(--green-p);color:var(--green);border:1px solid var(--green)">✓ Paid</span>';}
+    if(inv.paid){statusBadge='<span class="badge badge-paid" style="background:var(--green-p);color:var(--green);border:1px solid var(--green)">\u2713 Paid</span>';}
     else if(inv.invoice_sent){statusBadge='<span class="badge" style="background:var(--blue-p);color:var(--blue);border:1px solid var(--blue-l)">Awaiting payment</span>';}
     else if(inv.draft_created){statusBadge='<span class="badge" style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber)">Awaiting to be sent</span>';}
     else{statusBadge='<span class="badge" style="background:var(--bg3);color:var(--t3)">Not started</span>';}
@@ -5531,11 +5649,11 @@ function renderInvoices(){
       <td class="bold">${esc(proj?proj.name:'?')}</td>
       <td>${esc(proj?proj.client_name:'?')}</td>
       <td class="right bold">${fmt(parseFloat(inv.amount||0))}</td>
-      <td>${inv.month||'—'}</td>
+      <td>${inv.month||'\u2014'}</td>
       <td><span class="badge" style="font-size:8.5px">${inv.billing_type==='one-time'?'One-time':inv.billing_type==='weekly'?'Weekly':'Monthly'}</span></td>
-      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:700;border:none;min-width:32px;background:${inv.draft_created?'var(--green)':'var(--bg2)'};color:${inv.draft_created?'#fff':'var(--t3)'}" onclick="invToggleField(${inv.id},'draft_created',${inv.draft_created?0:1})">${inv.draft_created?'✓':'○'}</button></td>
-      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:700;border:none;min-width:32px;background:${inv.invoice_sent?'var(--blue)':'var(--bg2)'};color:${inv.invoice_sent?'#fff':'var(--t3)'}" onclick="invToggleField(${inv.id},'invoice_sent',${inv.invoice_sent?0:1})">${inv.invoice_sent?'✓':'○'}</button></td>
-      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:700;border:1px solid ${inv.paid?'var(--green)':'var(--bdr2)'};min-width:32px;background:${inv.paid?'var(--green-p)':'var(--bg2)'};color:${inv.paid?'var(--green)':'var(--t3)'}" onclick="invToggleField(${inv.id},'paid',${inv.paid?0:1})">${inv.paid?'✓':'○'}</button></td>
+      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:700;border:none;min-width:32px;background:${inv.draft_created?'var(--green)':'var(--bg2)'};color:${inv.draft_created?'#fff':'var(--t3)'}" onclick="invToggleField(${inv.id},'draft_created',${inv.draft_created?0:1})">${inv.draft_created?'\u2713':'\u25cb'}</button></td>
+      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:700;border:none;min-width:32px;background:${inv.invoice_sent?'var(--blue)':'var(--bg2)'};color:${inv.invoice_sent?'#fff':'var(--t3)'}" onclick="invToggleField(${inv.id},'invoice_sent',${inv.invoice_sent?0:1})">${inv.invoice_sent?'\u2713':'\u25cb'}</button></td>
+      <td class="center"><button style="font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;font-weight:700;border:1px solid ${inv.paid?'var(--green)':'var(--bdr2)'};min-width:32px;background:${inv.paid?'var(--green-p)':'var(--bg2)'};color:${inv.paid?'var(--green)':'var(--t3)'}" onclick="invToggleField(${inv.id},'paid',${inv.paid?0:1})">${inv.paid?'\u2713':'\u25cb'}</button></td>
       <td>${statusBadge}</td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('invoice',${inv.id})">Edit</button>
@@ -5549,10 +5667,10 @@ function renderInvoices(){
   const paidTotal=document.getElementById('inv-paid-total');
   if(openEl)openEl.innerHTML=openInvs.map(buildRow).join('')||'<tr><td colspan="10" class="empty">No open invoices</td></tr>';
   if(paidEl)paidEl.innerHTML=paidInvs.map(buildRow).join('')||'<tr><td colspan="10" class="empty">No paid invoices yet</td></tr>';
-  if(paidTotal){const pt=paidInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);paidTotal.textContent=paidInvs.length+' invoices · '+fmt(pt)+' collected';}
+  if(paidTotal){const pt=paidInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);paidTotal.textContent=paidInvs.length+' invoices \u00b7 '+fmt(pt)+' collected';}
 }
 
-// Show which months a quarterly/yearly cost fires in
+
 function fcFreqPreview(){
   const freq=document.getElementById('f-fc-freq')?.value||'monthly';
   const baseMonth=parseInt(document.getElementById('f-fc-freq-month')?.value||'1');
