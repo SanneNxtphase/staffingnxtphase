@@ -11333,6 +11333,14 @@ function renderEmployeeView(){
     // Sort by employee name for consistent display
     rows.sort((a,b)=>a.emp.name.localeCompare(b.emp.name));
 
+    // ── Vacation & sick leave for this week (per visible employee) ──────────
+    const leaveByEmp={};
+    emps.forEach(function(e){
+      const v=typeof vacInWeek==='function'?vacInWeek(e.id,wkKey):0;
+      const sk=typeof sickInWeek==='function'?sickInWeek(e.id,wkKey):0;
+      if(v>0||sk>0) leaveByEmp[e.name]={emp:e,vac:v,sick:sk};
+    });
+
     html+='<div style="background:var(--bg);border:1.5px solid '+(isNow?'var(--blue)':'var(--bdr)')+';border-radius:12px;margin-bottom:16px;overflow:hidden">';
 
     // Week header — with Dutch public holidays
@@ -11349,10 +11357,10 @@ function renderEmployeeView(){
       +'</div>'
       +_holHtml
       +'<div style="font-size:11px;color:var(--t3);margin-left:4px">'+label+'</div>'
-      +'<div style="margin-left:auto;font-size:11px;color:var(--t3)">'+rows.length+' assignment'+(rows.length!==1?'s':'')+'</div>'
+      +'<div style="margin-left:auto;font-size:11px;color:var(--t3)">'+rows.length+' assignment'+(rows.length!==1?'s':'')+(Object.keys(leaveByEmp).length?' · '+Object.keys(leaveByEmp).length+' afwezig':'')+'</div>'
       +'</div>';
 
-    if(!rows.length){
+    if(!rows.length&&!Object.keys(leaveByEmp).length){
       html+='<div style="padding:18px 16px;text-align:center;color:var(--t3);font-size:12px">No staffing entries for this week</div>';
     } else {
       // Mobile-friendly: group by employee, card per person
@@ -11362,16 +11370,32 @@ function renderEmployeeView(){
         if(!byEmp[k]) byEmp[k]={emp:r.emp,rows:[]};
         byEmp[k].rows.push(r);
       });
+      // Make sure people who ONLY have leave (no staffing) also get a card
+      Object.values(leaveByEmp).forEach(function(l){
+        if(!byEmp[l.emp.name]) byEmp[l.emp.name]={emp:l.emp,rows:[]};
+      });
       html+='<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">';
       Object.values(byEmp).forEach(function(g){
         const avail=parseFloat(g.emp.available_days_per_week)||5;
         const total=g.rows.reduce(function(s,r){return s+r.days;},0);
         const over=total>avail;
+        const lv=leaveByEmp[g.emp.name];
         html+='<div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden">'
           +'<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--bdr)">'
-          +'<span style="font-weight:700;font-size:13px;color:var(--navy)">'+esc(g.emp.name)+'</span>'
+          +'<span style="font-weight:700;font-size:13px;color:var(--navy)">'+esc(g.emp.name)
+          +(lv&&lv.vac>0?'<span style="background:var(--purple-p,#f3e8ff);color:var(--purple,#9333ea);font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-left:6px">🌴 '+lv.vac+'d verlof</span>':'')
+          +(lv&&lv.sick>0?'<span style="background:#fee2e2;color:#dc2626;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-left:6px">🤒 '+lv.sick+'d ziek</span>':'')
+          +'</span>'
           +'<span style="font-size:13px;font-weight:800;color:'+(over?'var(--red)':'var(--blue)')+'">'+total+'d</span>'
           +'</div>';
+        if(lv&&(lv.vac>0||lv.sick>0)){
+          html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--bdr);background:var(--purple-p,#faf5ff)">'
+            +'<div style="flex:1;min-width:0">'
+            +'<div style="font-size:12px;font-weight:600;color:var(--purple,#9333ea)">'+(lv.vac>0?'🌴 Verlof / afwezig':'🤒 Ziek')+'</div>'
+            +'</div>'
+            +'<div style="flex-shrink:0;font-weight:700;color:var(--purple,#9333ea)">'+(lv.vac+lv.sick)+'d</div>'
+            +'</div>';
+        }
         g.rows.forEach(function(r){
           html+='<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 12px;border-bottom:1px solid var(--bdr)">'
             +'<div style="flex:1;min-width:0">'
@@ -11389,7 +11413,14 @@ function renderEmployeeView(){
     html+='</div>';
   });
 
-  if(!activeEmps.length){
+  // Any leave across the shown weeks?
+  let _anyLeave=false;
+  allWkKeys.forEach(function(wk){
+    emps.forEach(function(e){
+      if((typeof vacInWeek==='function'?vacInWeek(e.id,wk):0)>0||(typeof sickInWeek==='function'?sickInWeek(e.id,wk):0)>0)_anyLeave=true;
+    });
+  });
+  if(!activeEmps.length&&!_anyLeave){
     html='<div style="text-align:center;padding:60px 20px">'
       +'<div style="font-size:32px;margin-bottom:12px">&#128203;</div>'
       +'<div style="font-weight:700;font-size:16px;color:var(--navy);margin-bottom:8px">No staffing data yet</div>'
