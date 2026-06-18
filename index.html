@@ -1429,7 +1429,7 @@ var _SUPA_REAL_MEMBERS = [
 // 'Vakantie' = vacation placeholder row, never a real person.
 // 'Koen' = owner/admin, not in team view.
 // 'Sanne' = back-office, not in team view.
-var _TEAM_VIEW_EXCLUDE = new Set(['Vakantie','Koen','Sanne']);
+var _TEAM_VIEW_EXCLUDE = new Set(['Vakantie','Koen','Sanne','Jan']);
 // Employees hidden from Staffing grid but still visible in Vacation page
 var _STAFFING_GRID_EXCLUDE = new Set(['Jan','Sanne']);
 // Helper: is this employee visible in team view?
@@ -11336,6 +11336,7 @@ function renderEmployeeView(){
     // ── Vacation & sick leave for this week (per visible employee) ──────────
     const leaveByEmp={};
     emps.forEach(function(e){
+      if(!isTeamViewVisible(e))return;
       const v=typeof vacInWeek==='function'?vacInWeek(e.id,wkKey):0;
       const sk=typeof sickInWeek==='function'?sickInWeek(e.id,wkKey):0;
       if(v>0||sk>0) leaveByEmp[e.name]={emp:e,vac:v,sick:sk};
@@ -11417,6 +11418,7 @@ function renderEmployeeView(){
   let _anyLeave=false;
   allWkKeys.forEach(function(wk){
     emps.forEach(function(e){
+      if(!isTeamViewVisible(e))return;
       if((typeof vacInWeek==='function'?vacInWeek(e.id,wk):0)>0||(typeof sickInWeek==='function'?sickInWeek(e.id,wk):0)>0)_anyLeave=true;
     });
   });
