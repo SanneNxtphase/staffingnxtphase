@@ -11468,19 +11468,23 @@ function wkFmtLabel(mon,fri){
         if(_content) _content.innerHTML='<div style="text-align:center;padding:40px;color:#888;font-size:13px">⏳ Loading team data...</div>';
 
         // Step 1: fetch everything directly from Supabase — no cache, no localStorage
-        let rawStaff=[], rawEmps=[], rawProjs=[], rawSettings=[];
+        let rawStaff=[], rawEmps=[], rawProjs=[], rawSettings=[], rawVacations=[], rawSick=[];
         try{
           // Use Supabase JOIN to get staffing with employee+project names embedded
           // This bypasses all ID matching issues - names come directly with the data
-          const [joinedStaff, empsRes, projsRes, settingsRes] = await Promise.all([
+          const [joinedStaff, empsRes, projsRes, settingsRes, vacRes, sickRes] = await Promise.all([
             _supaReq('GET','staffing',null,'?select=*,employee:employees(id,name,role,daily_cost,available_days_per_week),project:projects(id,name,client_name,status)'),
             _supaReq('GET','employees',null,'?select=*'),
             _supaReq('GET','projects',null,'?select=*'),
-            _supaReq('GET','settings',null,'?select=key,value')
+            _supaReq('GET','settings',null,'?select=key,value'),
+            _supaReq('GET','vacations',null,'?select=*'),
+            _supaReq('GET','sick_leave',null,'?select=*')
           ]);
           rawEmps = empsRes||[];
           rawProjs = projsRes||[];
           rawSettings = settingsRes||[];
+          rawVacations = vacRes||[];
+          rawSick = sickRes||[];
           // If joined query worked, enrich rawStaff with embedded employee/project data
           if(joinedStaff&&joinedStaff.length>0&&joinedStaff[0].employee){
             rawStaff = joinedStaff.map(s=>({
@@ -11509,6 +11513,8 @@ function wkFmtLabel(mon,fri){
         rawEmps  = norm(rawEmps);
         rawProjs = norm(rawProjs);
         rawStaff = norm(rawStaff);
+        rawVacations = norm(rawVacations);
+        rawSick = norm(rawSick);
 
         // Step 3: ensure all team members exist in employees
         const _knownMembers=_SUPA_REAL_MEMBERS; // single source of truth
@@ -11598,6 +11604,8 @@ function wkFmtLabel(mon,fri){
         S.employees = rawEmps;
         S.projects  = rawProjs;
         S.staffing  = rawStaff;
+        S.vacations = (rawVacations||[]).map(v=>({...v,start_date:v.start_date||v.week_key||'',end_date:v.end_date||v.start_date||v.week_key||''}));
+        S.sickLeave = (rawSick||[]).map(v=>({...v,start_date:v.start_date||v.week_key||'',end_date:v.end_date||v.start_date||v.week_key||''}));
         // Show data counts in status bar for debugging
         const _ec=document.getElementById('ev-emp-count');
         const _sc=document.getElementById('ev-staff-count');
