@@ -3310,6 +3310,7 @@ function toggleProjectDetail(id, pid){
   tr.id = 'proj-detail-'+pid;
   tr.innerHTML = `<td colspan="12" style="padding:0;border-top:none">
     <div style="background:var(--bg2);border-top:1px solid var(--bdr);border-bottom:2px solid var(--orange,#f97316);padding:10px 14px">
+      ${p.notes&&p.notes.trim()?`<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:var(--r);padding:7px 11px;margin-bottom:8px;font-size:12px;color:#92400e"><strong style="font-weight:700">📝 Notitie:</strong> ${esc(p.notes.trim())}</div>`:''}
       <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
         <div style="background:var(--bg);border-radius:var(--r);padding:8px 14px;border-left:3px solid var(--blue)">
           <div style="font-size:9px;color:var(--t3);font-weight:600;text-transform:uppercase">Revenue</div>
@@ -3951,7 +3952,7 @@ function renderProjects(){
     return`<tr id="prow-${p.id}" style="${isComp?'opacity:.62;background:var(--bg2)':''}">
       <td class="bold" style="${!isComp&&p.status==='confirmed'?'color:var(--navy);cursor:pointer':'cursor:pointer'}" onclick="toggleProjectDetail(this.closest('tr'),${p.id})" title="Click for cost breakdown">
         ${!isComp&&p.status==='confirmed'?`<span style="display:inline-block;width:3px;height:16px;background:#1d4ed8;border-radius:2px;margin-right:6px;vertical-align:middle;opacity:.7"></span>`:''}${esc(p.client_name)}${partnerBadge}${compBadge}
-        <span style="font-size:9px;color:var(--t4);margin-left:4px">▼</span></td><td style="${!isComp&&p.status==='confirmed'?'font-weight:600;color:var(--navy)':''}">${esc(p.name)}</td>
+        <span style="font-size:9px;color:var(--t4);margin-left:4px">▼</span></td><td style="${!isComp&&p.status==='confirmed'?'font-weight:600;color:var(--navy)':''}">${esc(p.name)}${p.notes&&p.notes.trim()?`<div style="font-size:9.5px;color:var(--t3);font-weight:400;margin-top:2px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.notes.trim()).replace(/"/g,'&quot;')}">📝 ${esc(p.notes.trim())}</div>`:''}</td>
       <td><span class="badge badge-${p.status}">${p.status}</span></td>
       <td class="text-muted">${p.start_date||'—'}</td><td style="${(()=>{
         if(!p.end_date) return '';
