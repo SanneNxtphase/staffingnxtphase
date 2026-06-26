@@ -11148,16 +11148,16 @@ async function cleanOrphanedStaffing(showUI=true){
 init();
 
 // ── EMPLOYEE VIEW STATE ──────────────────────────────────────────────────────
-let _evWeekOffset=0; // weeks from current week (0=this week, max 3 → 4 weeks ahead)
+let _evWeekOffset=0; // weeks from current week (0=this week, max 4 → 6 weeks ahead with 2-week window)
 let _evRange=1;      // show 1 week at a time
 
 function evChangeWeek(delta){
-  _evWeekOffset=Math.max(0,Math.min(3,_evWeekOffset+delta));
+  _evWeekOffset=Math.max(0,Math.min(4,_evWeekOffset+delta));
   // Update arrow states
   const prev=document.getElementById('ev-btn-prev');
   const next=document.getElementById('ev-btn-next');
   if(prev)prev.style.opacity=_evWeekOffset===0?'0.3':'1';
-  if(next)next.style.opacity=_evWeekOffset===3?'0.3':'1';
+  if(next)next.style.opacity=_evWeekOffset===4?'0.3':'1';
   renderEmployeeView();
 }
 function evSetRange(n){
@@ -11246,7 +11246,7 @@ function renderEmployeeView(){
   const prevBtn=document.getElementById('ev-btn-prev');
   const nextBtn=document.getElementById('ev-btn-next');
   if(prevBtn)prevBtn.style.opacity=_evWeekOffset===0?'0.3':'1';
-  if(nextBtn)nextBtn.style.opacity=_evWeekOffset===3?'0.3':'1';
+  if(nextBtn)nextBtn.style.opacity=_evWeekOffset===4?'0.3':'1';
   const upd=document.getElementById('ev-updated');
   if(upd)upd.textContent='Updated '+now.toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
 
