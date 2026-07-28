@@ -916,7 +916,7 @@ if(location.protocol==='file:'){
 <div id="page-employees" class="page">
   <div class="page-header"><div class="page-title">Team</div><button class="btn btn-primary" onclick="openModal('employee')">+ Add Employee</button></div>
   <div class="card"><div class="table-wrap"><table>
-    <thead><tr><th>Name</th><th>Role</th><th class="right">Day Rate</th><th class="right">Days/Wk</th><th class="right">Weekly Cost</th><th class="right">Monthly Cost</th><th class="right">Vac Days/Yr</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Name</th><th>Role</th><th class="right">Maandloon</th><th class="right">Day Rate</th><th class="right">Days/Wk</th><th class="right">Weekly Cost</th><th class="right">Monthly Cost</th><th class="right">Vac Days/Yr</th><th>Actions</th></tr></thead>
     <tbody id="emp-tbody"></tbody>
   </table></div></div>
 </div>
@@ -1751,7 +1751,8 @@ async function pushAllToSupabase() {
 
     var store = DB._gs();
     // Enforce correct daily_cost before pushing to Supabase
-    var _pushCostMap = {Koen:462,Siebeline:365,Marco:462,Kamiel:185,Paul:535,Mees:222,Stein:369,Ralph:427};
+    // DISABLED: daily_cost is now derived from monthly salary set by the user.
+    var _pushCostMap = {};
     var store0 = DB._gs();
     store0.employees.forEach(function(e){if(_pushCostMap.hasOwnProperty(e.name))e.daily_cost=_pushCostMap[e.name];});
     localStorage.setItem('sp-v60', JSON.stringify(store0));
@@ -1907,7 +1908,7 @@ async function _normFixedCostsAndSync(arr){
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
   projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
-  employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year'],
+  employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year','monthly_salary'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
   vacations: ['employee_id','start_date','end_date','days','notes'],
@@ -5442,8 +5443,10 @@ async function saveSalaryOverride(empId){
 function renderEmployees(){
   document.getElementById('emp-tbody').innerHTML=S.employees.map(e=>{
     const wkCost=e.daily_cost*e.available_days_per_week;
+    const msal=e.monthly_salary?parseFloat(e.monthly_salary):null;
     return`<tr>
       <td class="bold">${esc(e.name)}</td><td>${esc(e.role||'')}</td>
+      <td class="right">${msal?`<span style="font-weight:700;color:var(--navy)">${fmt(msal)}</span>`:'<span style="color:var(--t4)">—</span>'}</td>
       <td class="right">${fmt(e.daily_cost)}</td>
       <td class="right">${e.available_days_per_week}d</td>
       <td class="right">${fmt(wkCost)}</td>
@@ -5451,11 +5454,11 @@ function renderEmployees(){
       <td class="right"><span class="badge badge-vacation">${e.vacation_days_per_year||25}d</span></td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('employee',${e.id})">Edit</button>
-        <button class="btn btn-sm btn-ghost" style="color:var(--blue)" onclick="openSalaryOverride(${e.id},'${esc(e.name)}')">💰 Salaris</button>
+        <button class="btn btn-sm btn-ghost" style="color:var(--blue)" onclick="openSalaryOverride(${e.id},'${esc(e.name)}')">💰 Per maand</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteItem('employees',${e.id})">&#x2715;</button>
       </div></td>
     </tr>`;
-  }).join('')||'<tr><td colspan="8" class="empty">No employees yet.</td></tr>';
+  }).join('')||'<tr><td colspan="9" class="empty">No employees yet.</td></tr>';
 }
 
 // ══ INVOICES ══
@@ -7678,15 +7681,35 @@ function modalEmployee(e){
       <div class="form-group"><label class="form-lbl">Role</label><input class="form-input" id="f-role" value="${esc(e?.role||'')}"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-lbl">Day Rate (€)</label><input class="form-input" type="number" id="f-rate" value="${e?.daily_cost||''}"></div>
-      <div class="form-group"><label class="form-lbl">Available Days/Week</label><input class="form-input" type="number" id="f-avail" min="1" max="7" step="0.5" value="${e?.available_days_per_week||5}"></div>
+      <div class="form-group"><label class="form-lbl">Available Days/Week</label><input class="form-input" type="number" id="f-avail" min="1" max="7" step="0.5" value="${e?.available_days_per_week||5}" oninput="_empRecalcRate()"></div>
+      <div class="form-group"><label class="form-lbl">Maandloon (€)</label><input class="form-input" type="number" id="f-msalary" step="0.01" value="${e?.monthly_salary||''}" oninput="_empRecalcRate()" placeholder="bijv. 8100"><div class="form-hint">Vul het maandloon in — het dagtarief wordt automatisch berekend.</div></div>
     </div>
-    <div class="form-group"><label class="form-lbl">Yearly Vacation Allowance (days)</label><input class="form-input" type="number" id="f-vacdays" min="0" max="60" step="0.5" value="${e?.vacation_days_per_year||25}"><div class="form-hint">Total vacation days allowed per calendar year. Used to track remaining balance.</div></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-lbl">Dagtarief (€) <span style="font-weight:400;color:var(--t3)">— automatisch</span></label><input class="form-input" type="number" id="f-rate" step="0.01" value="${e?.daily_cost||''}"><div class="form-hint" id="f-rate-hint">Berekend uit maandloon ÷ gem. ${(260/12).toFixed(2)} werkdagen/mnd (naar rato van dagen/week). Je kunt handmatig aanpassen.</div></div>
+      <div class="form-group"><label class="form-lbl">Yearly Vacation Allowance (days)</label><input class="form-input" type="number" id="f-vacdays" min="0" max="60" step="0.5" value="${e?.vacation_days_per_year||25}"><div class="form-hint">Total vacation days allowed per calendar year.</div></div>
+    </div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveEmployee(${e?.id||''})">Save</button></div>`;
 }
+// Recompute day rate live from monthly salary + available days/week
+function _empRecalcRate(){
+  const salEl=document.getElementById('f-msalary');
+  const availEl=document.getElementById('f-avail');
+  const rateEl=document.getElementById('f-rate');
+  const hintEl=document.getElementById('f-rate-hint');
+  if(!salEl||!rateEl)return;
+  const sal=parseFloat(salEl.value)||0;
+  const avail=parseFloat(availEl.value)||5;
+  if(sal>0){
+    const avgWorkdays=(260/12)*(avail/5); // year-average working days/month, pro-rated for part-time
+    const rate=avgWorkdays>0?Math.round((sal/avgWorkdays)*100)/100:0;
+    rateEl.value=rate;
+    if(hintEl)hintEl.innerHTML=`€${sal.toLocaleString('nl-NL')} ÷ ${avgWorkdays.toFixed(2)} dagen = <strong>€${rate.toLocaleString('nl-NL',{minimumFractionDigits:2})}/dag</strong>. Handmatig aanpassen kan.`;
+  }
+}
 async function saveEmployee(id){
-  const data={name:document.getElementById('f-name').value.trim(),role:document.getElementById('f-role').value.trim(),daily_cost:parseFloat(document.getElementById('f-rate').value)||0,available_days_per_week:parseFloat(document.getElementById('f-avail').value)||5,vacation_days_per_year:parseFloat(document.getElementById('f-vacdays').value)||25};
+  const _msal=parseFloat(document.getElementById('f-msalary').value)||null;
+  const data={name:document.getElementById('f-name').value.trim(),role:document.getElementById('f-role').value.trim(),daily_cost:parseFloat(document.getElementById('f-rate').value)||0,available_days_per_week:parseFloat(document.getElementById('f-avail').value)||5,vacation_days_per_year:parseFloat(document.getElementById('f-vacdays').value)||25,monthly_salary:_msal};
   if(!data.name)return alert('Name required.');
   const hdrs={..._supaHdr(),'Prefer':'return=representation'};
   if(id){
