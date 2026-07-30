@@ -797,7 +797,7 @@ if(location.protocol==='file:'){
     </div>
   </div>
   <div class="card mb-14"><div class="table-wrap"><table>
-    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th class="center" title="Subsidie ja/nee">Subsidie</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th class="center" title="Subsidie geschikt? — klik om ja/nee te zetten">Subsidie geschikt?</th><th>Actions</th></tr></thead>
     <tbody id="projects-unified-tbody"></tbody>
   </table></div></div>
     <!-- Year Overview -->
@@ -3872,18 +3872,20 @@ function renderForecast(){
 }
 
 // ══ PROJECTS ══
-async function toggleSubsidie(pid){
+async function setSubsidie(pid,val){
   const p=S.projects.find(x=>x.id===pid||x.id==pid);
   if(!p)return;
-  const newVal=!p.subsidie;
+  const prev=p.subsidie;
+  // Clicking the already-active choice clears it back to "not assessed"
+  const newVal=(prev===val)?null:val;
   p.subsidie=newVal; // optimistic update
   renderProjects();
   try{
     const hdrs={..._supaHdr(),'Prefer':'return=minimal'};
     const r=await fetch(_supaUrl('projects','?id=eq.'+parseInt(pid)),{method:'PATCH',headers:hdrs,body:JSON.stringify({subsidie:newVal})});
-    if(!r.ok){const t=await r.text();p.subsidie=!newVal;renderProjects();return showToast('⚠ Subsidie opslaan mislukt: '+t.substring(0,80),'error');}
-    if(typeof showToast==='function')showToast(newVal?'✓ Subsidie: ja':'Subsidie: nee','success');
-  }catch(e){p.subsidie=!newVal;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan subsidie','error');}
+    if(!r.ok){const t=await r.text();p.subsidie=prev;renderProjects();return showToast('⚠ Subsidie opslaan mislukt: '+t.substring(0,80),'error');}
+    if(typeof showToast==='function')showToast(newVal===true?'✓ Subsidie geschikt: ja':newVal===false?'Subsidie geschikt: nee':'Subsidie: leeggemaakt','success');
+  }catch(e){p.subsidie=prev;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan subsidie','error');}
 }
 
 function renderProjects(){
@@ -4002,7 +4004,10 @@ function renderProjects(){
       <td class="right" style="color:var(--pink)">${fmt(cost)}</td>
       <td class="right" style="color:var(--orange,#f97316)">${extCost>0?fmt(extCost):'<span style="color:var(--t4)">—</span>'}</td>
       <td class="right bold ${mc}" title="Rev: ${fmt(p.revenue)} | Staff: ${fmt(cost)}${extCost>0?' | Ext: '+fmt(extCost):''}">${mg.toFixed(1)}%<div style="font-size:8px;color:var(--t3);font-weight:400">${fmt(p.revenue-totalCost)}</div></td>
-      <td class="center"><button onclick="toggleSubsidie(${parseInt(p.id)||p.id})" title="Subsidie ja/nee" style="cursor:pointer;border:none;background:${p.subsidie?'var(--green-p)':'var(--bg2)'};color:${p.subsidie?'var(--green)':'var(--t4)'};border:1px solid ${p.subsidie?'var(--green)':'var(--bdr2)'};border-radius:4px;padding:3px 9px;font-size:10px;font-weight:700;white-space:nowrap">${p.subsidie?'✓ Ja':'Nee'}</button></td>
+      <td class="center"><div style="display:inline-flex;gap:3px;white-space:nowrap">
+        <button onclick="setSubsidie(${parseInt(p.id)||p.id},true)" title="Wel subsidie geschikt" style="cursor:pointer;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;border:1px solid ${p.subsidie===true?'var(--green)':'var(--bdr2)'};background:${p.subsidie===true?'var(--green-p)':'var(--bg2)'};color:${p.subsidie===true?'var(--green)':'var(--t4)'}">Ja</button>
+        <button onclick="setSubsidie(${parseInt(p.id)||p.id},false)" title="Niet subsidie geschikt" style="cursor:pointer;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;border:1px solid ${p.subsidie===false?'var(--red)':'var(--bdr2)'};background:${p.subsidie===false?'var(--red-p)':'var(--bg2)'};color:${p.subsidie===false?'var(--red)':'var(--t4)'}">Nee</button>
+      </div></td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('project',${parseInt(p.id)||p.id})">Edit</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--orange,#f97316)" onclick="openModal('extcost',null,${parseInt(p.id)||p.id})" title="Add external/outsourced cost">+ Ext</button>
@@ -7653,7 +7658,7 @@ function modalProject(p){
       </div>
     </div>
     <div class="form-group"><label class="form-lbl">Notes</label><input class="form-input" id="f-notes" value="${esc(p?.notes||'')}"></div>
-    <div class="form-group"><label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:12px;cursor:pointer"><input type="checkbox" id="f-subsidie"${p?.subsidie?' checked':''}> <span>💶 Subsidie van toepassing op dit project</span></label></div>
+    <div class="form-group"><label class="form-lbl">💶 Subsidie geschikt?</label><select class="form-input" id="f-subsidie"><option value=""${(p?.subsidie===null||p?.subsidie===undefined)?' selected':''}>— Nog niet beoordeeld —</option><option value="ja"${p?.subsidie===true?' selected':''}>Ja</option><option value="nee"${p?.subsidie===false?' selected':''}>Nee</option></select></div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveProject(${p?.id?parseInt(p.id)||p.id:''})">Save Project</button></div>`;
 }
@@ -7671,7 +7676,7 @@ async function saveProject(id){
     is_partner:document.getElementById('f-is-partner').checked?1:0,
     recurring_amount:parseFloat(document.getElementById('f-rec-amount')?.value)||0,
     recurring_freq:document.getElementById('f-rec-freq')?.value||'monthly',
-    subsidie:document.getElementById('f-subsidie')?.checked||false,
+    subsidie:(()=>{const v=document.getElementById('f-subsidie')?.value;return v==='ja'?true:v==='nee'?false:null;})(),
   };
   if(!data.client_name||!data.name)return alert('Client name and project name are required.');
   const hdrs={..._supaHdr(),'Prefer':'return=representation'};
