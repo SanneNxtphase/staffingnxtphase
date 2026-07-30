@@ -4005,8 +4005,8 @@ function renderProjects(){
       <td class="right" style="color:var(--orange,#f97316)">${extCost>0?fmt(extCost):'<span style="color:var(--t4)">—</span>'}</td>
       <td class="right bold ${mc}" title="Rev: ${fmt(p.revenue)} | Staff: ${fmt(cost)}${extCost>0?' | Ext: '+fmt(extCost):''}">${mg.toFixed(1)}%<div style="font-size:8px;color:var(--t3);font-weight:400">${fmt(p.revenue-totalCost)}</div></td>
       <td class="center"><div style="display:inline-flex;gap:3px;white-space:nowrap">
-        <button onclick="setSubsidie(${parseInt(p.id)||p.id},true)" title="Wel subsidie geschikt" style="cursor:pointer;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;border:1px solid ${p.subsidie===true?'var(--green)':'var(--bdr2)'};background:${p.subsidie===true?'var(--green-p)':'var(--bg2)'};color:${p.subsidie===true?'var(--green)':'var(--t4)'}">Ja</button>
-        <button onclick="setSubsidie(${parseInt(p.id)||p.id},false)" title="Niet subsidie geschikt" style="cursor:pointer;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;border:1px solid ${p.subsidie===false?'var(--red)':'var(--bdr2)'};background:${p.subsidie===false?'var(--red-p)':'var(--bg2)'};color:${p.subsidie===false?'var(--red)':'var(--t4)'}">Nee</button>
+        <button onclick="setSubsidie(${parseInt(p.id)||p.id},true)" title="Wel subsidie geschikt" style="cursor:pointer;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;border:1px solid ${p.subsidie===true?'var(--green)':'var(--bdr2)'};background:${p.subsidie===true?'var(--green-p)':'var(--bg2)'};color:${p.subsidie===true?'var(--green)':'var(--t4)'}">Yes</button>
+        <button onclick="setSubsidie(${parseInt(p.id)||p.id},false)" title="Niet subsidie geschikt" style="cursor:pointer;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;border:1px solid ${p.subsidie===false?'var(--red)':'var(--bdr2)'};background:${p.subsidie===false?'var(--red-p)':'var(--bg2)'};color:${p.subsidie===false?'var(--red)':'var(--t4)'}">No</button>
       </div></td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('project',${parseInt(p.id)||p.id})">Edit</button>
@@ -7658,7 +7658,7 @@ function modalProject(p){
       </div>
     </div>
     <div class="form-group"><label class="form-lbl">Notes</label><input class="form-input" id="f-notes" value="${esc(p?.notes||'')}"></div>
-    <div class="form-group"><label class="form-lbl">💶 Subsidie send?</label><select class="form-input" id="f-subsidie"><option value=""${(p?.subsidie===null||p?.subsidie===undefined)?' selected':''}>— Nog niet beoordeeld —</option><option value="ja"${p?.subsidie===true?' selected':''}>Ja</option><option value="nee"${p?.subsidie===false?' selected':''}>Nee</option></select></div>
+    <div class="form-group"><label class="form-lbl">💶 Subsidie send?</label><select class="form-input" id="f-subsidie"><option value=""${(p?.subsidie===null||p?.subsidie===undefined)?' selected':''}>— Not assessed —</option><option value="ja"${p?.subsidie===true?' selected':''}>Yes</option><option value="nee"${p?.subsidie===false?' selected':''}>No</option></select></div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveProject(${p?.id?parseInt(p.id)||p.id:''})">Save Project</button></div>`;
 }
