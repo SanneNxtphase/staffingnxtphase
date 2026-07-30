@@ -774,6 +774,7 @@ if(location.protocol==='file:'){
   <div class="page-header">
     <div><div class="page-title">Projects</div><div class="page-sub" id="projects-sub"></div></div>
     <div class="btn-group">
+      <input class="filter-sel" id="proj-client-search" placeholder="🔍 Zoek klant..." autocomplete="off" oninput="renderProjects()" style="font-size:11px;width:150px">
       <select class="filter-sel" id="proj-filter-status" onchange="renderProjects()" style="font-size:11px">
         <option value="">All statuses</option>
         <option value="confirmed">Confirmed</option>
@@ -796,7 +797,7 @@ if(location.protocol==='file:'){
     </div>
   </div>
   <div class="card mb-14"><div class="table-wrap"><table>
-    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th class="center" title="Subsidie ja/nee">Subsidie</th><th>Actions</th></tr></thead>
     <tbody id="projects-unified-tbody"></tbody>
   </table></div></div>
     <!-- Year Overview -->
@@ -1907,7 +1908,7 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes','subsidie'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year','monthly_salary'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
@@ -3871,6 +3872,20 @@ function renderForecast(){
 }
 
 // ══ PROJECTS ══
+async function toggleSubsidie(pid){
+  const p=S.projects.find(x=>x.id===pid||x.id==pid);
+  if(!p)return;
+  const newVal=!p.subsidie;
+  p.subsidie=newVal; // optimistic update
+  renderProjects();
+  try{
+    const hdrs={..._supaHdr(),'Prefer':'return=minimal'};
+    const r=await fetch(_supaUrl('projects','?id=eq.'+parseInt(pid)),{method:'PATCH',headers:hdrs,body:JSON.stringify({subsidie:newVal})});
+    if(!r.ok){const t=await r.text();p.subsidie=!newVal;renderProjects();return showToast('⚠ Subsidie opslaan mislukt: '+t.substring(0,80),'error');}
+    if(typeof showToast==='function')showToast(newVal?'✓ Subsidie: ja':'Subsidie: nee','success');
+  }catch(e){p.subsidie=!newVal;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan subsidie','error');}
+}
+
 function renderProjects(){
   const filterStatus=document.getElementById('proj-filter-status')?.value||'';
   const sortMode=document.getElementById('proj-sort')?.value||'status';
@@ -3890,6 +3905,11 @@ function renderProjects(){
   }
 
   let allProjs=[...S.projects];
+  // Filter by client name search
+  const clientQ=(document.getElementById('proj-client-search')?.value||'').trim().toLowerCase();
+  if(clientQ){
+    allProjs=allProjs.filter(p=>(p.client_name||'').toLowerCase().includes(clientQ));
+  }
   // Filter by month (projects active in that month)
   if(filterMonth){
     allProjs=allProjs.filter(p=>{
@@ -3982,6 +4002,7 @@ function renderProjects(){
       <td class="right" style="color:var(--pink)">${fmt(cost)}</td>
       <td class="right" style="color:var(--orange,#f97316)">${extCost>0?fmt(extCost):'<span style="color:var(--t4)">—</span>'}</td>
       <td class="right bold ${mc}" title="Rev: ${fmt(p.revenue)} | Staff: ${fmt(cost)}${extCost>0?' | Ext: '+fmt(extCost):''}">${mg.toFixed(1)}%<div style="font-size:8px;color:var(--t3);font-weight:400">${fmt(p.revenue-totalCost)}</div></td>
+      <td class="center"><button onclick="toggleSubsidie(${parseInt(p.id)||p.id})" title="Subsidie ja/nee" style="cursor:pointer;border:none;background:${p.subsidie?'var(--green-p)':'var(--bg2)'};color:${p.subsidie?'var(--green)':'var(--t4)'};border:1px solid ${p.subsidie?'var(--green)':'var(--bdr2)'};border-radius:4px;padding:3px 9px;font-size:10px;font-weight:700;white-space:nowrap">${p.subsidie?'✓ Ja':'Nee'}</button></td>
       <td><div class="btn-group">
         <button class="btn btn-sm btn-ghost" onclick="openModal('project',${parseInt(p.id)||p.id})">Edit</button>
         <button class="btn btn-sm btn-ghost" style="color:var(--orange,#f97316)" onclick="openModal('extcost',null,${parseInt(p.id)||p.id})" title="Add external/outsourced cost">+ Ext</button>
@@ -3996,7 +4017,7 @@ function renderProjects(){
 
   // ── Section separator row ──
   const sectionDiv=(label,count,color='var(--t3)')=>
-    `<tr><td colspan="11" style="padding:5px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
+    `<tr><td colspan="12" style="padding:5px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
       ${label} (${count})
     </td></tr>`;
 
@@ -4035,7 +4056,7 @@ function renderProjects(){
   }
 
   const _utbody = document.getElementById('projects-unified-tbody');
-  if(_utbody) _utbody.innerHTML = unifiedRows || '<tr><td colspan="11" class="empty">Nog geen projecten.</td></tr>';
+  if(_utbody) _utbody.innerHTML = unifiedRows || '<tr><td colspan="12" class="empty">Nog geen projecten.</td></tr>';
 
     // Year overview
   renderProjectYearOverview();
@@ -7632,6 +7653,7 @@ function modalProject(p){
       </div>
     </div>
     <div class="form-group"><label class="form-lbl">Notes</label><input class="form-input" id="f-notes" value="${esc(p?.notes||'')}"></div>
+    <div class="form-group"><label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:12px;cursor:pointer"><input type="checkbox" id="f-subsidie"${p?.subsidie?' checked':''}> <span>💶 Subsidie van toepassing op dit project</span></label></div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveProject(${p?.id?parseInt(p.id)||p.id:''})">Save Project</button></div>`;
 }
@@ -7649,6 +7671,7 @@ async function saveProject(id){
     is_partner:document.getElementById('f-is-partner').checked?1:0,
     recurring_amount:parseFloat(document.getElementById('f-rec-amount')?.value)||0,
     recurring_freq:document.getElementById('f-rec-freq')?.value||'monthly',
+    subsidie:document.getElementById('f-subsidie')?.checked||false,
   };
   if(!data.client_name||!data.name)return alert('Client name and project name are required.');
   const hdrs={..._supaHdr(),'Prefer':'return=representation'};
