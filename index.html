@@ -3670,11 +3670,18 @@ function showWeekDetail(wk,ctxYear,ctxMonth){
   const d=wkMonday(wk),fri=wkFriday(wk);
   document.getElementById('wk-det-title').textContent=wk+' — '+d.toLocaleDateString('en',{month:'long',day:'numeric'})+' to '+fri.toLocaleDateString('en',{day:'numeric',month:'long'});
   const activeProjs=S.projects.filter(p=>p.status!=='stopped'&&projectWkKeys(p).includes(wk));
-  const confProjs=activeProjs.filter(p=>p.status==='confirmed');
-  const draftProjs=activeProjs.filter(p=>p.status==='draft');
+  // Exclude internal no-revenue projects (Sales, Nawerk, Support) from the confirmed
+  // revenue/margin view — they have no revenue so their margin is meaningless.
+  const _WD_INTERNAL_IDS=new Set([65,68,95]);
+  const _WD_INTERNAL_NAMES=new Set(['Sales','Nawerk','Support']);
+  const _isInternalProj=p=>_WD_INTERNAL_IDS.has(p.id)||_WD_INTERNAL_NAMES.has(p.name)||_WD_INTERNAL_NAMES.has(p.client_name);
+  const confProjs=activeProjs.filter(p=>p.status==='confirmed'&&!_isInternalProj(p));
+  const draftProjs=activeProjs.filter(p=>p.status==='draft'&&!_isInternalProj(p));
   // Use full-week revenue for the detail panel (not month-clipped)
   const wkRevFull=confProjs.reduce((s,p)=>s+revForWeek(p,wk),0);
-  const wkCost=S.staffing.filter(s=>s.week_key===wk).reduce((sum,s)=>{const e=S.employees.find(e=>e.id===s.employee_id);return sum+(e?e.daily_cost*s.days:0);},0);
+  // Staffing cost excluding internal no-revenue projects (so week margin matches shown projects)
+  const _internalProjIds=new Set(S.projects.filter(_isInternalProj).map(p=>String(p.id)));
+  const wkCost=S.staffing.filter(s=>s.week_key===wk&&!_internalProjIds.has(String(s.project_id))).reduce((sum,s)=>{const e=S.employees.find(e=>e.id===s.employee_id);return sum+(e?e.daily_cost*s.days:0);},0);
   // If shown from monthly dashboard, also show clipped (month-slice) revenue
   const showClipped=ctxYear&&ctxMonth;
   const y=parseInt(ctxYear)||d.getFullYear(),m=parseInt(ctxMonth)||d.getMonth()+1;
@@ -3949,6 +3956,14 @@ function renderProjects(){
   // Sort within confirmed/draft: active first, completed last
   const sortWithCompleted=arr=>[...arr.filter(p=>!isCompleted(p)),...arr.filter(p=>isCompleted(p))];
   conf=sortWithCompleted(conf);
+  // Drafts: always order by expected start date (earliest first), no-date last
+  drft=[...drft].sort((a,b)=>{
+    const sa=a.start_date||'', sb=b.start_date||'';
+    if(!sa&&!sb)return 0;
+    if(!sa)return 1;   // no start date → bottom
+    if(!sb)return -1;
+    return sa.localeCompare(sb);
+  });
   drft=sortWithCompleted(drft);
   const total=allProjs.length;
   document.getElementById('projects-sub').textContent=`${conf.length} confirmed · ${drft.length} draft · ${stop.length} stopped${filterMonth?' (active in '+filterMonth+')':''}`;
