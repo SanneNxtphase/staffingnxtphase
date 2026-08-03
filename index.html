@@ -1886,8 +1886,11 @@ function _normFixedCosts(arr){
   // Deduplicate by id — keep highest id (most recent insert wins)
   const seen=new Map();
   (arr||[]).forEach(c=>{
-    // Dedup by name only (category may differ between browser cache and Supabase)
-    const key=(c.name||'').trim().toLowerCase();
+    // Dedup by name + period + category, so genuinely different entries that happen
+    // to share a name (e.g. someone moving from salary to management fee with
+    // non-overlapping start/end months) are BOTH kept. Only true duplicates
+    // (identical name, period and category) get merged.
+    const key=[(c.name||'').trim().toLowerCase(),c.start_month||'',c.end_month||'',(c.category||'').trim().toLowerCase()].join('|');
     const existing=seen.get(key);
     if(!existing||parseInt(c.id)>parseInt(existing.id)) seen.set(key,c);
   });
