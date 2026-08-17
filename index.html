@@ -475,7 +475,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v67-1708-1055</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v68-1708-1115</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1368,7 +1368,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v67-catdropdown loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v68-schonetitel loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -4241,11 +4241,8 @@ function renderProjects(){
   });
   drft=sortWithCompleted(drft);
   const total=allProjs.length;
-  const _today0=new Date().toISOString().split('T')[0];
-  const _teFactureren=allProjs.filter(p=>p.status!=='stopped'&&p.end_date&&p.end_date<_today0&&['todo','running'].includes(projInvoiceState(p).stage));
   const _subEl=document.getElementById('projects-sub');
-  if(_subEl)_subEl.innerHTML=`${conf.length} confirmed · ${drft.length} draft · ${stop.length} stopped${filterMonth?' (active in '+filterMonth+')':''}`
-    +(_teFactureren.length?` · <span style="background:var(--red);color:#fff;border-radius:20px;padding:1px 9px;font-weight:700">${_teFactureren.length} afgerond &amp; nog te factureren</span>`:'');
+  if(_subEl)_subEl.textContent=`${conf.length} confirmed · ${drft.length} draft · ${stop.length} stopped${filterMonth?' (active in '+filterMonth+')':''}`;
   const mkRow=(p,isComp=false)=>{
     const w=projectWkCount(p),rpw=revPerWk(p),cost=projStaffCost(p.id);
     const extCost=projExtCost(p.id);
