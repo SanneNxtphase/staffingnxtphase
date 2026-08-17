@@ -475,7 +475,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v63-1205-0820</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v67-1708-1055</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -808,7 +808,7 @@ if(location.protocol==='file:'){
     </div>
   </div>
   <div class="card mb-14"><div class="table-wrap"><table>
-    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th class="center" title="MC=Masterclass · OS=Opportunity scan · SD=Solution design · BLD=Build · PTN=Partnerships · OVG=Overig — klik om te labelen">Categorie</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th class="center" title="Subsidie send? — klik om ja/nee te zetten">Subsidie send?</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th class="center" title="Categorie voor rapportage — klik de knop om één of meerdere labels te kiezen">Categorie</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th class="center" title="Subsidie send? — klik om ja/nee te zetten">Subsidie send?</th><th>Actions</th></tr></thead>
     <tbody id="projects-unified-tbody"></tbody>
   </table></div></div>
   <!-- Categorie rapportage -->
@@ -819,7 +819,7 @@ if(location.protocol==='file:'){
         <div class="card-title">Omzet &amp; marge per categorie</div>
         <div style="font-size:10.5px;color:var(--t3)">Label projecten met de chips in de kolom <strong>Categorie</strong>. Volgt de actieve filters hierboven.</div>
       </div>
-      <span style="font-size:9.5px;color:var(--t3)">MC · OS · SD · BLD · PTN · OVG</span>
+      <span style="font-size:9.5px;color:var(--t3)">6 categorieën</span>
     </div>
     <div class="card-body" style="padding:0"><div class="table-wrap" id="proj-cat-report"></div></div>
   </div>
@@ -1368,7 +1368,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v65-invoicegroepen loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v67-catdropdown loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -3953,6 +3953,75 @@ function serializeCategories(arr){
 }
 function projCats(p){return parseCategories(p&&p.category);}
 
+// ══ CATEGORIE-DROPDOWN (compact, meerdere labels aan te vinken) ══
+var _catDropPid=null;
+function _catDropEl(){
+  let el=document.getElementById('cat-drop');
+  if(!el){
+    el=document.createElement('div');
+    el.id='cat-drop';
+    el.style.cssText='display:none;position:fixed;z-index:900;min-width:186px;background:var(--bg);border:1px solid var(--bdr2);border-radius:7px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:5px;font-family:var(--font)';
+    el.onclick=e=>e.stopPropagation();
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function openCatDrop(pid){
+  if(_catDropPid===pid){closeCatDrop();return;} // nogmaals klikken sluit
+  _catDropPid=pid;
+  renderCatDrop();
+}
+function closeCatDrop(){
+  _catDropPid=null;
+  const el=document.getElementById('cat-drop');
+  if(el)el.style.display='none';
+}
+function renderCatDrop(){
+  if(_catDropPid===null)return;
+  const pid=_catDropPid;
+  const p=S.projects.find(x=>x.id===pid||x.id==pid);
+  const btn=document.getElementById('catbtn-'+pid);
+  const el=_catDropEl();
+  if(!p||!btn){closeCatDrop();return;}
+  const cur=projCats(p);
+  el.innerHTML=`
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:4px 7px 5px">
+      Categorie${cur.length>1?'ën ('+cur.length+')':''}
+    </div>
+    ${PROJECT_CATEGORIES.map(c=>{
+      const on=cur.includes(c);
+      return`<div onclick="toggleProjectCategory(${pid},'${c}')" style="display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:5px;cursor:pointer;font-size:11.5px;font-weight:${on?'700':'500'};color:${on?PROJECT_CAT_COLOR[c]:'var(--t2)'};background:${on?'var(--bg2)':'transparent'}"
+        onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background='${on?'var(--bg2)':'transparent'}'">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;flex:none;border-radius:3px;border:1.5px solid ${on?PROJECT_CAT_COLOR[c]:'var(--bdr2)'};background:${on?PROJECT_CAT_COLOR[c]:'transparent'};color:#fff;font-size:9px;font-weight:900">${on?'✓':''}</span>
+        <span>${c}</span>
+      </div>`;
+    }).join('')}
+    <div style="border-top:1px solid var(--bdr);margin-top:4px;padding-top:4px;display:flex;gap:5px">
+      ${cur.length?`<button onclick="clearProjectCategories(${pid});closeCatDrop()" style="flex:1;cursor:pointer;border:1px solid var(--bdr2);background:var(--bg2);color:var(--red);border-radius:5px;padding:4px;font-size:10px;font-weight:700;font-family:var(--font)">Wissen</button>`:''}
+      <button onclick="closeCatDrop()" style="flex:1;cursor:pointer;border:1px solid var(--bdr2);background:var(--bg2);color:var(--t2);border-radius:5px;padding:4px;font-size:10px;font-weight:700;font-family:var(--font)">Sluiten</button>
+    </div>`;
+  el.style.display='block';
+  // Positioneren onder de knop, en omklappen als er onderaan geen ruimte is
+  const r=btn.getBoundingClientRect();
+  const h=el.offsetHeight,w=el.offsetWidth;
+  let top=r.bottom+4;
+  if(top+h>window.innerHeight-8)top=Math.max(8,r.top-h-4);
+  let left=r.left;
+  if(left+w>window.innerWidth-8)left=Math.max(8,window.innerWidth-w-8);
+  el.style.top=top+'px';
+  el.style.left=left+'px';
+}
+// Sluiten bij klik buiten het paneel of Escape; meebewegen bij scrollen
+document.addEventListener('click',e=>{
+  if(_catDropPid===null)return;
+  if(e.target.closest&&e.target.closest('#cat-drop'))return;
+  if(e.target.closest&&e.target.closest('[id^="catbtn-"]'))return;
+  closeCatDrop();
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&_catDropPid!==null)closeCatDrop();});
+window.addEventListener('scroll',()=>{if(_catDropPid!==null)renderCatDrop();},true);
+window.addEventListener('resize',()=>{if(_catDropPid!==null)renderCatDrop();});
+
 // Chip aan/uit zetten — meerdere categorieën per project mogelijk
 async function toggleProjectCategory(pid,cat){
   const p=S.projects.find(x=>x.id===pid||x.id==pid);
@@ -3965,12 +4034,13 @@ async function toggleProjectCategory(pid,cat){
   const newVal=serializeCategories(next);
   p.category=newVal; // optimistisch bijwerken
   renderProjects();
+  if(_catDropPid===pid)renderCatDrop(); // paneel openhouden zodat je meerdere labels kunt aanvinken
   try{
     const hdrs={..._supaHdr(),'Prefer':'return=minimal'};
     const r=await fetch(_supaUrl('projects','?id=eq.'+parseInt(pid)),{method:'PATCH',headers:hdrs,body:JSON.stringify({category:newVal})});
-    if(!r.ok){const t=await r.text();p.category=prev;renderProjects();return showToast('⚠ Categorie opslaan mislukt: '+t.substring(0,80),'error');}
+    if(!r.ok){const t=await r.text();p.category=prev;renderProjects();if(_catDropPid===pid)renderCatDrop();return showToast('⚠ Categorie opslaan mislukt: '+t.substring(0,80),'error');}
     if(typeof showToast==='function')showToast(newVal?('✓ Categorieën: '+newVal):'Categorieën leeggemaakt','success');
-  }catch(e){p.category=prev;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan categorie','error');}
+  }catch(e){p.category=prev;renderProjects();if(_catDropPid===pid)renderCatDrop();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan categorie','error');}
 }
 // Alle categorieën van één project wissen
 async function clearProjectCategories(pid){
@@ -4197,15 +4267,18 @@ function renderProjects(){
       else if(_iv.stage==='running')          compBadge+=`<span style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;margin-left:3px" title="Nog te factureren: ${fmt(_iv.toInvoice)} · Openstaand: ${fmt(_iv.unpaid)}">DEELS</span>`;
       else if(_iv.stage==='done')             compBadge+=`<span style="background:var(--green-p);color:var(--green);border:1px solid var(--green);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;margin-left:3px">✓ BETAALD</span>`;
     }
-    // Categorie-chips — meerdere aan te vinken, klik schakelt aan/uit
+    // Categorie — compacte dropdown (één regel hoog), meerdere labels mogelijk
     const _curCats=projCats(p);
-    const catCell=`<td class="center" style="white-space:nowrap"><div style="display:inline-flex;gap:2px;flex-wrap:wrap;justify-content:center;max-width:196px">
-      ${PROJECT_CATEGORIES.map(c=>{
-        const on=_curCats.includes(c);const col=PROJECT_CAT_COLOR[c];
-        return`<button onclick="toggleProjectCategory(${parseInt(p.id)||p.id},'${c}')" title="${c}${on?' — aangevinkt, klik om uit te zetten':' — klik om aan te vinken'}" style="cursor:pointer;border-radius:4px;padding:2px 5px;font-size:8.5px;font-weight:800;letter-spacing:.3px;border:1px solid ${on?col:'var(--bdr2)'};background:${on?col:'var(--bg2)'};color:${on?'#fff':'var(--t4)'}">${on?'✓':''}${PROJECT_CAT_SHORT[c]}</button>`;
-      }).join('')}
-      ${_curCats.length>1?`<button onclick="clearProjectCategories(${parseInt(p.id)||p.id})" title="Alle ${_curCats.length} categorieën van dit project wissen" style="cursor:pointer;border-radius:4px;padding:2px 4px;font-size:8.5px;font-weight:800;border:1px solid var(--bdr2);background:var(--bg2);color:var(--red)">✕</button>`:''}
-    </div>${_curCats.length>1?`<div style="font-size:8px;color:var(--t3);margin-top:1px">${_curCats.length} labels</div>`:''}</td>`;
+    const _catLabel=_curCats.length?_curCats.join(', '):'— kies —';
+    const _catColor=_curCats.length===1?PROJECT_CAT_COLOR[_curCats[0]]:(_curCats.length>1?'var(--navy)':'var(--t4)');
+    const catCell=`<td class="center" style="white-space:nowrap">
+      <button id="catbtn-${p.id}" onclick="openCatDrop(${parseInt(p.id)||p.id})" title="${_curCats.length?_curCats.join(' + '):'Nog niet gelabeld'} — klik om te kiezen"
+        style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;max-width:150px;border-radius:5px;padding:3px 7px;font-size:10px;font-weight:700;
+        border:1px solid ${_curCats.length?_catColor:'var(--bdr2)'};background:${_curCats.length?'var(--bg)':'var(--bg2)'};color:${_catColor}">
+        ${_curCats.length?`<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${PROJECT_CAT_COLOR[_curCats[0]]};flex:none"></span>`:''}
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_catLabel)}</span>
+        <span style="font-size:8px;opacity:.6;flex:none">▼</span>
+      </button></td>`;
     let partnerProgress='';
     if(p.is_partner){
       const invoiced=getPartnerInvoiced(p.id);
@@ -4282,8 +4355,13 @@ function renderProjects(){
   const byEndDesc = arr => [...arr].sort((a,b)=>(b.end_date||'').localeCompare(a.end_date||''));
 
   const sec_conf_active  = conf.filter(p => isActive2(p));
-  const sec_upcoming     = [...conf.filter(p => isUp2(p)), ...drft.filter(p => isUp2(p))];
-  const sec_draft_active = drft.filter(p => isActive2(p));
+  // Alleen CONFIRMED projecten in Upcoming — drafts krijgen hun eigen blok hieronder
+  const sec_upcoming     = conf.filter(p => isUp2(p));
+  // Alle nog niet afgeronde drafts bij elkaar (actief én nog niet gestart), vroegste start eerst
+  const sec_draft_active = drft.filter(p => !isComp2(p)).sort((a,b)=>{
+    const sa=a.start_date||'9999-99-99', sb=b.start_date||'9999-99-99';
+    return sa.localeCompare(sb);
+  });
   const _allCompleted    = [...conf.filter(p => isComp2(p)), ...drft.filter(p => isComp2(p))];
   // Afgeronde projecten splitsen op factuurstatus
   const sec_comp_todo    = byEndDesc(_allCompleted.filter(p=>{const s=projInvoiceState(p).stage;return s==='todo'||s==='running';}));
@@ -4296,11 +4374,12 @@ function renderProjects(){
     unifiedRows += sec_conf_active.map(p => mkRow(p, false)).join('');
   }
   if(sec_upcoming.length){
-    unifiedRows += sectionDiv('↑  Upcoming — nog niet gestart', sec_upcoming.length, 'var(--blue)');
+    unifiedRows += sectionDiv('↑  Confirmed — nog niet gestart', sec_upcoming.length, 'var(--blue)', 'vroegste startdatum bovenaan');
     unifiedRows += sec_upcoming.map(p => mkRow(p, false)).join('');
   }
   if(sec_draft_active.length){
-    unifiedRows += sectionDiv('◦  Draft / Pencil — actief', sec_draft_active.length, 'var(--amber)');
+    const draftOmzet=sec_draft_active.reduce((s,p)=>s+parseFloat(p.revenue||0),0);
+    unifiedRows += sectionDiv('◦  Draft / Pencil — pijplijn', sec_draft_active.length, 'var(--amber)', 'Pijplijnwaarde: <strong>'+fmt(draftOmzet)+'</strong> · vroegste startdatum bovenaan');
     unifiedRows += sec_draft_active.map(p => mkRow(p, false)).join('');
   }
   if(sec_comp_todo.length){
