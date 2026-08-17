@@ -475,7 +475,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v68-1708-1115</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v69-1708-1130</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -796,7 +796,7 @@ if(location.protocol==='file:'){
         <option value="Opportunity scan">Opportunity scan</option>
         <option value="Solution design">Solution design</option>
         <option value="Build">Build</option>
-        <option value="Partnerships">Partnerships</option>
+        <option value="Partnership">Partnership</option>
         <option value="Overig">Overig</option>
         <option value="__multi__">— Meerdere labels —</option>
         <option value="__none__">— Nog niet gelabeld —</option>
@@ -1368,7 +1368,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v68-schonetitel loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v69-partnership loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -3921,22 +3921,25 @@ function renderForecast(){
 }
 
 // ══ PROJECT CATEGORIEËN (voor rapportage) ══
-const PROJECT_CATEGORIES=['Masterclass','Opportunity scan','Solution design','Build','Partnerships','Overig'];
+const PROJECT_CATEGORIES=['Masterclass','Opportunity scan','Solution design','Build','Partnership','Overig'];
 const PROJECT_CAT_COLOR={
   'Masterclass':'var(--purple)',
   'Opportunity scan':'var(--blue)',
   'Solution design':'var(--amber)',
   'Build':'var(--green)',
-  'Partnerships':'var(--pink)',
+  'Partnership':'var(--pink)',
   'Overig':'var(--t3)'
 };
 const PROJECT_CAT_SHORT={
-  'Masterclass':'MC','Opportunity scan':'OS','Solution design':'SD','Build':'BLD','Partnerships':'PTN','Overig':'OVG'
+  'Masterclass':'MC','Opportunity scan':'OS','Solution design':'SD','Build':'BLD','Partnership':'PTN','Overig':'OVG'
 };
+// Oude schrijfwijzen die naar de huidige categorie moeten wijzen
+const PROJECT_CAT_ALIAS={'partnerships':'Partnership'};
 // Normaliseert vrije tekst naar één geldige categorie (case-insensitive)
 function normCategory(v){
   if(!v)return null;
   const s=String(v).trim().toLowerCase();
+  if(PROJECT_CAT_ALIAS[s])return PROJECT_CAT_ALIAS[s];
   return PROJECT_CATEGORIES.find(c=>c.toLowerCase()===s)||null;
 }
 // Meerdere categorieën: opgeslagen als komma-gescheiden tekst in projects.category
