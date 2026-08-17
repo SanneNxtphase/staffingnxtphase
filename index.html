@@ -983,7 +983,10 @@ if(location.protocol==='file:'){
   <!-- Auto-populated confirmed projects -->
   <div class="card mb-14">
     <div class="card-header">
-      <div class="card-title">&#128204; Confirmed Projects — Invoice Tracker</div>
+      <div>
+        <div class="card-title">&#128204; Confirmed Projects — Invoice Tracker</div>
+        <div style="font-size:10px;color:var(--t3)">Per <strong>project</strong> — waar sta je in het factuurproces</div>
+      </div>
       <span style="font-size:9px;color:var(--t3)" id="inv-tracker-sub">Automatically shows all confirmed projects. Mark status inline.</span>
     </div>
     <div class="card-body" style="padding:0">
@@ -1005,21 +1008,13 @@ if(location.protocol==='file:'){
       </table></div>
     </div>
   </div>
-  <!-- GROEP 1: nog niks gedaan -->
-  <div class="card mb-14">
-    <div class="card-header" style="background:var(--bg2)">
-      <div class="card-title">&#9633; 1. Nog niks gedaan — factuur moet nog opgemaakt worden</div>
-      <span style="font-size:10px;color:var(--t3)" id="inv-todo-total"></span>
-    </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Project</th><th>Client</th><th class="right">Amount</th><th>Period</th><th>Billing</th><th class="center">Draft</th><th class="center">Sent</th><th class="center">Paid</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody id="inv-tbody-todo"></tbody>
-    </table></div>
-  </div>
-  <!-- GROEP 2: opgemaakt / verzonden, nog niet betaald -->
+  <!-- Openstaande factuurregels -->
   <div class="card mb-14">
     <div class="card-header" style="background:var(--amber-p)">
-      <div class="card-title" style="color:var(--amber)">&#128228; 2. Factuur opgemaakt / verzonden — nog niet betaald</div>
+      <div>
+        <div class="card-title" style="color:var(--amber)">&#128228; Openstaand — nog niet betaald</div>
+        <div style="font-size:10px;color:var(--t3)">Per <strong>factuurregel</strong> · oudste bovenaan · statuskolom laat zien of de factuur al opgemaakt/verzonden is</div>
+      </div>
       <span style="font-size:10px;color:var(--t3)" id="inv-sent-total"></span>
     </div>
     <div class="table-wrap"><table>
@@ -1027,10 +1022,10 @@ if(location.protocol==='file:'){
       <tbody id="inv-tbody-sent"></tbody>
     </table></div>
   </div>
-  <!-- GROEP 3: betaald -->
+  <!-- Betaald -->
   <div class="card">
     <div class="card-header" style="background:var(--green-p);cursor:pointer" onclick="invTogglePaid()">
-      <div class="card-title" style="color:var(--green)"><span id="inv-paid-caret">&#9656;</span> 3. Betaald &amp; afgehandeld</div>
+      <div class="card-title" style="color:var(--green)"><span id="inv-paid-caret">&#9656;</span> &#10003; Betaald &amp; afgehandeld</div>
       <span style="font-size:10px;color:var(--t3)" id="inv-paid-total"></span>
     </div>
     <div class="table-wrap" id="inv-paid-wrap" style="display:none"><table>
@@ -1373,7 +1368,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v64-multicategorie loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v65-invoicegroepen loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -4296,11 +4291,6 @@ function renderProjects(){
   const sec_stopped      = stop;
 
   let unifiedRows = '';
-  if(sec_comp_todo.length){
-    const openBedrag=sec_comp_todo.reduce((s,p)=>{const st=projInvoiceState(p);return s+st.toInvoice+st.unpaid;},0);
-    unifiedRows += sectionDiv('&#128181;  Afgerond — nog te factureren / niet betaald', sec_comp_todo.length, 'var(--red)', 'Openstaand: <strong>'+fmt(openBedrag)+'</strong> · nieuwste einddatum bovenaan');
-    unifiedRows += sec_comp_todo.map(p => mkRow(p, true)).join('');
-  }
   if(sec_conf_active.length){
     unifiedRows += sectionDiv('✓  Confirmed — actief', sec_conf_active.length, 'var(--green)');
     unifiedRows += sec_conf_active.map(p => mkRow(p, false)).join('');
@@ -4312,6 +4302,11 @@ function renderProjects(){
   if(sec_draft_active.length){
     unifiedRows += sectionDiv('◦  Draft / Pencil — actief', sec_draft_active.length, 'var(--amber)');
     unifiedRows += sec_draft_active.map(p => mkRow(p, false)).join('');
+  }
+  if(sec_comp_todo.length){
+    const openBedrag=sec_comp_todo.reduce((s,p)=>{const st=projInvoiceState(p);return s+st.toInvoice+st.unpaid;},0);
+    unifiedRows += sectionDiv('&#128181;  Afgerond — nog te factureren / niet betaald', sec_comp_todo.length, 'var(--red)', 'Openstaand: <strong>'+fmt(openBedrag)+'</strong> · nieuwste einddatum bovenaan');
+    unifiedRows += sec_comp_todo.map(p => mkRow(p, true)).join('');
   }
   if(sec_comp_done.length){
     unifiedRows += sectionDiv('✓  Afgerond &amp; afgehandeld', sec_comp_done.length, 'var(--t3)', 'nieuwste einddatum bovenaan');
@@ -6007,8 +6002,8 @@ function renderInvoices(){
   const _openBedrag=arr=>arr.reduce((s,p)=>{const st=projInvoiceState(p);return s+st.toInvoice+st.unpaid;},0);
 
   document.getElementById('inv-proj-tbody').innerHTML=
-      trackDiv('&#9633; Nog niks gefactureerd',grpNiks,'var(--red)',_openBedrag(grpNiks))+grpNiks.map(trackerRow).join('')
-    + trackDiv('&#128228; Deels gefactureerd / wacht op betaling',grpLopend,'var(--amber)',_openBedrag(grpLopend))+grpLopend.map(trackerRow).join('')
+      trackDiv('&#9633; Nog niks gefactureerd — hier moet nog een factuur van komen',grpNiks,'var(--red)',_openBedrag(grpNiks))+grpNiks.map(trackerRow).join('')
+    + trackDiv('&#128228; Deels gefactureerd of wacht op betaling',grpLopend,'var(--amber)',_openBedrag(grpLopend))+grpLopend.map(trackerRow).join('')
     + trackDiv('&#10003; Volledig gefactureerd &amp; betaald',grpKlaar,'var(--green)')+grpKlaar.map(trackerRow).join('')
     || '<tr><td colspan="11" class="empty">No confirmed projects yet</td></tr>';
 
@@ -6042,19 +6037,21 @@ function renderInvoices(){
     </tr>`;
   };
 
-  // ── Drie groepen: (1) nog niks gedaan (2) opgemaakt/verzonden, niet betaald (3) betaald ──
-  const grpTodo=openInvs.filter(inv=>!inv.draft_created&&!inv.invoice_sent);
-  const grpSent=openInvs.filter(inv=>inv.draft_created||inv.invoice_sent);
+  // ── Twee groepen op factuurregelniveau: openstaand en betaald ──
+  // ("nog niks gedaan" zit op projectniveau in de tracker hierboven, niet hier)
   const _sum=arr=>arr.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  // Openstaand: oudste periode bovenaan — die staan het langst te wachten
+  const openSorted=[...openInvs].sort((a,b)=>(a.month||'').localeCompare(b.month||''));
+  const nogNietOpgemaakt=openSorted.filter(inv=>!inv.draft_created&&!inv.invoice_sent).length;
   const _fill=(id,arr,leeg)=>{const el=document.getElementById(id);if(el)el.innerHTML=arr.map(buildRow).join('')||`<tr><td colspan="10" class="empty">${leeg}</td></tr>`;};
-  const _lbl=(id,arr,woord)=>{const el=document.getElementById(id);if(el)el.textContent=arr.length+' factu'+(arr.length===1?'ur':'ren')+' \u00b7 '+fmt(_sum(arr))+' '+woord;};
 
-  _fill('inv-tbody-todo',grpTodo,'Niks openstaand \u2014 alles is minimaal opgemaakt \u2713');
-  _fill('inv-tbody-sent',grpSent,'Geen facturen die op betaling wachten \u2713');
+  _fill('inv-tbody-sent',openSorted,'Niks openstaand \u2014 alles is betaald \u2713');
   _fill('inv-tbody-paid',paidInvs,'Nog geen betaalde facturen');
-  _lbl('inv-todo-total',grpTodo,'te factureren');
-  _lbl('inv-sent-total',grpSent,'openstaand');
-  _lbl('inv-paid-total',paidInvs,'ontvangen');
+  const _sentLbl=document.getElementById('inv-sent-total');
+  if(_sentLbl)_sentLbl.innerHTML=openSorted.length+' factu'+(openSorted.length===1?'ur':'ren')+' \u00b7 <strong>'+fmt(_sum(openSorted))+'</strong> openstaand'
+    +(nogNietOpgemaakt?` \u00b7 <span style="color:var(--red);font-weight:700">${nogNietOpgemaakt} nog niet opgemaakt</span>`:'');
+  const _paidLbl=document.getElementById('inv-paid-total');
+  if(_paidLbl)_paidLbl.textContent=paidInvs.length+' factu'+(paidInvs.length===1?'ur':'ren')+' \u00b7 '+fmt(_sum(paidInvs))+' ontvangen';
   // Klaptoestand betaald-groep herstellen
   const _pw=document.getElementById('inv-paid-wrap'),_pc=document.getElementById('inv-paid-caret');
   if(_pw){_pw.style.display=_INV_PAID_OPEN?'':'none';if(_pc)_pc.innerHTML=_INV_PAID_OPEN?'&#9662;':'&#9656;';}
