@@ -790,6 +790,17 @@ if(location.protocol==='file:'){
         <option value="end-desc">End date ↓</option>
         <option value="revenue-desc">Revenue ↓</option>
       </select>
+      <select class="filter-sel" id="proj-cat-filter" onchange="renderProjects()" style="font-size:11px">
+        <option value="">Alle categorieën</option>
+        <option value="Masterclass">Masterclass</option>
+        <option value="Opportunity scan">Opportunity scan</option>
+        <option value="Solution design">Solution design</option>
+        <option value="Build">Build</option>
+        <option value="Partnerships">Partnerships</option>
+        <option value="Overig">Overig</option>
+        <option value="__multi__">— Meerdere labels —</option>
+        <option value="__none__">— Nog niet gelabeld —</option>
+      </select>
       <select class="filter-sel" id="proj-month-filter" onchange="renderProjects()" style="font-size:11px">
         <option value="">All months</option>
       </select>
@@ -797,9 +808,21 @@ if(location.protocol==='file:'){
     </div>
   </div>
   <div class="card mb-14"><div class="table-wrap"><table>
-    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th class="center" title="Subsidie send? — klik om ja/nee te zetten">Subsidie send?</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Client</th><th>Project</th><th>Status</th><th class="center" title="MC=Masterclass · OS=Opportunity scan · SD=Solution design · BLD=Build · PTN=Partnerships · OVG=Overig — klik om te labelen">Categorie</th><th>Start</th><th>End</th><th class="right">Wks</th><th class="right">Revenue</th><th class="right">Rev/Wk</th><th class="right">Staff Cost</th><th class="right" title="Outsourced / external costs">Ext. Cost</th><th class="right">Margin</th><th class="center" title="Subsidie send? — klik om ja/nee te zetten">Subsidie send?</th><th>Actions</th></tr></thead>
     <tbody id="projects-unified-tbody"></tbody>
   </table></div></div>
+  <!-- Categorie rapportage -->
+  <div class="sec-lbl" style="color:var(--purple)">&#127991; Rapportage per categorie</div>
+  <div class="card mb-14">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Omzet &amp; marge per categorie</div>
+        <div style="font-size:10.5px;color:var(--t3)">Label projecten met de chips in de kolom <strong>Categorie</strong>. Volgt de actieve filters hierboven.</div>
+      </div>
+      <span style="font-size:9.5px;color:var(--t3)">MC · OS · SD · BLD · PTN · OVG</span>
+    </div>
+    <div class="card-body" style="padding:0"><div class="table-wrap" id="proj-cat-report"></div></div>
+  </div>
     <!-- Year Overview -->
   <div class="sec-lbl" style="color:var(--purple)">&#128200; Year Overview</div>
   <div class="card">
@@ -832,7 +855,7 @@ if(location.protocol==='file:'){
 
 <div id="page-staffing" class="page">
   <div class="page-header">
-    <div><div class="page-title">Staffing Grid</div><div class="page-sub">Manual only &mdash; confirmed projects first, then draft (separated)</div></div>
+    <div><div class="page-title">Staffing Grid</div><div class="page-sub">Klik op een medewerker om in/uit te klappen &mdash; drafts staan standaard ingeklapt</div></div>
     <div class="pnav"><button class="pnav-btn" onclick="staffChangeMonth(-1)">&#8249;</button><div class="pnav-lbl" id="staff-month-lbl">&mdash;</div><button class="pnav-btn" onclick="staffChangeMonth(1)">&#8250;</button></div>
   </div>
   <div class="filter-bar">
@@ -850,7 +873,14 @@ if(location.protocol==='file:'){
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M8 4v8M4 8h8"/></svg>
       Assign Full Project
     </button>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:8px"><span class="filter-lbl">View:</span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:4px;padding-right:8px;border-right:1px solid var(--bdr2)">
+        <span class="filter-lbl">Klap:</span>
+        <button class="btn btn-sm btn-ghost" style="font-size:9.5px" onclick="sfCollapseAll()" title="Alle medewerkers inklappen">▸ Alles in</button>
+        <button class="btn btn-sm btn-ghost" style="font-size:9.5px" onclick="sfExpandAll()" title="Alle medewerkers uitklappen">▾ Alles uit</button>
+        <button class="btn btn-sm btn-ghost" id="sf-draft-btn" style="font-size:9.5px;color:var(--amber);border-color:var(--amber)" onclick="sfToggleDrafts()" title="Draft-projecten in/uitklappen">◦ Drafts</button>
+      </div>
+      <span class="filter-lbl">View:</span>
       <div class="view-toggle"><div class="vbtn active" id="vb-full" onclick="setView('full')">Full</div><div class="vbtn" id="vb-people" onclick="setView('people')">People</div><div class="vbtn" id="vb-project" onclick="setView('project')">Project</div></div>
       <button class="btn btn-sm btn-ghost" style="font-size:9.5px;color:var(--amber);border-color:var(--amber)" onclick="cleanOrphanedStaffing(true)" title="Remove staffing rows that belong to deleted projects">🧹 Clean Orphans</button>
       <button class="btn btn-sm btn-ghost" style="font-size:9.5px;color:var(--red);border-color:var(--red)" onclick="fixOverbookedStaffing()" title="Find and remove staffing entries that exceed available days per week">⚠ Fix Overbooked</button>
@@ -960,6 +990,7 @@ if(location.protocol==='file:'){
       <div class="table-wrap"><table>
         <thead><tr>
           <th>Client / Project</th>
+          <th style="min-width:95px" title="Einddatum project — afgerond = klaar om te factureren">Einddatum</th>
           <th class="right">Revenue</th>
           <th class="right">Invoiced</th>
           <th class="right" title="Sent but not yet paid">Unpaid</th>
@@ -974,24 +1005,35 @@ if(location.protocol==='file:'){
       </table></div>
     </div>
   </div>
-  <!-- Open Invoices -->
+  <!-- GROEP 1: nog niks gedaan -->
   <div class="card mb-14">
-    <div class="card-header">
-      <div class="card-title">Open Invoices</div>
-      <span style="font-size:10px;color:var(--t3)">Draft · Sent · Awaiting payment</span>
+    <div class="card-header" style="background:var(--bg2)">
+      <div class="card-title">&#9633; 1. Nog niks gedaan — factuur moet nog opgemaakt worden</div>
+      <span style="font-size:10px;color:var(--t3)" id="inv-todo-total"></span>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Project</th><th>Client</th><th class="right">Amount</th><th>Period</th><th>Billing</th><th class="center">Draft</th><th class="center">Sent</th><th class="center">Paid</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody id="inv-tbody-open"></tbody>
+      <tbody id="inv-tbody-todo"></tbody>
     </table></div>
   </div>
-  <!-- Paid Invoices -->
-  <div class="card">
-    <div class="card-header" style="background:var(--green-p)">
-      <div class="card-title" style="color:var(--green)">✓ Paid Invoices</div>
-      <span style="font-size:10px;color:var(--t3)" id="inv-paid-total"></span>
+  <!-- GROEP 2: opgemaakt / verzonden, nog niet betaald -->
+  <div class="card mb-14">
+    <div class="card-header" style="background:var(--amber-p)">
+      <div class="card-title" style="color:var(--amber)">&#128228; 2. Factuur opgemaakt / verzonden — nog niet betaald</div>
+      <span style="font-size:10px;color:var(--t3)" id="inv-sent-total"></span>
     </div>
     <div class="table-wrap"><table>
+      <thead><tr><th>Project</th><th>Client</th><th class="right">Amount</th><th>Period</th><th>Billing</th><th class="center">Draft</th><th class="center">Sent</th><th class="center">Paid</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="inv-tbody-sent"></tbody>
+    </table></div>
+  </div>
+  <!-- GROEP 3: betaald -->
+  <div class="card">
+    <div class="card-header" style="background:var(--green-p);cursor:pointer" onclick="invTogglePaid()">
+      <div class="card-title" style="color:var(--green)"><span id="inv-paid-caret">&#9656;</span> 3. Betaald &amp; afgehandeld</div>
+      <span style="font-size:10px;color:var(--t3)" id="inv-paid-total"></span>
+    </div>
+    <div class="table-wrap" id="inv-paid-wrap" style="display:none"><table>
       <thead><tr><th>Project</th><th>Client</th><th class="right">Amount</th><th>Period</th><th>Billing</th><th class="center">Draft</th><th class="center">Sent</th><th class="center">Paid</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody id="inv-tbody-paid"></tbody>
     </table></div>
@@ -1331,7 +1373,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v62-0748 loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v64-multicategorie loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -1911,7 +1953,7 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes','subsidie'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes','subsidie','category'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year','monthly_salary'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
@@ -2060,7 +2102,9 @@ const S={
   fcView:'table',
   histTab:'financial',
   schedHiddenEmps:new Set(),
-  projects:[],employees:[],staffing:[],vacations:[],
+  sfCollapsedEmps:new Set(),   // staffing: ingeklapte medewerkers
+  sfDraftCollapsed:true,       // staffing: draft-projecten standaard ingeklapt
+  projects:[],employees:[],staffing:[],vacations:[],sickLeave:[],
   invoices:[],fixedCosts:[],transactions:[],futureCosts:[],partnerInvoices:[],cashflowMonths:[],externalCosts:[],startingBalance:0,
   vatOverrides:{},
   cfSelected:new Set(),
@@ -3881,6 +3925,88 @@ function renderForecast(){
   </tr>`).join('')||'<tr><td colspan="5" class="empty text-muted">No manual future costs added yet.</td></tr>';
 }
 
+// ══ PROJECT CATEGORIEËN (voor rapportage) ══
+const PROJECT_CATEGORIES=['Masterclass','Opportunity scan','Solution design','Build','Partnerships','Overig'];
+const PROJECT_CAT_COLOR={
+  'Masterclass':'var(--purple)',
+  'Opportunity scan':'var(--blue)',
+  'Solution design':'var(--amber)',
+  'Build':'var(--green)',
+  'Partnerships':'var(--pink)',
+  'Overig':'var(--t3)'
+};
+const PROJECT_CAT_SHORT={
+  'Masterclass':'MC','Opportunity scan':'OS','Solution design':'SD','Build':'BLD','Partnerships':'PTN','Overig':'OVG'
+};
+// Normaliseert vrije tekst naar één geldige categorie (case-insensitive)
+function normCategory(v){
+  if(!v)return null;
+  const s=String(v).trim().toLowerCase();
+  return PROJECT_CATEGORIES.find(c=>c.toLowerCase()===s)||null;
+}
+// Meerdere categorieën: opgeslagen als komma-gescheiden tekst in projects.category
+function parseCategories(v){
+  if(!v)return[];
+  if(Array.isArray(v))v=v.join(',');
+  const found=String(v).split(/[,;|]/).map(x=>normCategory(x)).filter(Boolean);
+  // Dedupliceren en in vaste volgorde zetten
+  return PROJECT_CATEGORIES.filter(c=>found.includes(c));
+}
+function serializeCategories(arr){
+  const list=PROJECT_CATEGORIES.filter(c=>arr.includes(c));
+  return list.length?list.join(', '):null;
+}
+function projCats(p){return parseCategories(p&&p.category);}
+
+// Chip aan/uit zetten — meerdere categorieën per project mogelijk
+async function toggleProjectCategory(pid,cat){
+  const p=S.projects.find(x=>x.id===pid||x.id==pid);
+  if(!p)return;
+  cat=normCategory(cat);
+  if(!cat)return;
+  const prev=p.category||null;
+  const cur=parseCategories(prev);
+  const next=cur.includes(cat)?cur.filter(c=>c!==cat):[...cur,cat];
+  const newVal=serializeCategories(next);
+  p.category=newVal; // optimistisch bijwerken
+  renderProjects();
+  try{
+    const hdrs={..._supaHdr(),'Prefer':'return=minimal'};
+    const r=await fetch(_supaUrl('projects','?id=eq.'+parseInt(pid)),{method:'PATCH',headers:hdrs,body:JSON.stringify({category:newVal})});
+    if(!r.ok){const t=await r.text();p.category=prev;renderProjects();return showToast('⚠ Categorie opslaan mislukt: '+t.substring(0,80),'error');}
+    if(typeof showToast==='function')showToast(newVal?('✓ Categorieën: '+newVal):'Categorieën leeggemaakt','success');
+  }catch(e){p.category=prev;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan categorie','error');}
+}
+// Alle categorieën van één project wissen
+async function clearProjectCategories(pid){
+  const p=S.projects.find(x=>x.id===pid||x.id==pid);
+  if(!p)return;
+  const prev=p.category||null;
+  p.category=null;renderProjects();
+  try{
+    const hdrs={..._supaHdr(),'Prefer':'return=minimal'};
+    const r=await fetch(_supaUrl('projects','?id=eq.'+parseInt(pid)),{method:'PATCH',headers:hdrs,body:JSON.stringify({category:null})});
+    if(!r.ok){const t=await r.text();p.category=prev;renderProjects();return showToast('⚠ Wissen mislukt: '+t.substring(0,80),'error');}
+    if(typeof showToast==='function')showToast('Categorieën leeggemaakt','success');
+  }catch(e){p.category=prev;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij wissen categorie','error');}
+}
+
+// Factuurstatus per project — gebruikt op de Projects- en Invoice-pagina
+function projInvoiceState(p){
+  const invs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
+  const invoiced=invs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const paidAmt=invs.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const rev=parseFloat(p.revenue||0);
+  const unpaid=Math.max(0,invoiced-paidAmt);
+  const toInvoice=Math.max(0,rev-invoiced);
+  let stage;
+  if(rev<=0&&invoiced<=0)          stage='none';        // geen waarde, niks te doen
+  else if(invoiced<=0)             stage='todo';        // nog niks gefactureerd
+  else if(toInvoice>0.5||unpaid>0.5) stage='running';   // deels gefactureerd of wacht op betaling
+  else                             stage='done';        // volledig gefactureerd én betaald
+  return{invs,invoiced,paidAmt,unpaid,toInvoice,rev,stage};
+}
+
 // ══ PROJECTS ══
 async function setSubsidie(pid,val){
   const p=S.projects.find(x=>x.id===pid||x.id==pid);
@@ -3896,6 +4022,80 @@ async function setSubsidie(pid,val){
     if(!r.ok){const t=await r.text();p.subsidie=prev;renderProjects();return showToast('⚠ Subsidie opslaan mislukt: '+t.substring(0,80),'error');}
     if(typeof showToast==='function')showToast(newVal===true?'✓ Subsidie geschikt: ja':newVal===false?'Subsidie geschikt: nee':'Subsidie: leeggemaakt','success');
   }catch(e){p.subsidie=prev;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan subsidie','error');}
+}
+
+// ══ CATEGORIE-RAPPORTAGE (Projects-pagina) ══
+// Toerekening bij projecten met meerdere labels:
+//  'split' = omzet evenredig verdelen over de labels (totaal blijft gelijk aan de echte omzet)
+//  'full'  = volledige omzet bij elk label (totaal telt dan dubbel — handig per categorie)
+var _catAlloc='split';
+function setCatAlloc(mode){_catAlloc=mode;renderProjects();}
+function renderCategoryReport(projs){
+  const el=document.getElementById('proj-cat-report');
+  if(!el)return;
+  const split=_catAlloc==='split';
+  const rows=[...PROJECT_CATEGORIES,'— Nog niet gelabeld —'].map(cat=>{
+    const geen=cat==='— Nog niet gelabeld —';
+    const list=geen?projs.filter(p=>projCats(p).length===0)
+                   :projs.filter(p=>projCats(p).includes(cat));
+    // Gewicht per project: bij 'split' verdeeld over het aantal labels
+    const w=p=>{const n=projCats(p).length;return(split&&n>1)?1/n:1;};
+    const rev     =list.reduce((s,p)=>s+parseFloat(p.revenue||0)*w(p),0);
+    const revConf =list.filter(p=>p.status==='confirmed').reduce((s,p)=>s+parseFloat(p.revenue||0)*w(p),0);
+    const revDraft=list.filter(p=>p.status==='draft').reduce((s,p)=>s+parseFloat(p.revenue||0)*w(p),0);
+    const cost    =list.reduce((s,p)=>s+(projStaffCost(p.id)+projExtCost(p.id))*w(p),0);
+    const inv     =list.reduce((s,p)=>s+projInvoiceState(p).invoiced*w(p),0);
+    const multi   =list.filter(p=>projCats(p).length>1).length;
+    const mg=rev>0?((rev-cost)/rev*100):0;
+    return{cat,geen,n:list.length,multi,rev,revConf,revDraft,cost,inv,mg};
+  });
+  const totRev=rows.reduce((s,r)=>s+r.rev,0);
+  const echteOmzet=projs.reduce((s,p)=>s+parseFloat(p.revenue||0),0);
+  const multiTotaal=projs.filter(p=>projCats(p).length>1).length;
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:9px 12px;border-bottom:1px solid var(--bdr);background:var(--bg2)">
+      <div style="font-size:10.5px;color:var(--t3)">
+        ${multiTotaal?`<strong>${multiTotaal}</strong> project${multiTotaal!==1?'en':''} met meerdere labels · `:''}Omzet bij meerdere labels:
+      </div>
+      <div style="display:flex;gap:4px">
+        <button onclick="setCatAlloc('split')" style="cursor:pointer;border-radius:4px;padding:3px 9px;font-size:10px;font-weight:700;border:1px solid ${split?'var(--blue)':'var(--bdr2)'};background:${split?'var(--blue-p)':'var(--bg)'};color:${split?'var(--blue)':'var(--t3)'}" title="Omzet evenredig verdelen — totaal blijft kloppen met de echte omzet">Evenredig verdelen</button>
+        <button onclick="setCatAlloc('full')" style="cursor:pointer;border-radius:4px;padding:3px 9px;font-size:10px;font-weight:700;border:1px solid ${!split?'var(--amber)':'var(--bdr2)'};background:${!split?'var(--amber-p)':'var(--bg)'};color:${!split?'var(--amber)':'var(--t3)'}" title="Volledige omzet bij elke categorie — het totaal telt dan dubbel">Volledig per categorie</button>
+      </div>
+    </div>
+    <table><thead><tr>
+      <th>Categorie</th><th class="right">Projecten</th>
+      <th class="right">Omzet</th><th class="right">Confirmed</th><th class="right">Draft</th>
+      <th class="right">Gefactureerd</th><th class="right">Kosten</th><th class="right">Marge</th><th class="right">% v/d omzet</th>
+    </tr></thead><tbody>
+    ${rows.filter(r=>r.n>0).map(r=>{
+      const col=r.geen?'var(--t4)':PROJECT_CAT_COLOR[r.cat];
+      const share=totRev>0?r.rev/totRev*100:0;
+      return`<tr>
+        <td><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${col};margin-right:6px"></span><span class="bold">${esc(r.cat)}</span>${r.multi?`<span style="margin-left:5px;font-size:8.5px;color:var(--t3)" title="${r.multi} project(en) hierin hebben ook nog andere labels">+${r.multi} gecombineerd</span>`:''}</td>
+        <td class="right">${r.n}</td>
+        <td class="right bold text-blue">${fmt(r.rev)}</td>
+        <td class="right">${fmt(r.revConf)}</td>
+        <td class="right" style="color:var(--amber)">${r.revDraft?fmt(r.revDraft):'—'}</td>
+        <td class="right" style="color:var(--green)">${r.inv?fmt(r.inv):'—'}</td>
+        <td class="right" style="color:var(--pink)">${fmt(r.cost)}</td>
+        <td class="right bold ${r.mg>40?'text-green':r.mg>10?'text-blue':'text-red'}">${r.rev>0?r.mg.toFixed(1)+'%':'—'}</td>
+        <td class="right">
+          <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">
+            <span style="font-size:10px;color:var(--t3)">${share.toFixed(0)}%</span>
+            <span style="display:inline-block;width:50px;height:5px;background:var(--bdr);border-radius:3px;overflow:hidden"><span style="display:block;height:100%;width:${share.toFixed(1)}%;background:${col}"></span></span>
+          </div>
+        </td>
+      </tr>`;
+    }).join('')||'<tr><td colspan="9" class="empty">Nog geen projecten gelabeld — vink de chips aan in de kolom Categorie hierboven.</td></tr>'}
+    </tbody>
+    <tfoot><tr><td class="bold">Totaal${split?'':' <span style="font-weight:400;font-size:9.5px;color:var(--amber)">(telt dubbel bij meerdere labels)</span>'}</td>
+      <td class="right bold">${projs.length}</td>
+      <td class="right bold text-blue">${fmt(totRev)}</td>
+      <td class="right bold">${fmt(rows.reduce((s,r)=>s+r.revConf,0))}</td>
+      <td class="right bold" style="color:var(--amber)">${fmt(rows.reduce((s,r)=>s+r.revDraft,0))}</td>
+      <td class="right bold" style="color:var(--green)">${fmt(rows.reduce((s,r)=>s+r.inv,0))}</td>
+      <td class="right bold" style="color:var(--pink)">${fmt(rows.reduce((s,r)=>s+r.cost,0))}</td>
+      <td></td><td class="right" style="font-size:9.5px;color:var(--t3)">echte omzet ${fmt(echteOmzet)}</td></tr></tfoot></table>`;
 }
 
 function renderProjects(){
@@ -3921,6 +4121,13 @@ function renderProjects(){
   const clientQ=(document.getElementById('proj-client-search')?.value||'').trim().toLowerCase();
   if(clientQ){
     allProjs=allProjs.filter(p=>(p.client_name||'').toLowerCase().includes(clientQ));
+  }
+  // Filter op categorie
+  const filterCat=document.getElementById('proj-cat-filter')?.value||'';
+  if(filterCat){
+    if(filterCat==='__none__')      allProjs=allProjs.filter(p=>projCats(p).length===0);
+    else if(filterCat==='__multi__')allProjs=allProjs.filter(p=>projCats(p).length>1);
+    else                            allProjs=allProjs.filter(p=>projCats(p).includes(filterCat));
   }
   // Filter by month (projects active in that month)
   if(filterMonth){
@@ -3969,7 +4176,11 @@ function renderProjects(){
   });
   drft=sortWithCompleted(drft);
   const total=allProjs.length;
-  document.getElementById('projects-sub').textContent=`${conf.length} confirmed · ${drft.length} draft · ${stop.length} stopped${filterMonth?' (active in '+filterMonth+')':''}`;
+  const _today0=new Date().toISOString().split('T')[0];
+  const _teFactureren=allProjs.filter(p=>p.status!=='stopped'&&p.end_date&&p.end_date<_today0&&['todo','running'].includes(projInvoiceState(p).stage));
+  const _subEl=document.getElementById('projects-sub');
+  if(_subEl)_subEl.innerHTML=`${conf.length} confirmed · ${drft.length} draft · ${stop.length} stopped${filterMonth?' (active in '+filterMonth+')':''}`
+    +(_teFactureren.length?` · <span style="background:var(--red);color:#fff;border-radius:20px;padding:1px 9px;font-weight:700">${_teFactureren.length} afgerond &amp; nog te factureren</span>`:'');
   const mkRow=(p,isComp=false)=>{
     const w=projectWkCount(p),rpw=revPerWk(p),cost=projStaffCost(p.id);
     const extCost=projExtCost(p.id);
@@ -3977,7 +4188,29 @@ function renderProjects(){
     const mg=p.revenue>0?((p.revenue-totalCost)/p.revenue*100):0;
     const mc=mg>40?'text-green':mg>10?'text-blue':'text-red';
     const partnerBadge=p.is_partner?`<span style="background:var(--blue-p);color:var(--blue);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;margin-left:4px" title="Partner Client — recurring invoicing">★ PARTNER</span>`:'';
-    const compBadge=isComp?`<span style="background:var(--bg2);color:var(--t3);border:1px solid var(--bdr2);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:600;margin-left:4px">Completed</span>`:'';
+    // Afgerond-badge met "hoe lang geleden" + factuurstatus
+    const _iv=projInvoiceState(p);
+    let compBadge='';
+    if(isComp){
+      let ago='';
+      if(p.end_date){
+        const d=Math.floor((new Date(new Date().toISOString().split('T')[0])-new Date(p.end_date))/86400000);
+        ago=d<=0?'vandaag':d===1?'1 dag geleden':d<31?d+' dgn geleden':Math.round(d/30.4)+' mnd geleden';
+      }
+      compBadge=`<span style="background:var(--bg2);color:var(--t3);border:1px solid var(--bdr2);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:600;margin-left:4px" title="Einddatum ${p.end_date||'?'}">AFGEROND${ago?' · '+ago:''}</span>`;
+      if(_iv.stage==='todo'&&_iv.rev>0)      compBadge+=`<span style="background:var(--red);color:#fff;border-radius:3px;padding:1px 5px;font-size:8px;font-weight:800;margin-left:3px">⚠ FACTUREREN</span>`;
+      else if(_iv.stage==='running')          compBadge+=`<span style="background:var(--amber-p);color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;margin-left:3px" title="Nog te factureren: ${fmt(_iv.toInvoice)} · Openstaand: ${fmt(_iv.unpaid)}">DEELS</span>`;
+      else if(_iv.stage==='done')             compBadge+=`<span style="background:var(--green-p);color:var(--green);border:1px solid var(--green);border-radius:3px;padding:1px 5px;font-size:8px;font-weight:700;margin-left:3px">✓ BETAALD</span>`;
+    }
+    // Categorie-chips — meerdere aan te vinken, klik schakelt aan/uit
+    const _curCats=projCats(p);
+    const catCell=`<td class="center" style="white-space:nowrap"><div style="display:inline-flex;gap:2px;flex-wrap:wrap;justify-content:center;max-width:196px">
+      ${PROJECT_CATEGORIES.map(c=>{
+        const on=_curCats.includes(c);const col=PROJECT_CAT_COLOR[c];
+        return`<button onclick="toggleProjectCategory(${parseInt(p.id)||p.id},'${c}')" title="${c}${on?' — aangevinkt, klik om uit te zetten':' — klik om aan te vinken'}" style="cursor:pointer;border-radius:4px;padding:2px 5px;font-size:8.5px;font-weight:800;letter-spacing:.3px;border:1px solid ${on?col:'var(--bdr2)'};background:${on?col:'var(--bg2)'};color:${on?'#fff':'var(--t4)'}">${on?'✓':''}${PROJECT_CAT_SHORT[c]}</button>`;
+      }).join('')}
+      ${_curCats.length>1?`<button onclick="clearProjectCategories(${parseInt(p.id)||p.id})" title="Alle ${_curCats.length} categorieën van dit project wissen" style="cursor:pointer;border-radius:4px;padding:2px 4px;font-size:8.5px;font-weight:800;border:1px solid var(--bdr2);background:var(--bg2);color:var(--red)">✕</button>`:''}
+    </div>${_curCats.length>1?`<div style="font-size:8px;color:var(--t3);margin-top:1px">${_curCats.length} labels</div>`:''}</td>`;
     let partnerProgress='';
     if(p.is_partner){
       const invoiced=getPartnerInvoiced(p.id);
@@ -3995,6 +4228,7 @@ function renderProjects(){
         ${!isComp&&p.status==='confirmed'?`<span style="display:inline-block;width:3px;height:16px;background:#1d4ed8;border-radius:2px;margin-right:6px;vertical-align:middle;opacity:.7"></span>`:''}${esc(p.client_name)}${partnerBadge}${compBadge}
         <span style="font-size:9px;color:var(--t4);margin-left:4px">▼</span></td><td style="${!isComp&&p.status==='confirmed'?'font-weight:600;color:var(--navy)':''}">${esc(p.name)}${p.notes&&p.notes.trim()?`<div style="font-size:9.5px;color:var(--t3);font-weight:400;margin-top:2px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.notes.trim()).replace(/"/g,'&quot;')}">📝 ${esc(p.notes.trim())}</div>`:''}</td>
       <td><span class="badge badge-${p.status}">${p.status}</span></td>
+      ${catCell}
       <td class="text-muted">${p.start_date||'—'}</td><td style="${(()=>{
         if(!p.end_date) return '';
         const today=new Date().toISOString().split('T')[0];
@@ -4039,24 +4273,34 @@ function renderProjects(){
   const isFuture=p=>p.start_date&&p.start_date>today2&&(!p.end_date||p.end_date>today2);
 
   // ── Section separator row ──
-  const sectionDiv=(label,count,color='var(--t3)')=>
-    `<tr><td colspan="12" style="padding:5px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
-      ${label} (${count})
+  const sectionDiv=(label,count,color='var(--t3)',extra='')=>
+    `<tr><td colspan="14" style="padding:5px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
+      ${label} (${count})${extra?`<span style="float:right;text-transform:none;letter-spacing:0;font-weight:600">${extra}</span>`:''}
     </td></tr>`;
 
-  // Unified project order: Confirmed → Upcoming → Draft → Completed → Stopped
+  // Volgorde: Afgerond&te factureren → Confirmed actief → Upcoming → Draft → Afgerond&afgehandeld → Gestopt
   const today3=new Date().toISOString().split('T')[0];
   const isComp2  = p => p.end_date   && p.end_date   <  today3;
   const isUp2    = p => p.start_date && p.start_date >  today3 && (!p.end_date || p.end_date >= today3);
   const isActive2= p => !isComp2(p)  && !isUp2(p);
+  // Meest recent afgerond bovenaan
+  const byEndDesc = arr => [...arr].sort((a,b)=>(b.end_date||'').localeCompare(a.end_date||''));
 
   const sec_conf_active  = conf.filter(p => isActive2(p));
   const sec_upcoming     = [...conf.filter(p => isUp2(p)), ...drft.filter(p => isUp2(p))];
   const sec_draft_active = drft.filter(p => isActive2(p));
-  const sec_completed    = [...conf.filter(p => isComp2(p)), ...drft.filter(p => isComp2(p))];
+  const _allCompleted    = [...conf.filter(p => isComp2(p)), ...drft.filter(p => isComp2(p))];
+  // Afgeronde projecten splitsen op factuurstatus
+  const sec_comp_todo    = byEndDesc(_allCompleted.filter(p=>{const s=projInvoiceState(p).stage;return s==='todo'||s==='running';}));
+  const sec_comp_done    = byEndDesc(_allCompleted.filter(p=>{const s=projInvoiceState(p).stage;return s==='done'||s==='none';}));
   const sec_stopped      = stop;
 
   let unifiedRows = '';
+  if(sec_comp_todo.length){
+    const openBedrag=sec_comp_todo.reduce((s,p)=>{const st=projInvoiceState(p);return s+st.toInvoice+st.unpaid;},0);
+    unifiedRows += sectionDiv('&#128181;  Afgerond — nog te factureren / niet betaald', sec_comp_todo.length, 'var(--red)', 'Openstaand: <strong>'+fmt(openBedrag)+'</strong> · nieuwste einddatum bovenaan');
+    unifiedRows += sec_comp_todo.map(p => mkRow(p, true)).join('');
+  }
   if(sec_conf_active.length){
     unifiedRows += sectionDiv('✓  Confirmed — actief', sec_conf_active.length, 'var(--green)');
     unifiedRows += sec_conf_active.map(p => mkRow(p, false)).join('');
@@ -4069,9 +4313,9 @@ function renderProjects(){
     unifiedRows += sectionDiv('◦  Draft / Pencil — actief', sec_draft_active.length, 'var(--amber)');
     unifiedRows += sec_draft_active.map(p => mkRow(p, false)).join('');
   }
-  if(sec_completed.length){
-    unifiedRows += sectionDiv('✓  Afgerond', sec_completed.length, 'var(--t3)');
-    unifiedRows += sec_completed.map(p => mkRow(p, true)).join('');
+  if(sec_comp_done.length){
+    unifiedRows += sectionDiv('✓  Afgerond &amp; afgehandeld', sec_comp_done.length, 'var(--t3)', 'nieuwste einddatum bovenaan');
+    unifiedRows += sec_comp_done.map(p => mkRow(p, true)).join('');
   }
   if(sec_stopped.length){
     unifiedRows += sectionDiv('✗  Gestopt / Geannuleerd', sec_stopped.length, 'var(--red)');
@@ -4079,7 +4323,10 @@ function renderProjects(){
   }
 
   const _utbody = document.getElementById('projects-unified-tbody');
-  if(_utbody) _utbody.innerHTML = unifiedRows || '<tr><td colspan="12" class="empty">Nog geen projecten.</td></tr>';
+  if(_utbody) _utbody.innerHTML = unifiedRows || '<tr><td colspan="14" class="empty">Nog geen projecten.</td></tr>';
+
+  // Categorie-rapportage bijwerken
+  renderCategoryReport(allProjs);
 
     // Year overview
   renderProjectYearOverview();
@@ -4197,6 +4444,41 @@ function sfPickProject(id, label){
   sfCloseDrop();
   renderStaffing();
 }
+// ══ STAFFING: IN-/UITKLAPPEN ══
+function _sfSaveCollapse(){
+  try{
+    localStorage.setItem('sp-sf-collapsed',JSON.stringify([...S.sfCollapsedEmps]));
+    localStorage.setItem('sp-sf-draft-collapsed',S.sfDraftCollapsed?'1':'0');
+  }catch(e){}
+}
+function _sfLoadCollapse(){
+  try{
+    const c=JSON.parse(localStorage.getItem('sp-sf-collapsed')||'[]');
+    if(Array.isArray(c))S.sfCollapsedEmps=new Set(c.map(Number));
+    const d=localStorage.getItem('sp-sf-draft-collapsed');
+    if(d!==null)S.sfDraftCollapsed=(d==='1');
+  }catch(e){}
+}
+_sfLoadCollapse();
+function sfToggleEmp(empId){
+  empId=Number(empId);
+  if(S.sfCollapsedEmps.has(empId))S.sfCollapsedEmps.delete(empId);
+  else S.sfCollapsedEmps.add(empId);
+  _sfSaveCollapse();renderStaffing();
+}
+function sfToggleDrafts(){
+  S.sfDraftCollapsed=!S.sfDraftCollapsed;
+  _sfSaveCollapse();renderStaffing();
+}
+function sfCollapseAll(){
+  S.employees.forEach(e=>S.sfCollapsedEmps.add(Number(e.id)));
+  _sfSaveCollapse();renderStaffing();
+}
+function sfExpandAll(){
+  S.sfCollapsedEmps.clear();
+  _sfSaveCollapse();renderStaffing();
+}
+
 function renderStaffing(){
   _staffNoteApply(); // restore notes that survived Supabase sync
   const{y,m}=S.staffingMonth;
@@ -4286,8 +4568,11 @@ function renderStaffing(){
     const draftVis=draftProjs;
     confVis.forEach(p=>_projRowRender(p,false));
     if(draftVis.length){
-      tbody+=`<tr class="row-draft-div"><td colspan="${weeks.length+3}" style="padding:7px 14px 4px;background:var(--amber-p);color:var(--amber);font-size:9.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">&#9675; Draft Projects — indicative staffing only</td></tr>`;
-      draftVis.forEach(p=>_projRowRender(p,true));
+      const _dc=S.sfDraftCollapsed;
+      tbody+=`<tr class="row-draft-div"><td colspan="${weeks.length+3}" style="padding:7px 14px 4px;background:var(--amber-p);color:var(--amber);font-size:9.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;cursor:pointer" onclick="sfToggleDrafts()" title="Klik om draft-projecten in/uit te klappen">
+        <span style="font-size:11px">${_dc?'&#9656;':'&#9662;'}</span> &#9675; Draft Projects (${draftVis.length}) — indicative staffing only <span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.8">${_dc?'· ingeklapt, klik om te tonen':'· klik om in te klappen'}</span>
+      </td></tr>`;
+      if(!_dc)draftVis.forEach(p=>_projRowRender(p,true));
     }
     if(!confVis.length&&!draftVis.length)tbody+=`<tr><td colspan="${weeks.length+3}" class="empty">No active projects found</td></tr>`;
   } else {
@@ -4335,18 +4620,24 @@ function renderStaffing(){
         const weekCellStyle=weekUnder&&cls==='cell-partial'?'':'';
         return`<td class="center ${cls}"><div style="${d.assigned>0&&d.assigned<weekContractAvail?'color:var(--red);font-weight:700':''}">${d.assigned||''}</div>${d.vac?`<div style="font-size:9px;color:var(--purple)">-${d.vac}v</div>`:''}</td>`;
       }).join('');
+      const _empCollapsed=S.sfCollapsedEmps.has(Number(emp.id));
+      // Aantal projectregels met daadwerkelijke inzet — handig als je ingeklapt kijkt
+      const _empProjCount=new Set(S.staffing.filter(s=>s.employee_id===emp.id&&weeks.includes(s.week_key)&&s.days>0).map(s=>s.project_id)).size;
       tbody+=`<tr class="row-emp">
-        <td><span class="bold" style="${totalRowColor}">${esc(emp.name)}</span><span class="text-muted" style="margin-left:5px;font-size:10.5px">${esc(emp.role||'')}</span>
+        <td style="cursor:pointer" onclick="sfToggleEmp(${emp.id})" title="${_empCollapsed?'Klik om projecten van deze medewerker te tonen':'Klik om in te klappen'}">
+          <span style="display:inline-block;width:11px;font-size:11px;color:var(--t3)">${_empCollapsed?'&#9656;':'&#9662;'}</span>
+          <span class="bold" style="${totalRowColor}">${esc(emp.name)}</span><span class="text-muted" style="margin-left:5px;font-size:10.5px">${esc(emp.role||'')}</span>
           ${empTotalVac>0?`<span class="badge badge-vacation" style="margin-left:4px;font-size:8px">${empTotalVac}d vac</span>`:''}
           <span class="badge badge-${empCls}" style="margin-left:4px;font-size:8px">${allocPct}%</span>
           ${isUnderContract?`<span class="badge" style="margin-left:4px;font-size:8px;background:var(--red-p);color:var(--red);border:1px solid var(--red)">⚠ ${empTotalDays}/${totalContractBillable}d</span>`:''}
+          ${_empCollapsed&&_empProjCount?`<span style="margin-left:5px;font-size:9px;color:var(--t3)">${_empProjCount} project${_empProjCount!==1?'en':''} ingeklapt</span>`:''}
         </td>
         ${empCells}
         <td class="right bold" style="${totalRowColor}">${empTotalDays}d</td>
         <td class="right" style="color:var(--pink)">${fmt(empTotalCost)}</td>
       </tr>`;
 
-      if(view==='full'){
+      if(view==='full'&&!_empCollapsed){
         // Vacation row
         const hasVac=wkData.some(d=>d.vac>0);
         if(hasVac){
@@ -4381,8 +4672,13 @@ function renderStaffing(){
 
         // ── DRAFT projects: show ALL draft projects under every employee ──
         if(draftProjs.length){
-          tbody+=`<tr class="row-draft-div"><td colspan="${weeks.length+3}">&#9675; Draft Projects</td></tr>`;
-          draftProjs.forEach(p=>{
+          const _dcF=S.sfDraftCollapsed;
+          // Draft-regels waarop deze medewerker al staat — ook zichtbaar als ingeklapt
+          const _dStaffed=draftProjs.filter(p=>S.staffing.some(s=>s.employee_id===emp.id&&s.project_id===p.id&&weeks.includes(s.week_key)&&s.days>0)).length;
+          tbody+=`<tr class="row-draft-div"><td colspan="${weeks.length+3}" style="cursor:pointer" onclick="sfToggleDrafts()" title="Klik om draft-projecten in/uit te klappen">
+            <span style="font-size:11px">${_dcF?'&#9656;':'&#9662;'}</span> &#9675; Draft Projects (${draftProjs.length})${_dcF?`<span style="text-transform:none;letter-spacing:0;font-weight:600;opacity:.85"> · ingeklapt${_dStaffed?' · '+_dStaffed+' met inzet':''}, klik om te tonen</span>`:''}
+          </td></tr>`;
+          if(!_dcF)draftProjs.forEach(p=>{
             const pkWks=projectWkKeys(p);
             let pTotalDays=0;
             const pCells=weeks.map(wk=>{
@@ -4414,6 +4710,9 @@ function renderStaffing(){
   }
   tbody+='</tbody>';
   document.getElementById('staffing-grid').innerHTML=`<table>${thead}${tbody}</table>`;
+  // Draft-knop weerspiegelt de huidige toestand
+  const _dBtn=document.getElementById('sf-draft-btn');
+  if(_dBtn)_dBtn.innerHTML=(S.sfDraftCollapsed?'▸':'▾')+' Drafts '+(S.sfDraftCollapsed?'uit':'aan');
 }
 
 // ══ MONTHLY STAFFING COST BREAKDOWN ════════════════════════════════════
@@ -5537,7 +5836,7 @@ function renderInvoices(){
   if(clearBtn)clearBtn.style.display=isFiltered?'':'none';
   if(badge){badge.style.display=isFiltered?'':'none';badge.textContent=isFiltered?_invClientFilter:'';}
   const subEl=document.getElementById('inv-tracker-sub');
-  if(subEl)subEl.textContent=isFiltered?`Gefilterd op: ${_invClientFilter}`:'Automatically shows all confirmed projects. Mark status inline.';
+  if(subEl)subEl.textContent=isFiltered?`Gefilterd op: ${_invClientFilter}`:'Gegroepeerd op factuurstatus · afgeronde projecten bovenaan · projecten met waarde €0 verborgen';
 
   // ── Per-client overview ────────────────────────────────────────────────────
   const overviewEl=document.getElementById('inv-client-overview');
@@ -5645,11 +5944,13 @@ function renderInvoices(){
     if(isFiltered&&p.client_name!==_invClientFilter)return false;
     if(_INTERNAL_IDS.has(p.id)||(_INTERNAL_NAMES.has(p.client_name)&&_INTERNAL_NAMES.has(p.name)))return false;
     const _xInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
-    const _xAllPaid=_xInvs.length>0&&_xInvs.every(i=>i.paid);
     const _xInvoiced=_xInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+    // Projecten zonder waarde (revenue 0) en zonder facturen niet tonen
+    if(parseFloat(p.revenue||0)<=0&&_xInvoiced<=0)return false;
+    const _xAllPaid=_xInvs.length>0&&_xInvs.every(i=>i.paid);
     return!(_xAllPaid&&_xInvoiced>=p.revenue&&p.revenue>0);
   });
-  document.getElementById('inv-proj-tbody').innerHTML=confProjects.map(p=>{
+  const trackerRow=p=>{
     const pInvs=S.invoices.filter(i=>i.project_id===p.id||i.project_id==p.id);
     const invoiced=pInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);
     const paidAmt=pInvs.filter(i=>i.paid).reduce((s,i)=>s+parseFloat(i.amount||0),0);
@@ -5662,7 +5963,16 @@ function renderInvoices(){
     const sentInvs=pInvs.filter(i=>i.invoice_sent).sort((a,b)=>(b.month||'')>(a.month||'')?1:-1);
     const lastSent=sentInvs.length?sentInvs[0].month:'\u2014';
     return`<tr>
-      <td><div style="font-weight:600;font-size:12px;cursor:pointer;color:var(--blue);text-decoration:underline dotted" onclick="showClientInvoiceHistory('${esc(p.client_name).replace(/'/g,"\\'")}') " title="Click for invoice history">${esc(p.client_name)}</div><div style="font-size:10px;color:var(--t3)">${esc(p.name)}</div></td>
+      <td><div style="font-weight:600;font-size:12px;cursor:pointer;color:var(--blue);text-decoration:underline dotted" onclick="showClientInvoiceHistory('${esc(p.client_name).replace(/'/g,"\\'")}') " title="Click for invoice history">${esc(p.client_name)}</div><div style="font-size:10px;color:var(--t3)">${esc(p.name)}${projCats(p).map(c=>`<span style="margin-left:4px;background:${PROJECT_CAT_COLOR[c]};color:#fff;border-radius:3px;padding:0 4px;font-size:8px;font-weight:800" title="${c}">${PROJECT_CAT_SHORT[c]}</span>`).join('')}</div></td>
+      <td style="font-size:10.5px;white-space:nowrap">${(()=>{
+        if(!p.end_date)return '<span class="text-muted">—</span>';
+        const t0=new Date().toISOString().split('T')[0];
+        if(p.end_date<t0){
+          const d=Math.floor((new Date(t0)-new Date(p.end_date))/86400000);
+          return `<span style="color:var(--red);font-weight:700">${p.end_date}</span><div style="font-size:9px;color:var(--red)">afgerond · ${d<31?d+' dgn':Math.round(d/30.4)+' mnd'}</div>`;
+        }
+        return `<span style="color:var(--t2)">${p.end_date}</span><div style="font-size:9px;color:var(--t3)">loopt nog</div>`;
+      })()}</td>
       <td class="right mono text-blue">${fmt(p.revenue)}</td>
       <td class="right mono">${invoiced>0?fmt(invoiced):'<span class="text-muted">\u2014</span>'}</td>
       <td class="right mono ${unpaid>0?'text-amber':allPaid&&invoiced>0?'text-green':'text-muted'}">${unpaid>0?fmt(unpaid):allPaid&&invoiced>0?'<span style="color:var(--green)">\u2713 Collected</span>':'<span class="text-muted">\u2014</span>'}</td>
@@ -5678,7 +5988,29 @@ function renderInvoices(){
         <button class="btn btn-sm btn-ghost" style="font-size:9px;color:var(--red);margin-left:3px" onclick="invDeleteAllForProject(${p.id})" title="Delete all invoice rows">\U0001f5d1</button>`:''}
       </td>
     </tr>`;
-  }).join('')||'<tr><td colspan="9" class="empty">No confirmed projects yet</td></tr>';
+  };
+
+  // ── Tracker gegroepeerd op waar het project in het factuurproces zit ──
+  const _t0=new Date().toISOString().split('T')[0];
+  // Afgeronde projecten eerst (oudste einddatum bovenaan = langst blijven liggen), daarna lopende
+  const _trackSort=(a,b)=>{
+    const aDone=a.end_date&&a.end_date<_t0, bDone=b.end_date&&b.end_date<_t0;
+    if(aDone!==bDone)return aDone?-1:1;
+    return (a.end_date||'9999-99-99').localeCompare(b.end_date||'9999-99-99');
+  };
+  const grpNiks   = confProjects.filter(p=>projInvoiceState(p).stage==='todo').sort(_trackSort);
+  const grpLopend = confProjects.filter(p=>projInvoiceState(p).stage==='running').sort(_trackSort);
+  const grpKlaar  = confProjects.filter(p=>['done','none'].includes(projInvoiceState(p).stage)).sort(_trackSort);
+  const trackDiv=(label,arr,color,bedrag)=>arr.length?`<tr><td colspan="11" style="padding:6px 11px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
+      ${label} (${arr.length})${bedrag!==undefined?`<span style="float:right;text-transform:none;letter-spacing:0">${fmt(bedrag)}</span>`:''}
+    </td></tr>`:'';
+  const _openBedrag=arr=>arr.reduce((s,p)=>{const st=projInvoiceState(p);return s+st.toInvoice+st.unpaid;},0);
+
+  document.getElementById('inv-proj-tbody').innerHTML=
+      trackDiv('&#9633; Nog niks gefactureerd',grpNiks,'var(--red)',_openBedrag(grpNiks))+grpNiks.map(trackerRow).join('')
+    + trackDiv('&#128228; Deels gefactureerd / wacht op betaling',grpLopend,'var(--amber)',_openBedrag(grpLopend))+grpLopend.map(trackerRow).join('')
+    + trackDiv('&#10003; Volledig gefactureerd &amp; betaald',grpKlaar,'var(--green)')+grpKlaar.map(trackerRow).join('')
+    || '<tr><td colspan="11" class="empty">No confirmed projects yet</td></tr>';
 
   // ── All invoices list — separated into Open and Paid ──────────────────────
   const sorted=[..._filteredInvs].sort((a,b)=>(b.month||'')>(a.month||'')?1:-1);
@@ -5710,12 +6042,29 @@ function renderInvoices(){
     </tr>`;
   };
 
-  const openEl=document.getElementById('inv-tbody-open');
-  const paidEl=document.getElementById('inv-tbody-paid');
-  const paidTotal=document.getElementById('inv-paid-total');
-  if(openEl)openEl.innerHTML=openInvs.map(buildRow).join('')||'<tr><td colspan="10" class="empty">No open invoices</td></tr>';
-  if(paidEl)paidEl.innerHTML=paidInvs.map(buildRow).join('')||'<tr><td colspan="10" class="empty">No paid invoices yet</td></tr>';
-  if(paidTotal){const pt=paidInvs.reduce((s,i)=>s+parseFloat(i.amount||0),0);paidTotal.textContent=paidInvs.length+' invoices \u00b7 '+fmt(pt)+' collected';}
+  // ── Drie groepen: (1) nog niks gedaan (2) opgemaakt/verzonden, niet betaald (3) betaald ──
+  const grpTodo=openInvs.filter(inv=>!inv.draft_created&&!inv.invoice_sent);
+  const grpSent=openInvs.filter(inv=>inv.draft_created||inv.invoice_sent);
+  const _sum=arr=>arr.reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const _fill=(id,arr,leeg)=>{const el=document.getElementById(id);if(el)el.innerHTML=arr.map(buildRow).join('')||`<tr><td colspan="10" class="empty">${leeg}</td></tr>`;};
+  const _lbl=(id,arr,woord)=>{const el=document.getElementById(id);if(el)el.textContent=arr.length+' factu'+(arr.length===1?'ur':'ren')+' \u00b7 '+fmt(_sum(arr))+' '+woord;};
+
+  _fill('inv-tbody-todo',grpTodo,'Niks openstaand \u2014 alles is minimaal opgemaakt \u2713');
+  _fill('inv-tbody-sent',grpSent,'Geen facturen die op betaling wachten \u2713');
+  _fill('inv-tbody-paid',paidInvs,'Nog geen betaalde facturen');
+  _lbl('inv-todo-total',grpTodo,'te factureren');
+  _lbl('inv-sent-total',grpSent,'openstaand');
+  _lbl('inv-paid-total',paidInvs,'ontvangen');
+  // Klaptoestand betaald-groep herstellen
+  const _pw=document.getElementById('inv-paid-wrap'),_pc=document.getElementById('inv-paid-caret');
+  if(_pw){_pw.style.display=_INV_PAID_OPEN?'':'none';if(_pc)_pc.innerHTML=_INV_PAID_OPEN?'&#9662;':'&#9656;';}
+}
+var _INV_PAID_OPEN=false;
+function invTogglePaid(){
+  _INV_PAID_OPEN=!_INV_PAID_OPEN;
+  const w=document.getElementById('inv-paid-wrap'),c=document.getElementById('inv-paid-caret');
+  if(w)w.style.display=_INV_PAID_OPEN?'':'none';
+  if(c)c.innerHTML=_INV_PAID_OPEN?'&#9662;':'&#9656;';
 }
 
 
@@ -7676,6 +8025,15 @@ function modalProject(p){
       </div>
     </div>
     <div class="form-group"><label class="form-lbl">Notes</label><input class="form-input" id="f-notes" value="${esc(p?.notes||'')}"></div>
+    <div class="form-group"><label class="form-lbl">🏷 Categorieën (voor rapportage — meerdere mogelijk)</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;background:var(--bg2);border:1px solid var(--bdr2);border-radius:var(--r);padding:10px 12px">
+        ${PROJECT_CATEGORIES.map((c,i)=>`<label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer">
+          <input type="checkbox" class="f-cat-cb" value="${c}"${projCats(p).includes(c)?' checked':''}>
+          <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${PROJECT_CAT_COLOR[c]}"></span>
+          <span>${c}</span>
+        </label>`).join('')}
+      </div>
+    </div>
     <div class="form-group"><label class="form-lbl">💶 Subsidie send?</label><select class="form-input" id="f-subsidie"><option value=""${(p?.subsidie===null||p?.subsidie===undefined)?' selected':''}>— Not assessed —</option><option value="ja"${p?.subsidie===true?' selected':''}>Yes</option><option value="nee"${p?.subsidie===false?' selected':''}>No</option></select></div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveProject(${p?.id?parseInt(p.id)||p.id:''})">Save Project</button></div>`;
@@ -7695,6 +8053,7 @@ async function saveProject(id){
     recurring_amount:parseFloat(document.getElementById('f-rec-amount')?.value)||0,
     recurring_freq:document.getElementById('f-rec-freq')?.value||'monthly',
     subsidie:(()=>{const v=document.getElementById('f-subsidie')?.value;return v==='ja'?true:v==='nee'?false:null;})(),
+    category:serializeCategories([...document.querySelectorAll('.f-cat-cb')].filter(cb=>cb.checked).map(cb=>cb.value)),
   };
   if(!data.client_name||!data.name)return alert('Client name and project name are required.');
   const hdrs={..._supaHdr(),'Prefer':'return=representation'};
