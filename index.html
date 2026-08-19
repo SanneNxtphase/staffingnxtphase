@@ -482,7 +482,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v70-1708-1200</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v72-1708-1235</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1375,7 +1375,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v70-compact loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v72-volledig loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -4362,15 +4362,24 @@ function renderProjects(){
   const isActive2= p => !isComp2(p)  && !isUp2(p);
   // Meest recent afgerond bovenaan
   const byEndDesc = arr => [...arr].sort((a,b)=>(b.end_date||'').localeCompare(a.end_date||''));
+  // Chronologisch sorteren: vroegste datum bovenaan, projecten zonder datum onderaan.
+  // Alleen in de standaardsortering — kiest de gebruiker zelf een sortering, dan blijft die gelden.
+  const _dateSort=(arr,veld,tweede)=>{
+    if(sortMode!=='status')return arr;
+    const key=(p,f)=>p[f]||'9999-99-99'; // lege datum achteraan
+    return [...arr].sort((a,b)=>{
+      const c=key(a,veld).localeCompare(key(b,veld));
+      if(c!==0)return c;
+      if(tweede){const d=key(a,tweede).localeCompare(key(b,tweede));if(d!==0)return d;}
+      return (a.client_name||'').localeCompare(b.client_name||'');
+    });
+  };
 
-  const sec_conf_active  = conf.filter(p => isActive2(p));
+  const sec_conf_active  = _dateSort(conf.filter(p => isActive2(p)),'end_date','start_date');
   // Alleen CONFIRMED projecten in Upcoming — drafts krijgen hun eigen blok hieronder
-  const sec_upcoming     = conf.filter(p => isUp2(p));
+  const sec_upcoming     = _dateSort(conf.filter(p => isUp2(p)),'start_date','end_date');
   // Alle nog niet afgeronde drafts bij elkaar (actief én nog niet gestart), vroegste start eerst
-  const sec_draft_active = drft.filter(p => !isComp2(p)).sort((a,b)=>{
-    const sa=a.start_date||'9999-99-99', sb=b.start_date||'9999-99-99';
-    return sa.localeCompare(sb);
-  });
+  const sec_draft_active = _dateSort(drft.filter(p => !isComp2(p)),'start_date','end_date');
   const _allCompleted    = [...conf.filter(p => isComp2(p)), ...drft.filter(p => isComp2(p))];
   // Afgeronde projecten splitsen op factuurstatus
   const sec_comp_todo    = byEndDesc(_allCompleted.filter(p=>{const s=projInvoiceState(p).stage;return s==='todo'||s==='running';}));
@@ -4379,16 +4388,16 @@ function renderProjects(){
 
   let unifiedRows = '';
   if(sec_conf_active.length){
-    unifiedRows += sectionDiv('✓  Confirmed — actief', sec_conf_active.length, 'var(--green)');
+    unifiedRows += sectionDiv('✓  Confirmed — actief', sec_conf_active.length, 'var(--green)', sortMode==='status'?'loopt het eerst af bovenaan':'eigen sortering actief');
     unifiedRows += sec_conf_active.map(p => mkRow(p, false)).join('');
   }
   if(sec_upcoming.length){
-    unifiedRows += sectionDiv('↑  Confirmed — nog niet gestart', sec_upcoming.length, 'var(--blue)', 'vroegste startdatum bovenaan');
+    unifiedRows += sectionDiv('↑  Confirmed — nog niet gestart', sec_upcoming.length, 'var(--blue)', sortMode==='status'?'vroegste startdatum bovenaan':'eigen sortering actief');
     unifiedRows += sec_upcoming.map(p => mkRow(p, false)).join('');
   }
   if(sec_draft_active.length){
     const draftOmzet=sec_draft_active.reduce((s,p)=>s+parseFloat(p.revenue||0),0);
-    unifiedRows += sectionDiv('◦  Draft / Pencil — pijplijn', sec_draft_active.length, 'var(--amber)', 'Pijplijnwaarde: <strong>'+fmt(draftOmzet)+'</strong> · vroegste startdatum bovenaan');
+    unifiedRows += sectionDiv('◦  Draft / Pencil — pijplijn', sec_draft_active.length, 'var(--amber)', 'Pijplijnwaarde: <strong>'+fmt(draftOmzet)+'</strong>'+(sortMode==='status'?' · vroegste startdatum bovenaan':' · eigen sortering actief'));
     unifiedRows += sec_draft_active.map(p => mkRow(p, false)).join('');
   }
   if(sec_comp_todo.length){
@@ -4403,6 +4412,16 @@ function renderProjects(){
   if(sec_stopped.length){
     unifiedRows += sectionDiv('✗  Gestopt / Geannuleerd', sec_stopped.length, 'var(--red)');
     unifiedRows += sec_stopped.map(p => mkRow(p, true)).join('');
+  }
+  // ── Vangnet: projecten met een status buiten confirmed/draft/stopped zouden anders
+  //    onzichtbaar zijn. Beter zichtbaar mét waarschuwing dan stil verdwijnen.
+  //    Let op: bij een actief statusfilter niets toevoegen — allProjs is dan nog ongefilterd. ──
+  const _BEKENDE_STATUS=new Set(['confirmed','draft','stopped']);
+  const sec_rest = filterStatus ? [] : allProjs.filter(p => !_BEKENDE_STATUS.has(p.status));
+  if(sec_rest.length){
+    const statussen=[...new Set(sec_rest.map(p=>p.status||'(leeg)'))].join(', ');
+    unifiedRows += sectionDiv('⚠  Onbekende status — nakijken', sec_rest.length, 'var(--red)', 'status: <strong>'+esc(statussen)+'</strong> · hoort bij confirmed, draft of stopped');
+    unifiedRows += sec_rest.map(p => mkRow(p, false)).join('');
   }
 
   const _utbody = document.getElementById('projects-unified-tbody');
