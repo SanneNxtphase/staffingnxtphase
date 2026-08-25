@@ -482,7 +482,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v75-2308-1430</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v77-2508-1000</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1376,7 +1376,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v75-kolommen loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v77-geenbalk loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -1956,7 +1956,7 @@ async function _normFixedCostsAndSync(arr){
 
 var _SUPA_SCHEMA = {
   fixed_costs: ['name','category','amount','vat_pct','vat_type','active','notes'],
-  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes','subsidie','subsidie_status','subsidie_costs','category'],
+  projects: ['client_name','name','status','revenue','start_date','end_date','billing_type','is_partner','recurring_amount','recurring_freq','partner_name','notes','subsidie','subsidie_status','subsidie_costs','category','wbso_nummer'],
   employees: ['name','role','daily_cost','available_days_per_week','vacation_days_per_year','monthly_salary'],
   staffing: ['employee_id','project_id','week_key','days','note'],
   invoices: ['project_id','amount','month','paid','invoice_sent','draft_created','invoice_number','notes'],
@@ -3360,7 +3360,7 @@ function toggleProjectDetail(id, pid){
     </tr>`).join('') : `<tr style="background:var(--bg2)"><td colspan="5" style="padding:8px 8px 8px 32px;color:var(--t3);font-size:11px;font-style:italic">No external costs registered for this project.</td></tr>`;
   const tr = document.createElement('tr');
   tr.id = 'proj-detail-'+pid;
-  tr.innerHTML = `<td colspan="${_moneyColsOn()?14:9}" style="padding:0;border-top:none">
+  tr.innerHTML = `<td colspan="${_moneyColsOn()?15:10}" style="padding:0;border-top:none">
     <div style="background:var(--bg2);border-top:1px solid var(--bdr);border-bottom:2px solid var(--orange,#f97316);padding:10px 14px">
       ${p.notes&&p.notes.trim()?`<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:var(--r);padding:7px 11px;margin-bottom:8px;font-size:12px;color:#92400e"><strong style="font-weight:700">📝 Notitie:</strong> ${esc(p.notes.trim())}</div>`:''}
       <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
@@ -4088,6 +4088,61 @@ function projInvoiceState(p){
 }
 
 // ══ PROJECTS ══
+// ══ WBSO-DOSSIERNUMMER ══
+// leeg = nog geen dossier (actiepunt) · 0 = geen S&O · fases van één traject delen hetzelfde nummer
+async function saveWbsoNummer(pid,raw){
+  const p=S.projects.find(x=>x.id===pid||x.id==pid);
+  if(!p)return;
+  const prev=(p.wbso_nummer===undefined?null:p.wbso_nummer);
+  let val;
+  const t=String(raw==null?'':raw).trim();
+  if(t===''){val=null;}
+  else{
+    const n=parseInt(t,10);
+    if(isNaN(n)||n<0){renderProjects();return showToast('⚠ Alleen hele getallen vanaf 0 (leeg = nog geen dossier, 0 = geen S&O)','error');}
+    val=n;
+  }
+  if(val===prev)return; // niks gewijzigd
+  p.wbso_nummer=val;
+  renderProjects();
+  try{
+    const hdrs={..._supaHdr(),'Prefer':'return=minimal'};
+    const r=await fetch(_supaUrl('projects','?id=eq.'+parseInt(pid)),{method:'PATCH',headers:hdrs,body:JSON.stringify({wbso_nummer:val})});
+    if(!r.ok){const t2=await r.text();p.wbso_nummer=prev;renderProjects();return showToast('⚠ WBSO-nummer opslaan mislukt: '+t2.substring(0,80),'error');}
+    if(typeof showToast==='function'){
+      // Bij een gedeeld nummer meteen laten zien welke fases eronder vallen
+      const zelfde=val!==null&&val>0?S.projects.filter(x=>x.wbso_nummer===val):[];
+      showToast(val===null?'WBSO-nummer leeggemaakt — staat weer op de actielijst'
+        :val===0?'✓ Gemarkeerd als geen S&O'
+        :('✓ WBSO-dossier '+val+(zelfde.length>1?' — '+zelfde.length+' fases onder dit nummer':'')),'success');
+    }
+  }catch(e){p.wbso_nummer=prev;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan WBSO-nummer','error');}
+}
+// Invoerveld voor de tabel
+function wbsoCel(p){
+  const v=(p.wbso_nummer===undefined||p.wbso_nummer===null)?'':p.wbso_nummer;
+  const leeg=v==='';
+  const geenSO=v===0;
+  // Aantal fases dat hetzelfde nummer deelt
+  const fases=(!leeg&&!geenSO)?S.projects.filter(x=>x.wbso_nummer===p.wbso_nummer).length:0;
+  const kleur=leeg?'var(--t4)':geenSO?'var(--t4)':'var(--purple)';
+  const rand ='var(--bdr2)';
+  const vlak =leeg?'var(--bg2)':geenSO?'var(--bg2)':'var(--bg)';
+  const _volgende=Math.max(25,...S.projects.map(x=>Number(x.wbso_nummer)||0))+1;
+  const titel=leeg?('Nog geen dossier — volgend vrij nummer is '+_volgende+', of gebruik het bestaande nummer bij een vervolgfase. 0 = geen S&O.')
+    :geenSO?'Geen S&O (masterclass / training / workshop)'
+    :('Dossier '+p.wbso_nummer+(fases>1?' — '+fases+' fases vallen onder dit nummer':''));
+  return`<td class="center nw">
+    <input type="number" min="0" step="1" value="${v}" placeholder="—" title="${titel}"
+      onchange="saveWbsoNummer(${parseInt(p.id)||p.id},this.value)"
+      onkeydown="if(event.key==='Enter'){this.blur();}"
+      onclick="event.stopPropagation()"
+      style="width:46px;text-align:center;font-family:var(--font);font-size:11px;font-weight:700;padding:2px 3px;border-radius:4px;border:1px solid ${rand};background:${vlak};color:${kleur}">
+    ${geenSO?'<div style="font-size:7.5px;color:var(--t4);line-height:1">geen S&amp;O</div>':''}
+    ${fases>1?`<div style="font-size:7.5px;color:var(--purple);line-height:1">${fases} fases</div>`:''}
+  </td>`;
+}
+
 // ══ GELDKOLOMMEN AAN/UIT op de projectenpagina ══
 // Standaard uit: omzet, kosten en marge zie je door op een project te klikken.
 function _moneyColsOn(){
@@ -4391,6 +4446,7 @@ function renderProjects(){
       <td class="right nw" style="color:var(--pink)">${fmt(cost)}</td>
       <td class="right nw" style="color:var(--orange,#f97316)">${extCost>0?fmt(extCost):'<span style="color:var(--t4)">—</span>'}</td>
       <td class="right bold ${mc} nw" title="Omzet: ${fmt(p.revenue)} | Staff: ${fmt(cost)}${extCost>0?' | Ext: '+fmt(extCost):''} | Marge: ${fmt(p.revenue-totalCost)}">${mg.toFixed(1)}% <span style="font-size:8.5px;color:var(--t3);font-weight:400">${fmt(p.revenue-totalCost)}</span></td>`:''}
+      ${wbsoCel(p)}
       <td class="center nw">${subKnoppen(p,'subsidie_status','setSubsidie')}</td>
       <td class="center nw">${subKnoppen(p,'subsidie_costs','setSubsidieCosts')}</td>
       <td class="nw"><span class="act">
@@ -4410,7 +4466,7 @@ function renderProjects(){
   const sectionDiv=(label,count,color='var(--t3)',extra='',lijst=null)=>{
     const omzet=lijst?lijst.reduce((s,p)=>s+parseFloat(p.revenue||0),0):null;
     const omzetTekst=omzet!==null?`<span style="text-transform:none;letter-spacing:0;font-weight:700;color:var(--blue);margin-left:8px">omzet ${fmt(omzet)}</span>`:'';
-    return`<tr><td colspan="${_geldAan?14:9}" style="padding:5px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
+    return`<tr><td colspan="${_geldAan?15:10}" style="padding:5px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:${color};background:var(--bg2);border-top:2px solid var(--bdr2);border-bottom:1px solid var(--bdr)">
       ${label} (${count})${omzetTekst}${extra?`<span style="float:right;text-transform:none;letter-spacing:0;font-weight:600">${extra}</span>`:''}
     </td></tr>`;
   };
@@ -4498,10 +4554,11 @@ function renderProjects(){
       <th title="Startdatum → einddatum (dd-mm-jj)">Looptijd</th>
       <th class="right">Revenue</th>
       ${_geldAan?_geldKoppen:''}
+      <th class="center" title="Dossiernummer op de Notion-pagina WBSO &amp; Subsidie — Projectdossiers. Leeg = nog geen dossier · 0 = geen S&amp;O · fases van hetzelfde traject krijgen hetzelfde nummer">WBSO&nbsp;#</th>
       <th class="center" title="Subsidie verstuurd naar 365 — ✓ ja · ✕ nee · n/a niet van toepassing">Subs. verstuurd</th>
       <th class="center" title="Subsidie op de kosten aangevraagd — ✓ ja · ✕ nee · n/a niet van toepassing">Subs. kosten</th>
       <th></th>`;
-  const _NKOL=_geldAan?14:9;
+  const _NKOL=_geldAan?15:10;
   const _mBtn=document.getElementById('money-toggle');
   if(_mBtn){
     _mBtn.innerHTML=(_geldAan?'&#128181; Cijfers aan':'&#128181; Cijfers uit');
@@ -8223,6 +8280,10 @@ function modalProject(p){
         </label>`).join('')}
       </div>
     </div>
+    <div class="form-group"><label class="form-lbl">📁 WBSO-dossiernummer</label>
+      <input type="number" min="0" step="1" class="form-input" id="f-wbso-nummer" placeholder="leeg = nog geen dossier" value="${(p?.wbso_nummer===null||p?.wbso_nummer===undefined)?'':p.wbso_nummer}">
+      <div style="font-size:10px;color:var(--t3);margin-top:3px">Verwijst naar het dossier op de Notion-pagina "WBSO &amp; Subsidie — Projectdossiers". Vervolgfases van hetzelfde traject krijgen hetzelfde nummer. Vul <strong>0</strong> in bij masterclass, training of workshop (geen S&amp;O).</div>
+    </div>
     <div class="form-group"><label class="form-lbl">💶 Subsidie verstuurd naar 365</label><select class="form-input" id="f-subsidie">
       ${['','ja','nee','nvt'].map(v=>`<option value="${v}"${normSub(p?.subsidie_status)===(v||null)?' selected':''}>${{'':'— Nog niet ingevuld —','ja':'Ja','nee':'Nee','nvt':'Niet van toepassing'}[v]}</option>`).join('')}
     </select></div>
@@ -8246,6 +8307,9 @@ async function saveProject(id){
     is_partner:document.getElementById('f-is-partner').checked?1:0,
     recurring_amount:parseFloat(document.getElementById('f-rec-amount')?.value)||0,
     recurring_freq:document.getElementById('f-rec-freq')?.value||'monthly',
+    wbso_nummer:(()=>{const v=document.getElementById('f-wbso-nummer')?.value;
+      if(v===undefined||String(v).trim()==='')return null;
+      const n=parseInt(v,10);return(isNaN(n)||n<0)?null:n;})(),
     subsidie_status:normSub(document.getElementById('f-subsidie')?.value),
     subsidie_costs:normSub(document.getElementById('f-subsidie-costs')?.value),
     // Oude boolean meeschrijven zodat de WBSO-skill blijft werken
