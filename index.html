@@ -482,7 +482,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v77-2508-1000</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v79-2508-1100</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1376,7 +1376,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v77-geenbalk loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v79-cacheopruim loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -1808,6 +1808,7 @@ async function pushAllToSupabase() {
       'external_costs','sick_leave'];
     var pushed = 0;
     var errors = 0;
+    var dubbelVoorkomen = 0;
 
     for (var ti = 0; ti < tables.length; ti++) {
       var table = tables[ti];
@@ -1827,7 +1828,23 @@ async function pushAllToSupabase() {
           if (ex && ex.length > 0) {
             await _supaReq('PATCH', table, payload, '?id=eq.' + row.id);
           } else {
-            await _supaReq('POST', table, payload);
+            // Het lokale id bestaat niet in Supabase. Blind inserten maakt dan een
+            // duplicaat aan (met een nieuw id), waardoor bij élke volgende push
+            // opnieuw een duplicaat ontstaat. Voor medewerkers eerst op naam zoeken.
+            var bestaand = null;
+            if (table === 'employees' && row.name) {
+              try {
+                bestaand = await _supaReq('GET', table, null,
+                  '?name=eq.' + encodeURIComponent(String(row.name).trim()) + '&select=id');
+              } catch (e0) { bestaand = null; }
+            }
+            if (bestaand && bestaand.length > 0) {
+              // Bestaat al onder een ander id: bijwerken in plaats van dubbel aanmaken
+              await _supaReq('PATCH', table, payload, '?id=eq.' + bestaand[0].id);
+              dubbelVoorkomen++;
+            } else {
+              await _supaReq('POST', table, payload);
+            }
           }
           pushed++;
         } catch(rowErr) { errors++; }
@@ -1861,6 +1878,7 @@ async function pushAllToSupabase() {
     }
     _SUPA_ONLINE = true;
     var msg = 'Pushed ' + pushed + ' records to Supabase!';
+    if (dubbelVoorkomen > 0) msg += ' (' + dubbelVoorkomen + ' dubbele medewerker' + (dubbelVoorkomen === 1 ? '' : 's') + ' voorkomen)';
     if (errors > 0) msg += ' (' + errors + ' errors)';
     showToast(msg, errors > 0 ? 'warning' : 'success');
   } catch(e) {
@@ -1870,15 +1888,50 @@ async function pushAllToSupabase() {
 }
 
 // PULL FROM SUPABASE — force reload all data from cloud
+// Ruimt verouderde dubbele medewerkers op in de localStorage-fallback.
+// Aanleiding: een oudere push maakte een tweede record met een nieuw id aan. Na een
+// Pull staat Supabase goed, maar de lokale fallback hield het spook-record vast en dan
+// duikt het weer op zodra de app offline draait.
+function _cleanLocalDuplicateEmployees(){
+  try{
+    if(!S.employees||!S.employees.length)return 0;              // niks geladen: niet opruimen
+    const geldigeIds=new Set(S.employees.map(e=>parseInt(e.id)));
+    const namenInSupabase=new Set(S.employees.map(e=>String(e.name||'').trim().toLowerCase()));
+    const raw=localStorage.getItem('sp-v60');
+    if(!raw)return 0;
+    const store=JSON.parse(raw);
+    if(!store||!Array.isArray(store.employees))return 0;
+    const voor=store.employees.length;
+    store.employees=store.employees.filter(e=>{
+      const id=parseInt(e.id);
+      const naam=String(e.name||'').trim().toLowerCase();
+      // Weg als: dit id bestaat niet in Supabase, terwijl de naam er wél is.
+      // Dat is exact het spook-record. Nieuwe, nog niet gepushte medewerkers
+      // (naam bestaat nog niet in Supabase) blijven staan.
+      return !(!geldigeIds.has(id) && namenInSupabase.has(naam));
+    });
+    const weg=voor-store.employees.length;
+    if(weg>0){
+      localStorage.setItem('sp-v60',JSON.stringify(store));
+      console.log('[cleanup] '+weg+' verouderd(e) dubbel(e) medewerker(s) uit de lokale cache verwijderd');
+      if(typeof showToast==='function')showToast('✓ '+weg+' dubbele medewerker'+(weg===1?'':'s')+' uit de lokale cache opgeruimd','success');
+    }
+    return weg;
+  }catch(e){return 0;}
+}
+
 async function pullFromSupabase(){
   try{
     showToast('Loading live data from Supabase…','info');
     await loadData();
     if(_SUPA_ONLINE){
+      _cleanLocalDuplicateEmployees();
       renderDashboard&&renderDashboard();
       renderInvoices&&renderInvoices();
       renderPartner&&renderPartner();
       renderProjects&&renderProjects();
+      renderStaffing&&renderStaffing();
+      renderEmployees&&renderEmployees();
       showToast('✓ Live data loaded from Supabase','success');
       var dsEl=document.getElementById('nav-data-source');
       if(dsEl)dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">&#x25CF; Supabase live</span>';
@@ -11539,6 +11592,8 @@ async function init(){
 
   if(_SUPA_ONLINE){
     if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(80,200,120,.7)">● Supabase live</span>';
+    // Spook-records uit de offline cache halen zodra we weten wat Supabase echt heeft
+    try{_cleanLocalDuplicateEmployees();}catch(e){}
     console.log('[init] Live — projects:'+S.projects.length+' staff:'+S.staffing.length+' fc:'+S.fixedCosts.length);
   } else {
     if(_dsEl)_dsEl.innerHTML='<span style="color:rgba(255,80,50,.7)">● Offline</span>'
