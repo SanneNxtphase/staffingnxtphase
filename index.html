@@ -482,7 +482,7 @@ if(location.protocol==='file:'){
 
 </nav>
 <div class="sidebar">
-  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v79-2508-1100</div></div></div></div>
+  <div class="sidebar-logo"><div class="logo-mark"><div class="logo-icon">&#x1F4CA;</div><div><div class="logo-text">NXTPhase Plan</div><div class="logo-sub">v80-2608-0930</div></div></div></div>
   <nav class="nav">
     <div class="nav-sec">Overview</div>
     <div class="nav-item active" onclick="navigate('dashboard',this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>Project Dashboard</div>
@@ -1376,7 +1376,7 @@ const DB={
    "Push to Supabase" button syncs all local data to the cloud.
 ══════════════════════════════════════════════════════════════ */
 var _SUPA_URL = 'https://vvqiuquysatfezdgygok.supabase.co';
-console.log('%c NXTPhase v79-cacheopruim loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
+console.log('%c NXTPhase v80-kostenlabel loaded','background:#16a34a;color:white;padding:4px 8px;border-radius:4px');
 var _SUPA_KEY = 'sb_publishable_5nY5Af-II9bjAiVgnwi3Kw_0YddwvGx';
 var _SUPA_ONLINE = false;
 
@@ -4256,7 +4256,7 @@ async function _saveSubVeld(pid,veld,val,label){
   }catch(e){p[veld]=prev;p.subsidie=prevBool;renderProjects();if(typeof showToast==='function')showToast('⚠ Netwerkfout bij opslaan '+label,'error');}
 }
 async function setSubsidie(pid,val){      return _saveSubVeld(pid,'subsidie_status',val,'Subsidie verstuurd'); }
-async function setSubsidieCosts(pid,val){ return _saveSubVeld(pid,'subsidie_costs', val,'Subsidie kosten');   }
+async function setSubsidieCosts(pid,val){ return _saveSubVeld(pid,'subsidie_costs', val,'Kosten hardware/software');   }
 
 // ══ CATEGORIE-RAPPORTAGE (Projects-pagina) ══
 // Toerekening bij projecten met meerdere labels:
@@ -4609,7 +4609,7 @@ function renderProjects(){
       ${_geldAan?_geldKoppen:''}
       <th class="center" title="Dossiernummer op de Notion-pagina WBSO &amp; Subsidie — Projectdossiers. Leeg = nog geen dossier · 0 = geen S&amp;O · fases van hetzelfde traject krijgen hetzelfde nummer">WBSO&nbsp;#</th>
       <th class="center" title="Subsidie verstuurd naar 365 — ✓ ja · ✕ nee · n/a niet van toepassing">Subs. verstuurd</th>
-      <th class="center" title="Subsidie op de kosten aangevraagd — ✓ ja · ✕ nee · n/a niet van toepassing">Subs. kosten</th>
+      <th class="center" title="Kosten hardware/software, licenties of uitbesteed werk die Nxt Phase AI zelf factureert — ✓ ja · ✕ nee · n/a niet van toepassing. NIET voor ZZP-inhuur: die uren komen al uit de staffing (rol Developer Extern) en zijn voor de WBSO uitgesloten.">Kosten hw/sw</th>
       <th></th>`;
   const _NKOL=_geldAan?15:10;
   const _mBtn=document.getElementById('money-toggle');
@@ -8340,9 +8340,10 @@ function modalProject(p){
     <div class="form-group"><label class="form-lbl">💶 Subsidie verstuurd naar 365</label><select class="form-input" id="f-subsidie">
       ${['','ja','nee','nvt'].map(v=>`<option value="${v}"${normSub(p?.subsidie_status)===(v||null)?' selected':''}>${{'':'— Nog niet ingevuld —','ja':'Ja','nee':'Nee','nvt':'Niet van toepassing'}[v]}</option>`).join('')}
     </select></div>
-    <div class="form-group"><label class="form-lbl">💶 Subsidie op de kosten</label><select class="form-input" id="f-subsidie-costs">
+    <div class="form-group"><label class="form-lbl">🖥 Kosten hardware/software</label><select class="form-input" id="f-subsidie-costs">
       ${['','ja','nee','nvt'].map(v=>`<option value="${v}"${normSub(p?.subsidie_costs)===(v||null)?' selected':''}>${{'':'— Nog niet ingevuld —','ja':'Ja','nee':'Nee','nvt':'Niet van toepassing'}[v]}</option>`).join('')}
-    </select></div>
+    </select>
+    <div style="font-size:10px;color:var(--t3);margin-top:3px">Alleen hardware, software, licenties en uitbesteed werk dat Nxt Phase AI zelf factureert. <strong>Niet</strong> voor ZZP-inhuur: die uren komen al uit de staffing via de rol Developer Extern, en ingehuurde arbeid is voor de WBSO uitgesloten.</div></div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveProject(${p?.id?parseInt(p.id)||p.id:''})">Save Project</button></div>`;
 }
